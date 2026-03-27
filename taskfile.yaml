@@ -1,0 +1,83 @@
+version: "3"
+
+env:
+  KO_DOCKER_REPO: localhost:5001/temporal-proxy
+  VERSION: "local"
+
+vars:
+  TOOLS_FILE: dev/tools.mod
+
+tasks:
+  default:
+    desc: Show available tasks
+    silent: true
+    cmd: task -a
+
+  up:
+    desc: Update dependencies
+    vars:
+      GET_TOOL: go get -tool -modfile={{.TOOLS_FILE}}
+    cmds:
+      - go mod tidy
+      - "{{.GET_TOOL}} github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8"
+      - cmd: go mod tidy -modfile={{.TOOLS_FILE}}
+        ignore_error: true
+
+  build:
+    desc: Build binary
+    cmd: go build ./cmd/proxy
+
+  lint:
+    desc: Lint go files
+    cmd: go tool -modfile={{.TOOLS_FILE}} golangci-lint run
+
+  fmt:
+    desc: Format go files
+    cmds:
+      - go fix ./...
+      - go tool -modfile={{.TOOLS_FILE}} golangci-lint fmt
+
+  test:
+    desc: Run tests
+    cmd: go test -cover ./...
+
+  dev:up:
+    desc: Run K3d and deploy the proxy
+    deps: [k3d:up]
+    cmds:
+      - task: docker:publish
+      - task: helm:deploy
+
+  dev:down:
+    desc: Stop local services
+    deps: [k3d:down]
+
+  docker:publish:
+    desc: Build and publish the docker image to k3d's registry
+    internal: true
+    cmd: ko build --bare --insecure-registry -t "${VERSION}" ./cmd/proxy
+
+  helm:deploy:
+    desc: Deploy helm chart to the k3d cluster
+    internal: true
+    cmds:
+      - task: helm:template
+
+  helm:template:
+    desc: Render the Helm chart with dev values
+    silent: true
+    cmd: helm template proxy ./charts/temporal-proxy -f dev/proxy-helm-values.yaml
+
+  k3d:up:
+    desc: Run a local k3d cluster
+    internal: true
+    status:
+      - k3d cluster list | grep temporal-proxy >/dev/null
+    cmd: k3d cluster create -c dev/k3d.yaml
+
+  k3d:down:
+    desc: Stop the local k3d cluster
+    internal: true
+    status:
+      - k3d cluster list | awk '/temporal-proxy/ {exit 1}'
+    cmd: k3d cluster delete -c dev/k3d.yaml

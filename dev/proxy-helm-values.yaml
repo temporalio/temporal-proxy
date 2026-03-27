@@ -1,0 +1,4 @@
+image:
+  repository: registry.local:5001/temporal-proxy
+  pullPolicy: Always # just for development
+  tag: local # Matches version in taskfile.yaml (for ko builds)

@@ -1,0 +1,9 @@
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: temporal-proxy
+registries:
+  create:
+    name: registry.local
+    host: 0.0.0.0
+    hostPort: "5001"

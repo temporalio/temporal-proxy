@@ -1,0 +1,12 @@
+defaultPlatforms:
+  - linux/amd64
+
+builds:
+  - id: proxy
+    main: ./cmd/proxy
+    ldflags:
+      - -s -w
+      - -extldflags "-static"
+      - -X main.buildTime={{.Date}}
+      - -X main.version={{.Env.VERSION}}
+      - -X main.sha={{.Git.FullCommit}}
