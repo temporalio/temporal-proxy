@@ -6,7 +6,7 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli/v3 v3.8.0
-	go.temporal.io/server v1.30.2
+	go.temporal.io/server v1.30.3
 	go.uber.org/fx v1.24.0
 	google.golang.org/grpc v1.79.3
 )
