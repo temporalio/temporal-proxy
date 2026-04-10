@@ -2,10 +2,13 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net"
 
 	"go.temporal.io/server/common/log"
 	"go.uber.org/fx"
+
+	"github.com/temporalio/temporal-proxy/internal/config"
 )
 
 var Module = fx.Option(fx.Invoke(func(p ServerParams) error {
@@ -29,7 +32,21 @@ var Module = fx.Option(fx.Invoke(func(p ServerParams) error {
 
 	p.Lifecycle.Append(fx.Hook{
 		OnStart: func(context.Context) error {
-			go svr.Start(p.Context, p.Listener) // nolint:errcheck
+			lis, err := (&net.ListenConfig{}).Listen(
+				p.Context,
+				"tcp",
+				p.Config.Listen.HostPort,
+			)
+			if err != nil {
+				return fmt.Errorf("failed to create listener: %w", err)
+			}
+
+			go func() {
+				defer func() { _ = lis.Close() }()
+
+				svr.Start(p.Context, lis) // nolint:errcheck
+			}()
+
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
@@ -45,8 +62,8 @@ type ServerParams struct {
 	Lifecycle fx.Lifecycle
 
 	// Required values
-	Context  context.Context
-	Listener net.Listener
+	Context context.Context
+	Config  *config.Config
 
 	// Optional values
 	Credentials Credentials `optional:"true"`
