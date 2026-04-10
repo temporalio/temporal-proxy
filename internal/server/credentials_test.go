@@ -15,13 +15,13 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	. "github.com/temporalio/temporal-proxy/internal/server"
+	"github.com/temporalio/temporal-proxy/internal/server"
 )
 
 func TestInsecureCredentialsServer(t *testing.T) {
 	t.Parallel()
 
-	opt, err := NewInsecureCredentials().Server()
+	opt, err := server.NewInsecureCredentials().Server()
 	require.NoError(t, err)
 	require.NotNil(t, opt)
 }
@@ -66,7 +66,7 @@ func TestTLSCredentialsServer(t *testing.T) {
 				t.Parallel()
 
 				certFile, keyFile := tc.setup(t)
-				opt, err := NewTLSCredentials(certFile, keyFile).Server()
+				opt, err := server.NewTLSCredentials(certFile, keyFile).Server()
 				require.Error(t, err)
 				require.Nil(t, opt)
 				require.ErrorContains(t, err, tc.errContains)
@@ -83,7 +83,7 @@ func TestTLSCredentialsServer(t *testing.T) {
 		certFile := writeFile(t, dir, "server-cert.pem", certPEM)
 		keyFile := writeFile(t, dir, "server-key.pem", keyPEM)
 
-		opt, err := NewTLSCredentials(certFile, keyFile).Server()
+		opt, err := server.NewTLSCredentials(certFile, keyFile).Server()
 		require.NoError(t, err)
 		require.NotNil(t, opt)
 	})
@@ -141,7 +141,7 @@ func TestMTLSCredentialsServer(t *testing.T) {
 
 				caFile, certFile, keyFile := tc.setup(t)
 
-				opt, err := NewMTLSCredentials(caFile, certFile, keyFile).Server()
+				opt, err := server.NewMTLSCredentials(caFile, certFile, keyFile).Server()
 				require.Error(t, err)
 				require.Nil(t, opt)
 				require.ErrorContains(t, err, tc.errContains)
@@ -158,7 +158,7 @@ func TestMTLSCredentialsServer(t *testing.T) {
 		certFile := writeFile(t, dir, "cert.pem", certPEM)
 		keyFile := writeFile(t, dir, "key.pem", keyPEM)
 
-		opt, err := NewMTLSCredentials(caFile, certFile, keyFile).Server()
+		opt, err := server.NewMTLSCredentials(caFile, certFile, keyFile).Server()
 		require.NoError(t, err)
 		require.NotNil(t, opt)
 	})

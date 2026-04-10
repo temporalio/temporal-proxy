@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/test/bufconn"
 
-	. "github.com/temporalio/temporal-proxy/internal/server"
+	"github.com/temporalio/temporal-proxy/internal/server"
 )
 
 type failingCredentials struct {
@@ -27,7 +27,7 @@ func TestNew(t *testing.T) {
 	t.Run("returns a server with default options", func(t *testing.T) {
 		t.Parallel()
 
-		svr, err := New()
+		svr, err := server.New()
 		require.NoError(t, err)
 		require.NotNil(t, svr)
 	})
@@ -35,7 +35,7 @@ func TestNew(t *testing.T) {
 	t.Run("propagates credential errors", func(t *testing.T) {
 		t.Parallel()
 
-		svr, err := New(WithCredentials(failingCredentials{err: errors.New("boom")}))
+		svr, err := server.New(server.WithCredentials(failingCredentials{err: errors.New("boom")}))
 		require.Error(t, err)
 		require.Nil(t, svr)
 		require.ErrorContains(t, err, "boom")
@@ -46,12 +46,12 @@ func TestServerStartAndStop(t *testing.T) {
 	t.Parallel()
 
 	var statusCalls atomic.Int32
-	hc := HealthCheckFunc(10*time.Millisecond, func(context.Context) grpc_health_v1.HealthCheckResponse_ServingStatus {
+	hc := server.HealthCheckFunc(10*time.Millisecond, func(context.Context) grpc_health_v1.HealthCheckResponse_ServingStatus {
 		statusCalls.Add(1)
 		return grpc_health_v1.HealthCheckResponse_NOT_SERVING
 	})
 
-	svr, err := New(WithHealthCheck(hc))
+	svr, err := server.New(server.WithHealthCheck(hc))
 	require.NoError(t, err)
 
 	lis := bufconn.Listen(1024 * 1024)

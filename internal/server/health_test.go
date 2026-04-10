@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
-	. "github.com/temporalio/temporal-proxy/internal/server"
+	"github.com/temporalio/temporal-proxy/internal/server"
 )
 
 func TestHealthCheckFunc(t *testing.T) {
@@ -17,7 +17,7 @@ func TestHealthCheckFunc(t *testing.T) {
 	t.Run("returns the configured interval", func(t *testing.T) {
 		t.Parallel()
 
-		hc := HealthCheckFunc(5*time.Second, func(context.Context) grpc_health_v1.HealthCheckResponse_ServingStatus {
+		hc := server.HealthCheckFunc(5*time.Second, func(context.Context) grpc_health_v1.HealthCheckResponse_ServingStatus {
 			return grpc_health_v1.HealthCheckResponse_SERVING
 		})
 
@@ -31,7 +31,7 @@ func TestHealthCheckFunc(t *testing.T) {
 
 		var called bool
 		ctx := context.WithValue(context.Background(), contextKey("probe"), "value")
-		hc := HealthCheckFunc(250*time.Millisecond, func(got context.Context) grpc_health_v1.HealthCheckResponse_ServingStatus {
+		hc := server.HealthCheckFunc(250*time.Millisecond, func(got context.Context) grpc_health_v1.HealthCheckResponse_ServingStatus {
 			called = true
 			require.Equal(t, "value", got.Value(contextKey("probe")))
 

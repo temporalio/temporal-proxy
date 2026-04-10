@@ -23,6 +23,10 @@ tasks:
       - cmd: go mod tidy -modfile={{.TOOLS_FILE}}
         ignore_error: true
 
+  server:
+    desc: Run the server locally
+    cmd: go run ./cmd/proxy -c dev/proxy.yaml
+
   build:
     desc: Build binary
     cmd: go build ./cmd/proxy
