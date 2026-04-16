@@ -1,2 +1,7 @@
-listen:
-  hostPort: :8443
+clusters:
+  - local:
+      inbound:
+        hostPort: :8443
+  - local:
+      inbound:
+        hostPort: :9443

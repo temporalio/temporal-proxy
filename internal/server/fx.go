@@ -25,34 +25,38 @@ var Module = fx.Option(fx.Invoke(func(p ServerParams) error {
 		opts = append(opts, WithHealthCheck(p.HealthCheck))
 	}
 
-	svr, err := New(opts...)
-	if err != nil {
-		return err
+	var err error
+	svrs := make([]*Server, len(p.Config.Clusters))
+	for i, cluster := range p.Config.Clusters {
+		svrs[i], err = New(opts...)
+		if err != nil {
+			return err
+		}
+
+		p.Lifecycle.Append(fx.Hook{
+			OnStart: func(context.Context) error {
+				lis, err := (&net.ListenConfig{}).Listen(
+					p.Context,
+					"tcp",
+					cluster.Local.Inbound.HostPort,
+				)
+				if err != nil {
+					return fmt.Errorf("failed to create listener: %w", err)
+				}
+
+				go func() {
+					defer func() { _ = lis.Close() }()
+
+					svrs[i].Start(p.Context, lis) // nolint:errcheck
+				}()
+
+				return nil
+			},
+			OnStop: func(ctx context.Context) error {
+				return svrs[i].Stop(ctx)
+			},
+		})
 	}
-
-	p.Lifecycle.Append(fx.Hook{
-		OnStart: func(context.Context) error {
-			lis, err := (&net.ListenConfig{}).Listen(
-				p.Context,
-				"tcp",
-				p.Config.Listen.HostPort,
-			)
-			if err != nil {
-				return fmt.Errorf("failed to create listener: %w", err)
-			}
-
-			go func() {
-				defer func() { _ = lis.Close() }()
-
-				svr.Start(p.Context, lis) // nolint:errcheck
-			}()
-
-			return nil
-		},
-		OnStop: func(ctx context.Context) error {
-			return svr.Stop(ctx)
-		},
-	})
 
 	return nil
 }))
