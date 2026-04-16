@@ -58,7 +58,8 @@ func New(sopts ...Option) (*Server, error) {
 }
 
 func (s *Server) Start(ctx context.Context, lis net.Listener) error {
-	s.logger.Info("Starting the server", tag.NewStringerTag("addr", lis.Addr()))
+	s.logger = log.With(s.logger, tag.NewStringerTag("addr", lis.Addr()))
+	s.logger.Info("Starting the server")
 
 	ctx, s.cancelFunc = context.WithCancel(ctx)
 	go s.runHealthCheck(ctx)

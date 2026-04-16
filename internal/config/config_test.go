@@ -23,21 +23,27 @@ func TestLoad(t *testing.T) {
 		t.Parallel()
 
 		_, err := config.Load(strings.NewReader("{}"))
-		require.ErrorContains(t, err, "listen.hostPort is required")
+		require.ErrorContains(t, err, "must define at least one cluster")
 	})
 
 	t.Run("minimal config", func(t *testing.T) {
 		t.Parallel()
 
 		yaml := `
-listen:
-  hostPort: "localhost:7233"
+clusters:
+  - local:
+      inbound:
+        hostPort: :8233
 `
 		cfg, err := config.Load(strings.NewReader(yaml))
 		require.NoError(t, err)
 		require.Equal(t, &config.Config{
-			Listen: config.ListenConfig{
-				HostPort: "localhost:7233",
+			Clusters: []config.Cluster{
+				{
+					Local: config.LocalCluster{
+						Inbound: config.ListenConfig{HostPort: ":8233"},
+					},
+				},
 			},
 		}, cfg)
 	})
@@ -46,24 +52,59 @@ listen:
 		t.Parallel()
 
 		yaml := `
-listen:
-  hostPort: "localhost:7233"
-  tls:
-    cert: "/path/to/cert.pem"
-    key: "/path/to/key.pem"
-    ca: "/path/to/ca.pem"
-    serverName: "temporal.example.com"
+clusters:
+  - local:
+      inbound:
+        hostPort: :8233
+        tls:
+          cert: "/path/to/cert.pem"
+          key: "/path/to/key.pem"
+          ca: "/path/to/ca.pem"
+          serverName: "temporal.example.com"
+      outbound:
+        hostPort: :9233
+    remote:
+      name: temporal-cloud
+      type: outbound
+      poolSize: 5
+      hostPort: :10233
+      tls:
+        cert: "/path/to/cert.pem"
+        key: "/path/to/key.pem"
+        ca: "/path/to/ca.pem"
+        serverName: "temporal.example.com"
 `
 		cfg, err := config.Load(strings.NewReader(yaml))
 		require.NoError(t, err)
 		require.Equal(t, &config.Config{
-			Listen: config.ListenConfig{
-				HostPort: "localhost:7233",
-				TLS: &config.TLS{
-					Cert:       "/path/to/cert.pem",
-					Key:        "/path/to/key.pem",
-					CA:         "/path/to/ca.pem",
-					ServerName: "temporal.example.com",
+			Clusters: []config.Cluster{
+				{
+					Local: config.LocalCluster{
+						Inbound: config.ListenConfig{
+							HostPort: ":8233",
+							TLS: &config.TLS{
+								Cert:       "/path/to/cert.pem",
+								Key:        "/path/to/key.pem",
+								CA:         "/path/to/ca.pem",
+								ServerName: "temporal.example.com",
+							},
+						},
+						Outbound: config.ListenConfig{HostPort: ":9233"},
+					},
+					Remote: config.RemoteCluster{
+						Name:     "temporal-cloud",
+						Type:     config.Outbound,
+						PoolSize: 5,
+						Listener: config.ListenConfig{
+							HostPort: ":10233",
+							TLS: &config.TLS{
+								Cert:       "/path/to/cert.pem",
+								Key:        "/path/to/key.pem",
+								CA:         "/path/to/ca.pem",
+								ServerName: "temporal.example.com",
+							},
+						},
+					},
 				},
 			},
 		}, cfg)
