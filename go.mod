@@ -7,7 +7,7 @@ require (
 	github.com/hashicorp/yamux v0.1.2
 	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli/v3 v3.8.0
-	go.temporal.io/server v1.30.2
+	go.temporal.io/server v1.30.4
 	go.uber.org/fx v1.24.0
 	go.uber.org/mock v0.6.0
 	golang.org/x/sync v0.19.0
