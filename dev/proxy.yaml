@@ -1,7 +1,7 @@
 clusters:
-  - local:
-      inbound:
-        hostPort: :8443
-  - local:
-      inbound:
-        hostPort: :9443
+  - name: temporal-cloud
+    type: temporal
+    listener:
+      hostPort: :8443
+    upstream:
+      hostPort: your-tc-endpoint

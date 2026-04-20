@@ -6,10 +6,13 @@ import (
 
 const (
 	// Inbound means the remote sends RPCs to this proxy.
-	Inbound RemoteType = "inbound"
+	Inbound ClusterType = "inbound"
 
 	// Outbound means the remote receives RPCs from this proxy.
-	Outbound RemoteType = "outbound"
+	Outbound ClusterType = "outbound"
+
+	// Temporal means the remote is a real Temporal server reached via plain gRPC.
+	Temporal ClusterType = "temporal"
 )
 
 type (
@@ -19,28 +22,14 @@ type (
 
 	// Cluster defines a cluster involved with this proxy.
 	Cluster struct {
-		Local  LocalCluster  `yaml:"local"`
-		Remote RemoteCluster `yaml:"remote"`
-	}
-
-	// LocalCluster defines connection details for ingress and proxying on this proxy instance.
-	//
-	// RPCs received on the outbound listener, are forwarded to the remote.
-	LocalCluster struct {
-		Inbound  ListenConfig `yaml:"inbound"`
-		Outbound ListenConfig `yaml:"outbound"` // NB: Temporal client/K8s service should point here.
-	}
-
-	// RemoteCluster defines a cluster that this proxy either sends RPCs to (outbound) or receives RPCs from (inbound).
-	RemoteCluster struct {
 		Name     string       `yaml:"name"`
-		Type     RemoteType   `yaml:"type"`
-		PoolSize int          `yaml:"poolSize"`
-		Listener ListenConfig `yaml:",inline"`
+		Type     ClusterType  `yaml:"type"`
+		Listener ListenConfig `yaml:"listener"`
+		Upstream Upstream     `yaml:"upstream"`
 	}
 
-	// RemoteType defines the type of remote (inbound or outbound).
-	RemoteType string
+	// ClusterType defines the relationship between the local and remote sides of a cluster.
+	ClusterType string
 
 	// ListenConfig defines properties for a listener.
 	ListenConfig struct {
@@ -56,11 +45,52 @@ type (
 		ServerName         string `yaml:"serverName"`
 		InsecureSkipVerify bool   `yaml:"skipVerify"`
 	}
+
+	// Upstream defines connection details for the cluster this proxy communicates with.
+	Upstream struct {
+		PoolSize int          `yaml:"poolSize"`
+		Listener ListenConfig `yaml:",inline"`
+	}
 )
 
 func (c *Config) validate() error {
 	if len(c.Clusters) == 0 {
 		return fmt.Errorf("must define at least one cluster")
+	}
+
+	for i, cluster := range c.Clusters {
+		if err := cluster.validate(i); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (c *Cluster) validate(idx int) error {
+	switch c.Type {
+	case Inbound:
+		if c.Listener.HostPort == "" {
+			return fmt.Errorf("cluster[%d]: listener.hostPort required for cluster type %q", idx, c.Type)
+		}
+	case Outbound:
+		if c.Listener.HostPort == "" {
+			return fmt.Errorf("cluster[%d]: listener.hostPort required for cluster type %q", idx, c.Type)
+		}
+		if c.Upstream.Listener.HostPort == "" {
+			return fmt.Errorf("cluster[%d]: upstream.hostPort required for cluster type %q", idx, c.Type)
+		}
+	case Temporal:
+		if c.Listener.HostPort == "" {
+			return fmt.Errorf("cluster[%d]: listener.hostPort required for cluster type %q", idx, c.Type)
+		}
+		if c.Upstream.Listener.HostPort == "" {
+			return fmt.Errorf("cluster[%d]: upstream.hostPort required for cluster type %q", idx, c.Type)
+		}
+	case "":
+		return fmt.Errorf("cluster[%d]: type is required", idx)
+	default:
+		return fmt.Errorf("cluster[%d]: unknown cluster type %q", idx, c.Type)
 	}
 
 	return nil

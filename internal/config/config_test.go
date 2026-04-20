@@ -9,6 +9,120 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/config"
 )
 
+func TestLoad_ClusterTypeValidation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("missing cluster type returns error", func(t *testing.T) {
+		t.Parallel()
+
+		yaml := `
+clusters:
+  - listener:
+      hostPort: :8233
+`
+		_, err := config.Load(strings.NewReader(yaml))
+		require.ErrorContains(t, err, "type is required")
+	})
+
+	t.Run("unknown cluster type returns error", func(t *testing.T) {
+		t.Parallel()
+
+		yaml := `
+clusters:
+  - type: bogus
+    listener:
+      hostPort: :8233
+    upstream:
+      hostPort: :9233
+`
+		_, err := config.Load(strings.NewReader(yaml))
+		require.ErrorContains(t, err, "unknown cluster type")
+	})
+
+	t.Run("outbound requires upstream hostPort", func(t *testing.T) {
+		t.Parallel()
+
+		yaml := `
+clusters:
+  - type: outbound
+    listener:
+      hostPort: :7233
+`
+		_, err := config.Load(strings.NewReader(yaml))
+		require.ErrorContains(t, err, "upstream.hostPort required")
+	})
+
+	t.Run("outbound requires listener hostPort", func(t *testing.T) {
+		t.Parallel()
+
+		yaml := `
+clusters:
+  - type: outbound
+    listener: {}
+    upstream:
+      hostPort: :9233
+`
+		_, err := config.Load(strings.NewReader(yaml))
+		require.ErrorContains(t, err, "listener.hostPort required")
+	})
+
+	t.Run("inbound requires listener hostPort", func(t *testing.T) {
+		t.Parallel()
+
+		yaml := `
+clusters:
+  - type: inbound
+    listener: {}
+`
+		_, err := config.Load(strings.NewReader(yaml))
+		require.ErrorContains(t, err, "listener.hostPort required")
+	})
+
+	t.Run("temporal requires listener hostPort", func(t *testing.T) {
+		t.Parallel()
+
+		yaml := `
+clusters:
+  - type: temporal
+    listener: {}
+    upstream:
+      hostPort: my-ns.tmprl.cloud:7233
+`
+		_, err := config.Load(strings.NewReader(yaml))
+		require.ErrorContains(t, err, "listener.hostPort required")
+	})
+
+	t.Run("temporal requires listener and upstream hostPort", func(t *testing.T) {
+		t.Parallel()
+
+		yaml := `
+clusters:
+  - type: temporal
+    listener:
+      hostPort: :8233
+`
+		_, err := config.Load(strings.NewReader(yaml))
+		require.ErrorContains(t, err, "upstream.hostPort required")
+	})
+
+	t.Run("valid temporal config", func(t *testing.T) {
+		t.Parallel()
+
+		yaml := `
+clusters:
+  - name: temporal-cloud
+    type: temporal
+    listener:
+      hostPort: :8233
+    upstream:
+      hostPort: my-ns.tmprl.cloud:7233
+`
+		cfg, err := config.Load(strings.NewReader(yaml))
+		require.NoError(t, err)
+		require.Equal(t, config.Temporal, cfg.Clusters[0].Type)
+	})
+}
+
 func TestLoad(t *testing.T) {
 	t.Parallel()
 
@@ -31,18 +145,17 @@ func TestLoad(t *testing.T) {
 
 		yaml := `
 clusters:
-  - local:
-      inbound:
-        hostPort: :8233
+  - type: inbound
+    listener:
+      hostPort: :8233
 `
 		cfg, err := config.Load(strings.NewReader(yaml))
 		require.NoError(t, err)
 		require.Equal(t, &config.Config{
 			Clusters: []config.Cluster{
 				{
-					Local: config.LocalCluster{
-						Inbound: config.ListenConfig{HostPort: ":8233"},
-					},
+					Type:     config.Inbound,
+					Listener: config.ListenConfig{HostPort: ":8233"},
 				},
 			},
 		}, cfg)
@@ -53,19 +166,16 @@ clusters:
 
 		yaml := `
 clusters:
-  - local:
-      inbound:
-        hostPort: :8233
-        tls:
-          cert: "/path/to/cert.pem"
-          key: "/path/to/key.pem"
-          ca: "/path/to/ca.pem"
-          serverName: "temporal.example.com"
-      outbound:
-        hostPort: :9233
-    remote:
-      name: temporal-cloud
-      type: outbound
+  - name: temporal-cloud
+    type: temporal
+    listener:
+      hostPort: :8233
+      tls:
+        cert: "/path/to/cert.pem"
+        key: "/path/to/key.pem"
+        ca: "/path/to/ca.pem"
+        serverName: "temporal.example.com"
+    upstream:
       poolSize: 5
       hostPort: :10233
       tls:
@@ -79,21 +189,18 @@ clusters:
 		require.Equal(t, &config.Config{
 			Clusters: []config.Cluster{
 				{
-					Local: config.LocalCluster{
-						Inbound: config.ListenConfig{
-							HostPort: ":8233",
-							TLS: &config.TLS{
-								Cert:       "/path/to/cert.pem",
-								Key:        "/path/to/key.pem",
-								CA:         "/path/to/ca.pem",
-								ServerName: "temporal.example.com",
-							},
+					Name: "temporal-cloud",
+					Type: config.Temporal,
+					Listener: config.ListenConfig{
+						HostPort: ":8233",
+						TLS: &config.TLS{
+							Cert:       "/path/to/cert.pem",
+							Key:        "/path/to/key.pem",
+							CA:         "/path/to/ca.pem",
+							ServerName: "temporal.example.com",
 						},
-						Outbound: config.ListenConfig{HostPort: ":9233"},
 					},
-					Remote: config.RemoteCluster{
-						Name:     "temporal-cloud",
-						Type:     config.Outbound,
+					Upstream: config.Upstream{
 						PoolSize: 5,
 						Listener: config.ListenConfig{
 							HostPort: ":10233",
