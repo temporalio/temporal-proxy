@@ -25,4 +25,4 @@ go.work.sum
 .claude/
 
 # Binary from task build
-proxy
+./proxy
