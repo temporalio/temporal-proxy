@@ -23,6 +23,10 @@ go.work.sum
 
 # Claude Code settings
 .claude/
+CLAUDE.local.md
+
+# git worktrees
+.worktrees/
 
 # Binary from task build
 proxy
