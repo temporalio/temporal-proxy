@@ -11,6 +11,8 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
+
+	"github.com/temporalio/temporal-proxy/internal/transport/creds"
 )
 
 type (
@@ -22,11 +24,15 @@ type (
 		healthCheck HealthCheck
 		logger      log.Logger
 	}
+
+	Credentials interface {
+		ServerOption() (grpc.ServerOption, error)
+	}
 )
 
 func New(sopts ...Option) (*Server, error) {
 	opts := &options{
-		creds:       NewInsecureCredentials(),
+		creds:       creds.NewInsecure(),
 		healthCheck: defaultHealthCheck(),
 		logger:      log.NewNoopLogger(),
 	}

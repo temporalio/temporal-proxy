@@ -37,7 +37,7 @@ func WithReflection(r bool) Option {
 }
 
 func (o *options) serverOptions() ([]grpc.ServerOption, error) {
-	creds, err := o.creds.Server()
+	creds, err := o.creds.ServerOption()
 	if err != nil {
 		return nil, err
 	}
