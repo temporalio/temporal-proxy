@@ -1,1 +1,2 @@
-* @pseudomuto
+# Default CODEOWNERS for all paths
+* @pseudomuto @temporalio/cgs
