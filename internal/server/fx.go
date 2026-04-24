@@ -38,7 +38,7 @@ var Module = fx.Option(fx.Invoke(func(p ServerParams) error {
 				lis, err := (&net.ListenConfig{}).Listen(
 					p.Context,
 					"tcp",
-					cluster.Local.Inbound.HostPort,
+					cluster.Listener.HostPort,
 				)
 				if err != nil {
 					return fmt.Errorf("failed to create listener: %w", err)
