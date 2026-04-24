@@ -94,7 +94,7 @@ func TestServerStartAndStop(t *testing.T) {
 	}
 }
 
-func (f failingCredentials) Server() (grpc.ServerOption, error) {
+func (f failingCredentials) ServerOption() (grpc.ServerOption, error) {
 	return nil, f.err
 }
 
