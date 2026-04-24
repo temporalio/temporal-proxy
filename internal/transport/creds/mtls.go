@@ -35,10 +35,10 @@ type (
 	}
 )
 
-// NewMutualTLS returns an [MTLS] credential that loads the CA certificate from
+// NewMTLS returns an [MTLS] credential that loads the CA certificate from
 // caFile and the client certificate/key pair from certFile and keyFile. opts
 // provides additional configuration; a zero-value [MTLSOptions] is valid.
-func NewMutualTLS(caFile, certFile, keyFile string, opts MTLSOptions) *MTLS {
+func NewMTLS(caFile, certFile, keyFile string, opts MTLSOptions) *MTLS {
 	return &MTLS{
 		caFile:     caFile,
 		certFile:   certFile,
@@ -54,7 +54,7 @@ func NewMutualTLS(caFile, certFile, keyFile string, opts MTLSOptions) *MTLS {
 func (c *MTLS) DialOption() (grpc.DialOption, error) {
 	cert, err := tls.LoadX509KeyPair(c.certFile, c.keyFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load server key pair: %w", err)
+		return nil, fmt.Errorf("failed to load client key pair: %w", err)
 	}
 
 	ca := x509.NewCertPool()
@@ -101,9 +101,6 @@ func (c *MTLS) ServerOption() (grpc.ServerOption, error) {
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		ClientCAs:    ca,
 		MinVersion:   minTLSVersion,
-		CipherSuites: []uint16{
-			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-		},
+		CipherSuites: preferredCipherSuites,
 	})), nil
 }

@@ -39,7 +39,7 @@ func TestMTLS_DialOption(t *testing.T) {
 				caFile, _, keyFile := mustGenMTLSCerts(t)
 				return caFile, filepath.Join(t.TempDir(), "missing.pem"), keyFile
 			},
-			wantErr: "failed to load server key pair",
+			wantErr: "failed to load client key pair",
 		},
 		{
 			name: "missing key file",
@@ -48,7 +48,7 @@ func TestMTLS_DialOption(t *testing.T) {
 				caFile, certFile, _ := mustGenMTLSCerts(t)
 				return caFile, certFile, filepath.Join(t.TempDir(), "missing.pem")
 			},
-			wantErr: "failed to load server key pair",
+			wantErr: "failed to load client key pair",
 		},
 		{
 			name: "missing CA file",
@@ -77,7 +77,7 @@ func TestMTLS_DialOption(t *testing.T) {
 			t.Parallel()
 
 			caFile, certFile, keyFile := tc.setup(t)
-			opt, err := creds.NewMutualTLS(caFile, certFile, keyFile, creds.MTLSOptions{}).DialOption()
+			opt, err := creds.NewMTLS(caFile, certFile, keyFile, creds.MTLSOptions{}).DialOption()
 			if tc.wantErr != "" {
 				require.ErrorContains(t, err, tc.wantErr)
 				require.Nil(t, opt)
@@ -97,7 +97,7 @@ func TestMTLS_Options(t *testing.T) {
 		t.Parallel()
 
 		caFile, certFile, keyFile := mustGenMTLSCerts(t)
-		opt, err := creds.NewMutualTLS(caFile, certFile, keyFile, creds.MTLSOptions{
+		opt, err := creds.NewMTLS(caFile, certFile, keyFile, creds.MTLSOptions{
 			InsecureSkipVerify: true,
 		}).DialOption()
 		require.NoError(t, err)
@@ -108,7 +108,7 @@ func TestMTLS_Options(t *testing.T) {
 		t.Parallel()
 
 		caFile, certFile, keyFile := mustGenMTLSCerts(t)
-		opt, err := creds.NewMutualTLS(caFile, certFile, keyFile, creds.MTLSOptions{
+		opt, err := creds.NewMTLS(caFile, certFile, keyFile, creds.MTLSOptions{
 			ServerName: "example.com",
 		}).DialOption()
 		require.NoError(t, err)
@@ -176,7 +176,7 @@ func TestMTLS_ServerOption(t *testing.T) {
 			t.Parallel()
 
 			caFile, certFile, keyFile := tc.setup(t)
-			opt, err := creds.NewMutualTLS(caFile, certFile, keyFile, creds.MTLSOptions{}).ServerOption()
+			opt, err := creds.NewMTLS(caFile, certFile, keyFile, creds.MTLSOptions{}).ServerOption()
 			if tc.wantErr != "" {
 				require.ErrorContains(t, err, tc.wantErr)
 				require.Nil(t, opt)

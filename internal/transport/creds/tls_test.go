@@ -21,7 +21,7 @@ func TestTLS_DialOption(t *testing.T) {
 	t.Parallel()
 
 	// DialOption does not load any files; file paths are irrelevant.
-	opt, err := creds.NewTLS("", "").DialOption()
+	opt, err := creds.NewClientTLS().DialOption()
 	require.NoError(t, err)
 	require.NotNil(t, opt)
 }
@@ -77,7 +77,7 @@ func TestTLS_ServerOption(t *testing.T) {
 			t.Parallel()
 
 			certFile, keyFile := tc.setup(t)
-			opt, err := creds.NewTLS(certFile, keyFile).ServerOption()
+			opt, err := creds.NewServerTLS(certFile, keyFile).ServerOption()
 			if tc.wantErr != "" {
 				require.ErrorContains(t, err, tc.wantErr)
 				require.Nil(t, opt)
