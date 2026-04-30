@@ -17,7 +17,8 @@ const (
 
 type (
 	Config struct {
-		Clusters []Cluster `yaml:"clusters"`
+		Clusters []Cluster     `yaml:"clusters"`
+		Metrics  MetricsConfig `yaml:"metrics"`
 	}
 
 	// Cluster defines a cluster involved with this proxy.
@@ -35,6 +36,12 @@ type (
 	ListenConfig struct {
 		HostPort string `yaml:"hostPort"`
 		TLS      *TLS   `yaml:"tls"`
+	}
+
+	// MetricsConfig defines the Prometheus HTTP endpoint.
+	MetricsConfig struct {
+		HostPort string `yaml:"hostPort"`
+		Path     string `yaml:"path"`
 	}
 
 	// TLS defines details about TLS connections.

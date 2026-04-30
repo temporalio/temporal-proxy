@@ -11,6 +11,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/server"
 )
 
@@ -58,6 +59,7 @@ func main() {
 					},
 				),
 				config.Module,
+				metrics.Module,
 				server.Module,
 				fx.NopLogger,
 			)

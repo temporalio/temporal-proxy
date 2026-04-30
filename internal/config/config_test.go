@@ -165,6 +165,9 @@ clusters:
 		t.Parallel()
 
 		yaml := `
+metrics:
+  hostPort: :9210
+  path: /metrikz
 clusters:
   - name: temporal-cloud
     type: temporal
@@ -187,6 +190,10 @@ clusters:
 		cfg, err := config.Load(strings.NewReader(yaml))
 		require.NoError(t, err)
 		require.Equal(t, &config.Config{
+			Metrics: config.MetricsConfig{
+				HostPort: ":9210",
+				Path:     "/metrikz",
+			},
 			Clusters: []config.Cluster{
 				{
 					Name: "temporal-cloud",
