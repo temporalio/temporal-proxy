@@ -4,9 +4,11 @@ go 1.26.1
 
 require (
 	github.com/goccy/go-yaml v1.19.2
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/hashicorp/yamux v0.1.2
 	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli/v3 v3.8.0
+	go.temporal.io/api v1.62.6
 	go.temporal.io/server v1.30.4
 	go.uber.org/fx v1.24.0
 	go.uber.org/mock v0.6.0
@@ -28,7 +30,6 @@ require (
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
-	go.temporal.io/api v1.62.6 // indirect
 	go.temporal.io/sdk v1.38.0 // indirect
 	go.uber.org/dig v1.19.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect

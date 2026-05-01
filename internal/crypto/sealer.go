@@ -5,7 +5,12 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	lru "github.com/hashicorp/golang-lru/v2"
+	"golang.org/x/sync/singleflight"
 )
+
+const defaultCacheSize = 100
 
 type (
 	// Sealer manages per-ID DEK rotation and envelope encryption.
@@ -17,15 +22,18 @@ type (
 	//
 	// Use [Sealer.Seal] to encrypt data and [Sealer.Open] to decrypt it.
 	Sealer struct {
-		mu       sync.RWMutex
-		keys     map[string]*sealerDEK
-		registry *KEKRegistry
-		now      func() time.Time
+		mu        sync.RWMutex
+		keys      map[string]*sealerDEK
+		registry  *KEKRegistry
+		now       func() time.Time
+		dekCache  *lru.Cache[string, *DEK] // keyed by EncryptedDEK; nil if cacheSize == 0
+		encryptor singleflight.Group       // coalesces concurrent registry.Encrypt calls per namespace
 	}
 
 	sealerOptions struct {
-		config map[string]*KeyConfig
-		now    func() time.Time
+		config    map[string]*KeyConfig
+		now       func() time.Time
+		cacheSize int // <=0 = no cache
 	}
 
 	// SealerOption configures a [Sealer] during construction.
@@ -46,11 +54,12 @@ type (
 	}
 
 	sealerDEK struct {
-		key    *DEK             // The current DEK
-		exp    time.Time        // When this key expires
-		incr   time.Duration    // How long each DEK is valid for
-		expBuf time.Duration    // How long before expiry should we regenerate
-		now    func() time.Time // Clock source, shared with the parent Sealer
+		key      *DEK             // The current DEK
+		material *DEKMaterial     // KMS-wrapped DEK; nil after rotation, protected by Sealer.mu
+		exp      time.Time        // When this key expires
+		incr     time.Duration    // How long each DEK is valid for
+		expBuf   time.Duration    // How long before expiry should we regenerate
+		now      func() time.Time // Clock source, shared with the parent Sealer
 	}
 )
 
@@ -59,8 +68,9 @@ type (
 // Returns an error if any DEK generation fails.
 func NewSealer(r *KEKRegistry, opts ...SealerOption) (*Sealer, error) {
 	sopts := &sealerOptions{
-		config: make(map[string]*KeyConfig),
-		now:    time.Now,
+		cacheSize: defaultCacheSize,
+		config:    make(map[string]*KeyConfig),
+		now:       time.Now,
 	}
 
 	for _, opt := range opts {
@@ -71,6 +81,14 @@ func NewSealer(r *KEKRegistry, opts ...SealerOption) (*Sealer, error) {
 		keys:     make(map[string]*sealerDEK),
 		registry: r,
 		now:      sopts.now,
+	}
+
+	if sopts.cacheSize > 0 {
+		c, err := lru.New[string, *DEK](sopts.cacheSize)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create DEK cache: %w", err)
+		}
+		s.dekCache = c
 	}
 
 	for k, v := range sopts.config {
@@ -112,44 +130,97 @@ func WithNowFunc(fn func() time.Time) SealerOption {
 	}
 }
 
+// WithCacheSize sets the maximum number of decrypted DEKs the Open cache may
+// hold. Values ≤ 0 disable the cache, overriding the default. Each entry is
+// keyed by the base64-encoded encrypted DEK string.
+func WithCacheSize(n int) SealerOption {
+	return func(s *sealerOptions) {
+		s.cacheSize = n
+	}
+}
+
 // Seal encrypts data using the DEK for id, returning an [Envelope] that
 // contains the ciphertext and the [DEKMaterial] needed to decrypt it later.
 func (s *Sealer) Seal(ctx context.Context, id string, data []byte) (*Envelope, error) {
-	dek, err := s.getOrRefreshKey(id)
+	sd, err := s.getOrRefreshKey(id)
 	if err != nil {
 		return nil, err
 	}
+
+	// Snapshot key and material under RLock; release immediately so the
+	// encryption work happens outside the lock.
+	s.mu.RLock()
+	dek := sd.key
+	material := sd.material
+	s.mu.RUnlock()
 
 	ct, err := dek.Encrypt(ctx, data)
 	if err != nil {
 		return nil, err
 	}
 
-	m, err := s.registry.Encrypt(ctx, id, dek)
+	if material != nil {
+		return &Envelope{CipherText: ct, KeyMaterial: material}, nil
+	}
+
+	// First Seal after a rotation: coalesce concurrent callers for the same namespace
+	// into a single KMS call so bursts don't trigger rate limiting in the Cloud provider.
+	//
+	// Key on both the namespace and the DEK pointer. If the KMS call is slow and
+	// Refresh rotates the DEK while it is in-flight, a goroutine that snapshotted
+	// the new DEK must not join the old call as it would receive material for DEK1
+	// while its ciphertext was encrypted with DEK2, causing Open to fail. Callers
+	// holding the same DEK pointer still coalesce as intended.
+	sfKey := fmt.Sprintf("%s:%p", id, dek)
+	v, err, _ := s.encryptor.Do(sfKey, func() (any, error) {
+		return s.registry.Encrypt(ctx, id, dek)
+	})
 	if err != nil {
 		return nil, err
 	}
+	m := v.(*DEKMaterial)
 
-	return &Envelope{
-		CipherText:  ct,
-		KeyMaterial: m,
-	}, nil
+	// Store under write lock.
+	// Only touch sd.material when sd.key == dek: if the key was rotated between
+	// our snapshot and now we must not read or write material that belongs to a
+	// different DEK. The envelope we built (ct + m) is still correct for this call.
+	// When sd.key == dek, prefer an already-stored value so all concurrent callers
+	// for the same DEK return identical material.
+	s.mu.Lock()
+	if sd.key == dek {
+		if sd.material == nil {
+			sd.material = m
+		} else {
+			m = sd.material
+		}
+	}
+	s.mu.Unlock()
+
+	return &Envelope{CipherText: ct, KeyMaterial: m}, nil
 }
 
 // Open decrypts e by recovering the DEK from the registry and returning the
 // original plaintext.
 func (s *Sealer) Open(ctx context.Context, e *Envelope) ([]byte, error) {
-	dek, err := s.registry.Decrypt(ctx, e.KeyMaterial)
-	if err != nil {
-		return nil, err
+	var dek *DEK
+	if s.dekCache != nil {
+		if cached, ok := s.dekCache.Get(e.KeyMaterial.EncryptedDEK); ok {
+			dek = cached
+		}
 	}
 
-	pt, err := dek.Decrypt(ctx, e.CipherText)
-	if err != nil {
-		return nil, err
+	if dek == nil {
+		var err error
+		dek, err = s.registry.Decrypt(ctx, e.KeyMaterial)
+		if err != nil {
+			return nil, err
+		}
+		if s.dekCache != nil {
+			s.dekCache.Add(e.KeyMaterial.EncryptedDEK, dek)
+		}
 	}
 
-	return pt, nil
+	return dek.Decrypt(ctx, e.CipherText)
 }
 
 // Refresh rotates every expired DEK. It is intended to be called periodically
@@ -186,34 +257,27 @@ func (s *Sealer) Refresh() error {
 	return nil
 }
 
-func (s *Sealer) getOrRefreshKey(id string) (*DEK, error) {
+func (s *Sealer) getOrRefreshKey(id string) (*sealerDEK, error) {
 	s.mu.RLock()
-	key := s.keys[id] // keys were created in the constructor.
+	key := s.keys[id]
 	if key == nil {
 		s.mu.RUnlock()
 		return nil, fmt.Errorf("key not found, id: %s", id)
 	}
 
 	if !key.isExpired() {
-		dek := key.key // snapshot under RLock — caller never touches expiringDEK directly
 		s.mu.RUnlock()
-		return dek, nil
+		return key, nil
 	}
 	s.mu.RUnlock()
 
-	// Ideally we wouldn't get here. This is the case when Refresh hasn't been called, but the key is expired. This can
-	// happen when the ExpirationBuffer < the Refresh interval (e.g. Refresh every minute, but ExpirationBuffer is 30s),
-	// or with just bad luck/timing.
-	//
-	// The goal remains to refresh keys optimistically before they expire, so we don't generate keys in the hot path
-	// (when encrypting data).
+	// Ideally we wouldn't get here. This is the case when Refresh hasn't been called, but the key is expired.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Re-check after acquiring the write lock: Refresh (or another Seal) may
-	// have already rotated this key in the window between RUnlock and Lock.
+	// Re-check: Refresh (or another Seal) may have already rotated this key.
 	if !key.isExpired() {
-		return key.key, nil
+		return key, nil
 	}
 
 	k, err := NewDEK()
@@ -222,7 +286,7 @@ func (s *Sealer) getOrRefreshKey(id string) (*DEK, error) {
 	}
 
 	key.rotate(k)
-	return key.key, nil
+	return key, nil
 }
 
 func (d *sealerDEK) isExpired() bool {
@@ -231,5 +295,6 @@ func (d *sealerDEK) isExpired() bool {
 
 func (d *sealerDEK) rotate(newKey *DEK) {
 	d.key = newKey
+	d.material = nil
 	d.exp = d.now().Add(d.incr)
 }
