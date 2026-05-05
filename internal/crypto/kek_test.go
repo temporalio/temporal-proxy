@@ -39,21 +39,21 @@ func TestKEKRegistryEncrypt(t *testing.T) {
 			wantKEKID: "EMPTY_KEK",
 		},
 		{
-			name:      "unknown namespace uses custom default key",
+			name:      "unknown namespace uses custom default policy",
 			ns:        "missing",
-			opts:      []crypto.KEKRegistryOption{crypto.WithDefaultKey(&fakeKEK{id: "default"})},
+			opts:      []crypto.KEKRegistryOption{crypto.WithDefaultPolicy(crypto.KeyPolicy{KEK: &fakeKEK{id: "default"}})},
 			wantKEKID: "default",
 		},
 		{
 			name:    "kek encrypt error",
 			ns:      "ns1",
-			opts:    []crypto.KEKRegistryOption{crypto.WithKeyForNamespace("ns1", &fakeKEK{id: "k1", encErr: errors.New("kms unavailable")})},
+			opts:    []crypto.KEKRegistryOption{crypto.WithKeyPolicy("ns1", crypto.KeyPolicy{KEK: &fakeKEK{id: "k1", encErr: errors.New("kms unavailable")}})},
 			wantErr: true,
 		},
 		{
 			name:      "success",
 			ns:        "ns1",
-			opts:      []crypto.KEKRegistryOption{crypto.WithKeyForNamespace("ns1", &fakeKEK{id: "k1"})},
+			opts:      []crypto.KEKRegistryOption{crypto.WithKeyPolicy("ns1", crypto.KeyPolicy{KEK: &fakeKEK{id: "k1"}})},
 			wantKEKID: "k1",
 		},
 	}
@@ -92,19 +92,19 @@ func TestKEKRegistryDecrypt(t *testing.T) {
 		{
 			name:     "invalid base64",
 			material: &crypto.DEKMaterial{KEKID: "k1", EncryptedDEK: "not-valid-base64!!!"},
-			opts:     []crypto.KEKRegistryOption{crypto.WithKeyForNamespace("ns1", &fakeKEK{id: "k1"})},
+			opts:     []crypto.KEKRegistryOption{crypto.WithKeyPolicy("ns1", crypto.KeyPolicy{KEK: &fakeKEK{id: "k1"}})},
 			wantErr:  true,
 		},
 		{
 			name:     "kek decrypt error",
 			material: &crypto.DEKMaterial{KEKID: "k1", EncryptedDEK: "AAAA"},
-			opts:     []crypto.KEKRegistryOption{crypto.WithKeyForNamespace("ns1", &fakeKEK{id: "k1", decErr: errors.New("kms unavailable")})},
+			opts:     []crypto.KEKRegistryOption{crypto.WithKeyPolicy("ns1", crypto.KeyPolicy{KEK: &fakeKEK{id: "k1", decErr: errors.New("kms unavailable")}})},
 			wantErr:  true,
 		},
 		{
 			name:     "wrong-length dek",
 			material: &crypto.DEKMaterial{KEKID: "k1", EncryptedDEK: "AAAA"},
-			opts:     []crypto.KEKRegistryOption{crypto.WithKeyForNamespace("ns1", &fakeKEK{id: "k1", decResult: []byte("too short")})},
+			opts:     []crypto.KEKRegistryOption{crypto.WithKeyPolicy("ns1", crypto.KeyPolicy{KEK: &fakeKEK{id: "k1", decResult: []byte("too short")}})},
 			wantErr:  true,
 		},
 	}
@@ -125,7 +125,7 @@ func TestKEKRegistryRoundtrip(t *testing.T) {
 	original, err := crypto.NewDEK()
 	require.NoError(t, err)
 
-	r := crypto.NewKEKRegistry(crypto.WithKeyForNamespace("ns1", &fakeKEK{id: "k1"}))
+	r := crypto.NewKEKRegistry(crypto.WithKeyPolicy("ns1", crypto.KeyPolicy{KEK: &fakeKEK{id: "k1"}}))
 
 	m, err := r.Encrypt(t.Context(), "ns1", original)
 	require.NoError(t, err)
@@ -143,8 +143,8 @@ func TestKEKRegistryClose(t *testing.T) {
 		k1 := &fakeKEK{id: "k1"}
 		k2 := &fakeKEK{id: "k2"}
 		r := crypto.NewKEKRegistry(
-			crypto.WithKeyForNamespace("ns1", k1),
-			crypto.WithKeyForNamespace("ns2", k2),
+			crypto.WithKeyPolicy("ns1", crypto.KeyPolicy{KEK: k1}),
+			crypto.WithKeyPolicy("ns2", crypto.KeyPolicy{KEK: k2}),
 		)
 
 		require.NoError(t, r.Close())
@@ -152,10 +152,19 @@ func TestKEKRegistryClose(t *testing.T) {
 		require.Equal(t, 1, k2.closeCount)
 	})
 
+	t.Run("closes default kek", func(t *testing.T) {
+		t.Parallel()
+		k := &fakeKEK{id: "default"}
+		r := crypto.NewKEKRegistry(crypto.WithDefaultPolicy(crypto.KeyPolicy{KEK: k}))
+
+		require.NoError(t, r.Close())
+		require.Equal(t, 1, k.closeCount)
+	})
+
 	t.Run("returns error on close failure", func(t *testing.T) {
 		t.Parallel()
 		kek := &fakeKEK{id: "k1", closeErr: errors.New("close failed")}
-		r := crypto.NewKEKRegistry(crypto.WithKeyForNamespace("ns1", kek))
+		r := crypto.NewKEKRegistry(crypto.WithKeyPolicy("ns1", crypto.KeyPolicy{KEK: kek}))
 
 		require.Error(t, r.Close())
 	})
@@ -163,7 +172,7 @@ func TestKEKRegistryClose(t *testing.T) {
 	t.Run("idempotent - same result on repeated close", func(t *testing.T) {
 		t.Parallel()
 		kek := &fakeKEK{id: "k1", closeErr: errors.New("close failed")}
-		r := crypto.NewKEKRegistry(crypto.WithKeyForNamespace("ns1", kek))
+		r := crypto.NewKEKRegistry(crypto.WithKeyPolicy("ns1", crypto.KeyPolicy{KEK: kek}))
 
 		err1 := r.Close()
 		err2 := r.Close()
@@ -174,7 +183,7 @@ func TestKEKRegistryClose(t *testing.T) {
 	t.Run("concurrent close calls kek once", func(t *testing.T) {
 		t.Parallel()
 		kek := &fakeKEK{id: "k1"}
-		r := crypto.NewKEKRegistry(crypto.WithKeyForNamespace("ns1", kek))
+		r := crypto.NewKEKRegistry(crypto.WithKeyPolicy("ns1", crypto.KeyPolicy{KEK: kek}))
 
 		errs := make([]error, 20)
 		var wg sync.WaitGroup

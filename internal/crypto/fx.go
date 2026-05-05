@@ -5,46 +5,26 @@ import (
 )
 
 var Module = fx.Options(fx.Provide(
-	func(p KEKRegistryParams) *KEKRegistry {
-		opts := make([]KEKRegistryOption, 0, len(p.NamespaceKeys)+1)
-		opts = append(opts, WithDefaultKey(p.DefaultKey))
+	func(p CryptoParams) (*Sealer, error) {
+		opts := make([]KEKRegistryOption, 0, len(p.Policies)+1)
+		opts = append(opts, WithDefaultPolicy(p.DefaultPolicy))
 
-		for k, v := range p.NamespaceKeys {
-			opts = append(opts, WithKeyForNamespace(k, v))
+		for ns, policy := range p.Policies {
+			opts = append(opts, WithKeyPolicy(ns, policy))
 		}
 
-		return NewKEKRegistry(opts...)
-	},
-	func(p SealerParams) (*Sealer, error) {
-		opts := make([]SealerOption, 0, len(p.KeyConfigs))
-		for k, v := range p.KeyConfigs {
-			opts = append(opts, WithKeyConfig(k, v))
-		}
-
-		return NewSealer(p.Registry, opts...)
+		return NewSealer(NewKEKRegistry(opts...))
 	},
 ))
 
-type (
-	// KEKRegistryParams holds the fx-injected parameters for constructing a KEKRegistry.
-	KEKRegistryParams struct {
-		fx.In
+// CryptoParams holds the fx-injected parameters for constructing a KEKRegistry.
+type CryptoParams struct {
+	fx.In
 
-		// Default key to use when namespace override doesn't exist.
-		// When nil, a blank KEK is used (no encryption occurs).
-		DefaultKey KEK `optional:"true"`
+	// DefaultPolicy is the fallback used when no namespace-specific policy is registered.
+	// When zero, a no-op KEK is used (no encryption occurs).
+	DefaultPolicy KeyPolicy `optional:"true"`
 
-		// A map of namespace to KEK.
-		NamespaceKeys map[string]KEK
-	}
-
-	// SealerParams holds the fx-injected parameters for constructing a [Sealer].
-	SealerParams struct {
-		fx.In
-
-		// KeyConfigs maps each namespace ID to its [KeyConfig] rotation policy.
-		KeyConfigs map[string]KeyConfig
-		// Registry is the [KEKRegistry] used to encrypt and decrypt DEKs.
-		Registry *KEKRegistry
-	}
-)
+	// Policies maps each namespace to its [KeyPolicy].
+	Policies map[string]KeyPolicy
+}

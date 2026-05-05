@@ -1,11 +1,18 @@
 package config
 
 import (
+	"fmt"
 	"io"
 	"os"
 
 	"github.com/goccy/go-yaml"
 )
+
+// Config holds the complete proxy configuration.
+type Config struct {
+	Clusters   []Cluster  `yaml:"clusters"`
+	Encryption Encryption `yaml:"encryption"`
+}
 
 // Load reads and parses the YAML config specified in the Reader.
 // Values of the form ${VAR} are replaced with the corresponding environment variable.
@@ -39,4 +46,22 @@ func LoadFile(path string) (*Config, error) {
 	defer func() { _ = f.Close() }()
 
 	return Load(f)
+}
+
+func (c *Config) validate() error {
+	if len(c.Clusters) == 0 {
+		return fmt.Errorf("must define at least one cluster")
+	}
+
+	for i, cluster := range c.Clusters {
+		if err := cluster.validate(i); err != nil {
+			return err
+		}
+	}
+
+	if err := c.Encryption.validate(); err != nil {
+		return err
+	}
+
+	return nil
 }

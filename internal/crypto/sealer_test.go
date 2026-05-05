@@ -26,8 +26,8 @@ func TestSealer_SealOpen(t *testing.T) {
 		{"large", make([]byte, 64*1024)},
 	}
 
-	cfg := crypto.KeyConfig{Lifetime: time.Hour, ExpirationBuffer: time.Minute}
-	s := newTestSealer(t, "ns", cfg)
+	policy := crypto.KeyPolicy{KEK: &testKEK{id: "kek-ns"}, Duration: time.Hour, RenewBefore: time.Minute}
+	s := newTestSealer(t, "ns", policy)
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -53,11 +53,35 @@ func TestSealer_Seal_UnknownID(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestSealer_Seal_DefaultPolicy(t *testing.T) {
+	t.Parallel()
+
+	policy := crypto.KeyPolicy{KEK: &testKEK{id: "default"}, Duration: time.Hour, RenewBefore: time.Minute}
+	reg := crypto.NewKEKRegistry(crypto.WithDefaultPolicy(policy))
+	s, err := crypto.NewSealer(reg)
+	require.NoError(t, err)
+
+	// Two different namespaces should both succeed and produce independently decryptable envelopes.
+	env1, err := s.Seal(context.Background(), "ns1", []byte("data1"))
+	require.NoError(t, err)
+
+	env2, err := s.Seal(context.Background(), "ns2", []byte("data2"))
+	require.NoError(t, err)
+
+	got1, err := s.Open(context.Background(), env1)
+	require.NoError(t, err)
+	require.Equal(t, []byte("data1"), got1)
+
+	got2, err := s.Open(context.Background(), env2)
+	require.NoError(t, err)
+	require.Equal(t, []byte("data2"), got2)
+}
+
 func TestSealer_Open_TamperedCipherText(t *testing.T) {
 	t.Parallel()
 
-	cfg := crypto.KeyConfig{Lifetime: time.Hour, ExpirationBuffer: time.Minute}
-	s := newTestSealer(t, "ns", cfg)
+	policy := crypto.KeyPolicy{KEK: &testKEK{id: "kek-ns"}, Duration: time.Hour, RenewBefore: time.Minute}
+	s := newTestSealer(t, "ns", policy)
 
 	env, err := s.Seal(context.Background(), "ns", []byte("hello"))
 	require.NoError(t, err)
@@ -71,13 +95,13 @@ func TestSealer_Refresh_RotatesExpiredKeys(t *testing.T) {
 	t.Parallel()
 
 	now, timeTravel := newClock(time.Now())
-	cfg := crypto.KeyConfig{Lifetime: time.Hour, ExpirationBuffer: 10 * time.Minute}
-	s := newTestSealer(t, "ns", cfg, crypto.WithNowFunc(now))
+	// Duration=1h, RenewBefore=10m → DEK is considered expired at 50m.
+	policy := crypto.KeyPolicy{KEK: &testKEK{id: "kek-ns"}, Duration: time.Hour, RenewBefore: 10 * time.Minute}
+	s := newTestSealer(t, "ns", policy, crypto.WithNowFunc(now))
 
 	env1, err := s.Seal(context.Background(), "ns", []byte("before rotation"))
 	require.NoError(t, err)
 
-	// Advance past the expiration buffer threshold (60m lifetime - 10m buffer = expires at 50m).
 	timeTravel(51 * time.Minute)
 	require.NoError(t, s.Refresh())
 
@@ -98,8 +122,8 @@ func TestSealer_Refresh_NoOp_WhenNotExpired(t *testing.T) {
 	t.Parallel()
 
 	now, _ := newClock(time.Now())
-	cfg := crypto.KeyConfig{Lifetime: time.Hour, ExpirationBuffer: 10 * time.Minute}
-	s := newTestSealer(t, "ns", cfg, crypto.WithNowFunc(now))
+	policy := crypto.KeyPolicy{KEK: &testKEK{id: "kek-ns"}, Duration: time.Hour, RenewBefore: 10 * time.Minute}
+	s := newTestSealer(t, "ns", policy, crypto.WithNowFunc(now))
 
 	env, err := s.Seal(context.Background(), "ns", []byte("hello"))
 	require.NoError(t, err)
@@ -116,8 +140,8 @@ func TestSealer_Seal_RotatesExpiredKeyInline(t *testing.T) {
 
 	// Verify that Seal handles an expired key even when Refresh hasn't been called.
 	now, timeTravel := newClock(time.Now())
-	cfg := crypto.KeyConfig{Lifetime: time.Hour, ExpirationBuffer: 10 * time.Minute}
-	s := newTestSealer(t, "ns", cfg, crypto.WithNowFunc(now))
+	policy := crypto.KeyPolicy{KEK: &testKEK{id: "kek-ns"}, Duration: time.Hour, RenewBefore: 10 * time.Minute}
+	s := newTestSealer(t, "ns", policy, crypto.WithNowFunc(now))
 
 	env1, err := s.Seal(context.Background(), "ns", []byte("before"))
 	require.NoError(t, err)
@@ -136,7 +160,7 @@ func TestSealer_Seal_RotatesExpiredKeyInline(t *testing.T) {
 	require.Equal(t, []byte("after"), got2)
 }
 
-// newClock returns a controllable now function and an timeTravel function for tests.
+// newClock returns a controllable now function and a timeTravel function for tests.
 func newClock(start time.Time) (func() time.Time, func(time.Duration)) {
 	var mu sync.Mutex
 	cur := start
@@ -151,13 +175,11 @@ func newClock(start time.Time) (func() time.Time, func(time.Duration)) {
 		}
 }
 
-func newTestSealer(t *testing.T, ns string, cfg crypto.KeyConfig, opts ...crypto.SealerOption) *crypto.Sealer {
+func newTestSealer(t *testing.T, ns string, policy crypto.KeyPolicy, opts ...crypto.SealerOption) *crypto.Sealer {
 	t.Helper()
 
-	reg := crypto.NewKEKRegistry(crypto.WithKeyForNamespace(ns, &testKEK{id: "kek-" + ns}))
-	s, err := crypto.NewSealer(reg, append([]crypto.SealerOption{
-		crypto.WithKeyConfig(ns, cfg),
-	}, opts...)...)
+	reg := crypto.NewKEKRegistry(crypto.WithKeyPolicy(ns, policy))
+	s, err := crypto.NewSealer(reg, opts...)
 	require.NoError(t, err)
 	return s
 }

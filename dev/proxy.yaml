@@ -1,3 +1,15 @@
+encryption:
+  default:
+    # NB: Only suitable for testing/development.
+    # Run proxy tools gen-key to create
+    uri: base64key://dYz0gjYaoDrcBCAoTxg1tuYFxrbC1ksQcf1-med2H9w=
+    duration: 5m
+    renewBefore: 1m
+
+  overrides:
+    ns1:
+      uri: base64key://YDtk5bmsK4pBbVfW7fpi9pXihFdqkA4XCXZ3SoMOenw=
+
 clusters:
   - name: temporal-cloud
     type: temporal

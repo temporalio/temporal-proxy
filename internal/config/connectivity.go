@@ -1,8 +1,6 @@
 package config
 
-import (
-	"fmt"
-)
+import "fmt"
 
 const (
 	// Inbound means the remote sends RPCs to this proxy.
@@ -16,9 +14,6 @@ const (
 )
 
 type (
-	Config struct {
-		Clusters []Cluster `yaml:"clusters"`
-	}
 
 	// Cluster defines a cluster involved with this proxy.
 	Cluster struct {
@@ -52,20 +47,6 @@ type (
 		Listener ListenConfig `yaml:",inline"`
 	}
 )
-
-func (c *Config) validate() error {
-	if len(c.Clusters) == 0 {
-		return fmt.Errorf("must define at least one cluster")
-	}
-
-	for i, cluster := range c.Clusters {
-		if err := cluster.validate(i); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
 
 func (c *Cluster) validate(idx int) error {
 	switch c.Type {
