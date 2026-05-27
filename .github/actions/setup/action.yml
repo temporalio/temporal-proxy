@@ -1,0 +1,14 @@
+name: setup
+description: Install mise toolchain and restore Go module/build caches
+
+runs:
+  using: composite
+  steps:
+    - uses: jdx/mise-action@v4
+    - uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('go.sum', 'dev/tools.sum') }}
+        restore-keys: ${{ runner.os }}-go-

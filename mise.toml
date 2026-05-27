@@ -1,0 +1,60 @@
+[settings]
+# Required for `mise deps` and the [deps.*] tables below.
+experimental = true
+
+[tools]
+go = "1.26"
+
+################################################################################
+# Dependencies
+################################################################################
+
+[deps.go]
+
+[deps.tools]
+sources = ["mise.toml"]
+outputs = ["dev/tools.sum"]
+description = "Sync dev tools"
+run = """
+  go get -tool -modfile=dev/tools.mod github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8
+  go get -tool -modfile=dev/tools.mod go.uber.org/mock/mockgen@v0.6.0
+  go mod tidy -modfile=dev/tools.mod 2>/dev/null || true
+"""
+
+################################################################################
+# Local Servers & Processes
+################################################################################
+
+[tasks.server]
+description = "Run the server locally"
+interactive = true
+run = "go run ./cmd/proxy serve -c dev/config.yaml"
+
+################################################################################
+# Development Tasks
+################################################################################
+
+[tasks.build]
+description = "Build binaries"
+run = ["go build -o dist/proxy ./cmd/proxy"]
+
+[tasks.lint]
+description = "Lint Go files"
+run = ["go tool -modfile=dev/tools.mod golangci-lint run"]
+
+[tasks.format]
+description = "Format Go files"
+run = ["go fix ./...", "go tool -modfile=dev/tools.mod golangci-lint fmt"]
+
+[tasks.test]
+description = "Run unit tests"
+run = "go test -cover ./..."
+
+[tasks.test-bench]
+description = "Run bench tests"
+usage = '''
+flag "-c --count <count>" default="3"
+flag "-t --time <time>" default="1s"
+flag "-p --packages <packages>" default="./..."
+'''
+run = "go test -run='^$' -bench=. -benchmem -count=${usage_count?} -benchtime=${usage_time?} ${usage_packages?}"
