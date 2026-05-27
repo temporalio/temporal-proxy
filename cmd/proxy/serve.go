@@ -9,6 +9,7 @@ import (
 	"go.temporal.io/server/common/log/tag"
 	"go.uber.org/fx"
 
+	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/server"
 )
 
@@ -41,12 +42,13 @@ func serve() *cli.Command {
 				fx.Supply(
 					prometheus.WrapRegistererWithPrefix("proxy_", prometheus.NewRegistry()),
 					fx.Annotate(ctx, fx.As(new(context.Context))),
-					fx.Annotate(cmd.String("config"), fx.ResultTags(`name:"configFile"`)),
+					fx.Annotate(cmd.String("config"), config.ConfigFileTag),
 				),
 				fx.Provide(
 					func() prometheus.Gatherer { return prometheus.DefaultGatherer },
 					func() log.Logger { return logger },
 				),
+				config.Module,
 				server.Module,
 				fx.NopLogger,
 			)

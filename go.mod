@@ -3,10 +3,13 @@ module github.com/temporalio/temporal-proxy
 go 1.26.3
 
 require (
+	github.com/goccy/go-yaml v1.19.2
 	github.com/prometheus/client_golang v1.21.0
+	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli/v3 v3.8.0
 	go.temporal.io/server v1.30.4
 	go.uber.org/fx v1.24.0
+	google.golang.org/grpc v1.79.3
 )
 
 require (
@@ -28,7 +31,6 @@ require (
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
 	go.temporal.io/api v1.62.6 // indirect
 	go.temporal.io/sdk v1.38.0 // indirect
 	go.uber.org/dig v1.19.0 // indirect
@@ -43,7 +45,6 @@ require (
 	golang.org/x/time v0.14.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
-	google.golang.org/grpc v1.79.3 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

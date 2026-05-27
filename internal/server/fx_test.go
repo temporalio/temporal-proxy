@@ -2,7 +2,8 @@ package server_test
 
 import (
 	"context"
-	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -11,8 +12,8 @@ import (
 	"go.uber.org/fx"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/server"
-	"github.com/temporalio/temporal-proxy/internal/transport/creds"
 )
 
 func TestModule(t *testing.T) {
@@ -22,9 +23,9 @@ func TestModule(t *testing.T) {
 		t.Parallel()
 
 		app := newTestApp(t,
-			fx.Supply(
-				fx.Annotate("127.0.0.1:0", fx.ResultTags(`name:"serverHostPort"`)),
-			),
+			fx.Supply(&config.Config{
+				Listen: config.ListenConfig{HostPort: "127.0.0.1:0"},
+			}),
 		)
 
 		startCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -45,8 +46,7 @@ func TestModule(t *testing.T) {
 
 		app := newTestApp(t,
 			fx.Supply(
-				fx.Annotate("127.0.0.1:0", fx.ResultTags(`name:"serverHostPort"`)),
-				fx.Annotate(creds.NewInsecure(), fx.As(new(server.Credentials))),
+				&config.Config{Listen: config.ListenConfig{HostPort: "127.0.0.1:0"}},
 				fx.Annotate(hc, fx.As(new(server.HealthCheck))),
 			),
 			fx.Provide(func() log.Logger { return log.NewNoopLogger() }),
@@ -64,26 +64,36 @@ func TestModule(t *testing.T) {
 	t.Run("surfaces server construction errors", func(t *testing.T) {
 		t.Parallel()
 
+		missing := filepath.Join(t.TempDir(), "missing.pem")
+
 		app := fx.New(
 			fx.Supply(
 				fx.Annotate(t.Context(), fx.As(new(context.Context))),
-				fx.Annotate(failingCredentials{err: errors.New("creds boom")}, fx.As(new(server.Credentials))),
+				&config.Config{
+					Listen: config.ListenConfig{
+						HostPort: "127.0.0.1:0",
+						TLS: &config.TLSConfig{
+							CertFile: missing,
+							KeyFile:  missing,
+						},
+					},
+				},
 			),
 			server.Module,
 			fx.NopLogger,
 		)
 
 		require.Error(t, app.Err())
-		require.ErrorContains(t, app.Err(), "creds boom")
+		require.ErrorIs(t, app.Err(), os.ErrNotExist)
 	})
 
 	t.Run("surfaces listener creation errors at start", func(t *testing.T) {
 		t.Parallel()
 
 		app := newTestApp(t,
-			fx.Supply(
-				fx.Annotate("not-a-valid-host:port", fx.ResultTags(`name:"serverHostPort"`)),
-			),
+			fx.Supply(&config.Config{
+				Listen: config.ListenConfig{HostPort: "not-a-valid-host:port"},
+			}),
 		)
 
 		startCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -93,12 +103,6 @@ func TestModule(t *testing.T) {
 		require.Error(t, err)
 		require.ErrorContains(t, err, "failed to create listener")
 	})
-}
-
-func TestDefaultHostPort(t *testing.T) {
-	t.Parallel()
-
-	require.Equal(t, ":8443", server.DefaultHostPort)
 }
 
 func newTestApp(t *testing.T, opts ...fx.Option) *fx.App {
