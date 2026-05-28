@@ -6,5 +6,6 @@
 A proxy for applications, workers, and the Temporal UI that handles authentication, encryption, namespace mapping and
 much more.
 
-> [!NOTE]: This is a work in progress and evolving quite quickly. It is not ready for production use, but you can reach
+> [!NOTE]
+> This is a work in progress and evolving quite quickly. It is not ready for production use, but you can reach
 > out to the CGS team for more details about timing and functionality.
