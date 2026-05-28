@@ -12,7 +12,8 @@ import (
 type (
 	// Config is the top-level codec-server configuration.
 	Config struct {
-		Listen ListenConfig `yaml:",inline"`
+		Listen   ListenConfig `yaml:",inline"`
+		Upstream Upstream     `yaml:"upstream"`
 	}
 )
 
@@ -47,5 +48,9 @@ func LoadFile(path string) (*Config, error) {
 }
 
 func (c *Config) Validate() error {
-	return validation.Validate("", validation.Nested("", &c.Listen))
+	return validation.Validate(
+		"",
+		validation.Nested("", &c.Listen),
+		validation.Nested("upstream", &c.Upstream),
+	)
 }

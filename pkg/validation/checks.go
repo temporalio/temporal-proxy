@@ -4,17 +4,34 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
 )
+
+var errInvalidHostPort = errors.New("is not a valid host:port")
 
 // Check verifies a single value of type V. A nil return means valid.
 type Check[V any] func(V) error
 
-// IsHostPort validates that s is a host:port pair accepted by net.ResolveTCPAddr.
-// Both "host:port" and ":port" (listen-on-all-interfaces) forms are valid.
+// IsHostPort validates that s is syntactically a host:port pair. The check is
+// purely lexical: no DNS lookup, no /etc/services port resolution. Both
+// "host:port" and ":port" (listen-on-all-interfaces) forms are valid, and the
+// port must be a decimal integer in [0, 65535]. Port 0 is accepted because it
+// is a valid listener form meaning "let the OS pick".
 func IsHostPort() Check[string] {
 	return func(s string) error {
-		if _, err := net.ResolveTCPAddr("tcp", s); err != nil {
-			return errors.New("is not a valid host:port")
+		host, port, err := net.SplitHostPort(s)
+		if err != nil {
+			return errInvalidHostPort
+		}
+
+		if strings.ContainsAny(host, "/") {
+			return errInvalidHostPort
+		}
+
+		p, err := strconv.Atoi(port)
+		if err != nil || p < 0 || p > 65535 {
+			return errInvalidHostPort
 		}
 
 		return nil

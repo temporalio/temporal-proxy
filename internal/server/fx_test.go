@@ -26,6 +26,9 @@ func TestModule(t *testing.T) {
 			t,
 			fx.Supply(&config.Config{
 				Listen: config.ListenConfig{HostPort: "127.0.0.1:0"},
+				Upstream: config.Upstream{
+					Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
+				},
 			}),
 		)
 
@@ -48,7 +51,12 @@ func TestModule(t *testing.T) {
 		app := newTestApp(
 			t,
 			fx.Supply(
-				&config.Config{Listen: config.ListenConfig{HostPort: "127.0.0.1:0"}},
+				&config.Config{
+					Listen: config.ListenConfig{HostPort: "127.0.0.1:0"},
+					Upstream: config.Upstream{
+						Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
+					},
+				},
 				fx.Annotate(hc, fx.As(new(server.HealthCheck))),
 			),
 			fx.Provide(func() log.Logger { return log.NewNoopLogger() }),
@@ -107,6 +115,9 @@ func TestModule(t *testing.T) {
 			t,
 			fx.Supply(&config.Config{
 				Listen: config.ListenConfig{HostPort: "1.2.3.4:0"},
+				Upstream: config.Upstream{
+					Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
+				},
 			}),
 		)
 
