@@ -28,5 +28,8 @@ CLAUDE.local.md
 # git worktrees
 .worktrees/
 
+# dev things
+dev/certs/
+
 # Binary from task build
 ./proxy

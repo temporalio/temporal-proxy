@@ -4,6 +4,7 @@ experimental = true
 
 [tools]
 go = "1.26"
+mkcert = "1.4.4"
 
 ################################################################################
 # Dependencies
@@ -29,6 +30,12 @@ run = """
 description = "Run the server locally"
 interactive = true
 run = "go run ./cmd/proxy serve -c dev/config.yaml"
+
+[tasks.server-tls]
+description = "Run the server locally with mTLS"
+interactive = true
+depends = ["gen-certs"]
+run = "go run ./cmd/proxy serve -c dev/config-mtls.yaml"
 
 ################################################################################
 # Development Tasks
@@ -58,3 +65,28 @@ flag "-t --time <time>" default="1s"
 flag "-p --packages <packages>" default="./..."
 '''
 run = "go test -run='^$' -bench=. -benchmem -count=${usage_count?} -benchtime=${usage_time?} ${usage_packages?}"
+
+################################################################################
+# Code Gen Tasks
+################################################################################
+
+[tasks.gen-certs]
+description = "Generate development certs (client and server)"
+hide = true
+dir = "dev/certs"
+env.CAROOT = "."
+sources = ["mise.toml"]
+outputs = [
+  "server.crt",
+  "client.crt",
+  "extserver.crt",
+  "ca.crt",
+]
+run = [
+  "rm -f *.pem *.key *.crt",
+  "mkcert -key-file server.key -cert-file server.crt localhost 127.0.0.1 ::1 2>/dev/null",
+  "mkcert -client -key-file client.key -cert-file client.crt client 2>/dev/null",
+  "mkcert -key-file extserver.key -cert-file extserver.crt extserver localhost 127.0.0.1 ::1 2>/dev/null",
+  "mv rootCA.pem ca.crt",
+  "rm -f rootCA-key.pem",
+]

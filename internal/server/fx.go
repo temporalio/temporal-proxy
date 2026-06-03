@@ -7,22 +7,19 @@ import (
 
 	"go.temporal.io/server/common/log"
 	"go.uber.org/fx"
-)
 
-// DefaultHostPort is the TCP bind address used when [ServerParams.HostPort]
-// is empty.
-const DefaultHostPort = ":8443"
+	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/transport/creds"
+)
 
 // Module is the fx module that constructs a [Server] from [ServerParams] and
 // binds its lifecycle to the application.
 var Module = fx.Option(fx.Invoke(func(p ServerParams) error {
 	opts := make([]Option, 0, 3)
+	opts = append(opts, WithCredentials(p.creds()))
+
 	if p.Logger != nil {
 		opts = append(opts, WithLogger(p.Logger))
-	}
-
-	if p.Credentials != nil {
-		opts = append(opts, WithCredentials(p.Credentials))
 	}
 
 	if p.HealthCheck != nil {
@@ -34,17 +31,12 @@ var Module = fx.Option(fx.Invoke(func(p ServerParams) error {
 		return err
 	}
 
-	hostPort := p.HostPort
-	if hostPort == "" {
-		hostPort = DefaultHostPort
-	}
-
 	p.Lifecycle.Append(fx.Hook{
 		OnStart: func(context.Context) error {
 			lis, err := (&net.ListenConfig{}).Listen(
 				p.Context,
 				"tcp",
-				hostPort,
+				p.Config.Listen.HostPort,
 			)
 			if err != nil {
 				return fmt.Errorf("failed to create listener: %w", err)
@@ -77,10 +69,28 @@ type ServerParams struct {
 
 	// Required values
 	Context context.Context
+	Config  *config.Config
 
 	// Optional values
-	HostPort    string      `name:"serverHostPort" optional:"true"`
-	Credentials Credentials `optional:"true"`
 	HealthCheck HealthCheck `optional:"true"`
 	Logger      log.Logger  `optional:"true"`
+}
+
+func (p *ServerParams) creds() Credentials {
+	tls := p.Config.Listen.TLS
+	if tls == nil {
+		return creds.NewInsecure()
+	}
+
+	if tls.CAFile != "" {
+		return creds.NewMTLS(
+			tls.CAFile,
+			tls.CertFile,
+			tls.KeyFile,
+			creds.MTLSOptions{
+				ServerName: tls.ServerName,
+			})
+	}
+
+	return creds.NewServerTLS(tls.CertFile, tls.KeyFile)
 }

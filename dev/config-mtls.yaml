@@ -1,0 +1,5 @@
+hostPort: :8444
+tls:
+  ca: dev/certs/ca.crt
+  cert: dev/certs/server.crt
+  key: dev/certs/server.key
