@@ -28,3 +28,9 @@ func (c *Insecure) DialOption() (grpc.DialOption, error) {
 func (c *Insecure) ServerOption() (grpc.ServerOption, error) {
 	return grpc.Creds(insecure.NewCredentials()), nil
 }
+
+// Validate reports any configuration problems with this credential. Insecure
+// has no certificates or keys to inspect, so it always succeeds.
+func (c *Insecure) Validate() error {
+	return nil
+}

@@ -6,6 +6,8 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+
+	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
 // minTLSVersion is the minimum TLS version accepted on both client and server
@@ -72,4 +74,27 @@ func (c *TLS) ServerOption() (grpc.ServerOption, error) {
 	}
 
 	return grpc.Creds(credentials.NewTLS(cfg)), nil
+}
+
+// Validate reads the configured certificate file and returns a [validation.Errors]
+// describing any problems found: an expired or not-yet-valid certificate, a weak
+// signature algorithm, or a public key type incompatible with [preferredCipherSuites].
+// Client-mode [TLS] credentials (those constructed via [NewClientTLS]) have no
+// certFile and will fail with a read error; callers should only invoke Validate
+// on server-mode credentials.
+func (c *TLS) Validate() error {
+	if errs := validation.Validate(
+		"",
+		validation.Field("cert", c.certFile, func(path string) error {
+			return ValidatePEMFile(
+				path,
+				CertificateNotExpired(),
+				UsesSecureCertificateAlgorithm(preferredCipherSuites...),
+			)
+		}),
+	); len(errs) > 0 {
+		return errs
+	}
+
+	return nil
 }
