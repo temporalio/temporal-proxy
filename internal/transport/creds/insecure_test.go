@@ -1,8 +1,6 @@
 package creds_test
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -26,12 +24,9 @@ func TestInsecure_ServerOption(t *testing.T) {
 	require.NotNil(t, opt)
 }
 
-func writeFile(t *testing.T, dir, name string, contents []byte) string {
-	t.Helper()
+func TestInsecure_Validate(t *testing.T) {
+	t.Parallel()
 
-	path := filepath.Join(dir, name)
-	err := os.WriteFile(path, contents, 0o600)
-	require.NoError(t, err)
-
-	return path
+	// Insecure has no certificate material to inspect; Validate is a no-op.
+	require.NoError(t, creds.NewInsecure().Validate())
 }

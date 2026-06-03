@@ -1,12 +1,8 @@
 package creds_test
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/pem"
 	"math/big"
 	"path/filepath"
 	"testing"
@@ -15,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/temporalio/temporal-proxy/internal/transport/creds"
+	"github.com/temporalio/temporal-proxy/pkg/testutil"
 )
 
 func TestTLS_DialOption(t *testing.T) {
@@ -38,14 +35,14 @@ func TestTLS_ServerOption(t *testing.T) {
 			name: "success",
 			setup: func(t *testing.T) (string, string) {
 				t.Helper()
-				return mustGenSelfSignedCert(t)
+				return testutil.GenerateSelfSignedCert(t)
 			},
 		},
 		{
 			name: "missing cert file",
 			setup: func(t *testing.T) (string, string) {
 				t.Helper()
-				_, keyFile := mustGenSelfSignedCert(t)
+				_, keyFile := testutil.GenerateSelfSignedCert(t)
 				return filepath.Join(t.TempDir(), "missing.pem"), keyFile
 			},
 			wantErr: "failed to load server key pair",
@@ -54,7 +51,7 @@ func TestTLS_ServerOption(t *testing.T) {
 			name: "missing key file",
 			setup: func(t *testing.T) (string, string) {
 				t.Helper()
-				certFile, _ := mustGenSelfSignedCert(t)
+				certFile, _ := testutil.GenerateSelfSignedCert(t)
 				return certFile, filepath.Join(t.TempDir(), "missing.pem")
 			},
 			wantErr: "failed to load server key pair",
@@ -64,8 +61,8 @@ func TestTLS_ServerOption(t *testing.T) {
 			setup: func(t *testing.T) (string, string) {
 				t.Helper()
 				dir := t.TempDir()
-				certFile := writeFile(t, dir, "cert.pem", []byte("not a cert"))
-				keyFile := writeFile(t, dir, "key.pem", []byte("not a key"))
+				certFile := testutil.WriteFile(t, dir, "cert.pem", []byte("not a cert"))
+				keyFile := testutil.WriteFile(t, dir, "key.pem", []byte("not a key"))
 				return certFile, keyFile
 			},
 			wantErr: "failed to load server key pair",
@@ -90,35 +87,54 @@ func TestTLS_ServerOption(t *testing.T) {
 	}
 }
 
-func mustGenSelfSignedCert(t *testing.T) (certFile, keyFile string) {
-	t.Helper()
+func TestTLS_Validate(t *testing.T) {
+	t.Parallel()
 
-	dir := t.TempDir()
+	t.Run("valid RSA cert passes", func(t *testing.T) {
+		t.Parallel()
 
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
+		// preferredCipherSuites are RSA-only, so the leaf must use an RSA key.
+		certFile := writePEMFile(t, testutil.RSACert(t, validTemplate()))
+		require.NoError(t, creds.NewServerTLS(certFile, "").Validate())
+	})
 
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "localhost"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     []string{"localhost"},
-	}
+	t.Run("missing cert file", func(t *testing.T) {
+		t.Parallel()
 
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	require.NoError(t, err)
+		err := creds.NewServerTLS(filepath.Join(t.TempDir(), "missing.pem"), "").Validate()
+		require.ErrorContains(t, err, "failed to read PEM file")
+	})
 
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	certFile = writeFile(t, dir, "cert.pem", certPEM)
+	t.Run("expired cert fails", func(t *testing.T) {
+		t.Parallel()
 
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	require.NoError(t, err)
+		expired := testutil.RSACert(t, &x509.Certificate{
+			SerialNumber: big.NewInt(1),
+			Subject:      pkix.Name{CommonName: "expired"},
+			NotBefore:    time.Now().Add(-2 * time.Hour),
+			NotAfter:     time.Now().Add(-time.Hour),
+		})
+		certFile := writePEMFile(t, expired)
 
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	keyFile = writeFile(t, dir, "key.pem", keyPEM)
+		err := creds.NewServerTLS(certFile, "").Validate()
+		require.ErrorContains(t, err, "expired")
+	})
 
-	return certFile, keyFile
+	t.Run("ECDSA cert rejected by RSA-only cipher suites", func(t *testing.T) {
+		t.Parallel()
+
+		certFile := writePEMFile(t, testutil.ECDSACert(t, validTemplate()))
+		err := creds.NewServerTLS(certFile, "").Validate()
+		require.ErrorContains(t, err, "key type")
+	})
+
+	t.Run("client TLS has no certFile and fails to read", func(t *testing.T) {
+		t.Parallel()
+
+		// NewClientTLS leaves certFile empty; Validate is documented as
+		// server-mode-only, but we still want to confirm it surfaces a clear
+		// IO error rather than panicking.
+		err := creds.NewClientTLS().Validate()
+		require.ErrorContains(t, err, "failed to read PEM file")
+	})
 }
