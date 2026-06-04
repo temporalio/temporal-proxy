@@ -5,6 +5,8 @@ import (
 	"os"
 
 	"github.com/goccy/go-yaml"
+
+	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
 type (
@@ -42,4 +44,8 @@ func LoadFile(path string) (*Config, error) {
 	defer func() { _ = f.Close() }()
 
 	return Load(f)
+}
+
+func (c *Config) Validate() error {
+	return validation.Validate("", validation.Nested("", &c.Listen))
 }

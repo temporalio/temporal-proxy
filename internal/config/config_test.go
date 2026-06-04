@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
 type errReader struct{ err error }
@@ -127,6 +128,78 @@ func TestLoadFile_MissingFile(t *testing.T) {
 
 	_, err := config.LoadFile(filepath.Join(t.TempDir(), "does-not-exist.yaml"))
 	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestConfig_Validate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		cfg        *config.Config
+		wantTuples [][2]string // (Subject, Field); empty slice means no error expected
+	}{
+		{
+			name: "valid hostPort, no TLS",
+			cfg: &config.Config{
+				Listen: config.ListenConfig{HostPort: ":8080"},
+			},
+		},
+		{
+			name: "invalid hostPort surfaces from ListenConfig",
+			cfg: &config.Config{
+				Listen: config.ListenConfig{HostPort: "localhost"},
+			},
+			wantTuples: [][2]string{{"", "hostPort"}},
+		},
+		{
+			name: "broken TLS surfaces with tls subject stamped by parent",
+			cfg: &config.Config{
+				Listen: config.ListenConfig{
+					HostPort: ":8080",
+					TLS:      &config.TLSConfig{}, // empty -> creds.TLS PEM read failures
+				},
+			},
+			wantTuples: [][2]string{
+				{"tls", "cert"},
+				{"tls", "key"},
+			},
+		},
+		{
+			name: "hostPort and TLS failures aggregate",
+			cfg: &config.Config{
+				Listen: config.ListenConfig{
+					HostPort: "localhost",
+					TLS:      &config.TLSConfig{},
+				},
+			},
+			wantTuples: [][2]string{
+				{"", "hostPort"},
+				{"tls", "cert"},
+				{"tls", "key"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tt.cfg.Validate()
+			if len(tt.wantTuples) == 0 {
+				require.NoError(t, err)
+				return
+			}
+
+			var errs validation.Errors
+			require.True(t, errors.As(err, &errs), "expected validation.Errors, got %T", err)
+
+			got := make([][2]string, len(errs))
+			for i, e := range errs {
+				got[i] = [2]string{e.Subject, e.Field}
+			}
+			require.ElementsMatch(t, tt.wantTuples, got)
+		})
+	}
 }
 
 func (e *errReader) Read(_ []byte) (int, error) { return 0, e.err }

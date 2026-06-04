@@ -106,3 +106,33 @@ func TestUnique_InferredFromField(t *testing.T) {
 	errs := rule()
 	require.Len(t, errs, 1)
 }
+
+func TestIsHostPort(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		in      string
+		wantErr bool
+	}{
+		{name: "host and port", in: "localhost:8080"},
+		{name: "ipv4 and port", in: "127.0.0.1:8080"},
+		{name: "wildcard host", in: ":8080"},
+		{name: "missing port", in: "localhost", wantErr: true},
+		{name: "url with scheme", in: "https://example.com:8080", wantErr: true},
+	}
+
+	check := validation.IsHostPort()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := check(tt.in)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}

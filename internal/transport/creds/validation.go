@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/temporalio/temporal-proxy/pkg/validation"
@@ -61,6 +62,33 @@ func ValidatePEMFile(path string, validators ...Validator) error {
 	}
 
 	return ValidatePEM(data, validators...)
+}
+
+// ValidatePEMKeyFile reads path and verifies it contains at least one PEM
+// block whose type ends in "PRIVATE KEY" (covering "RSA PRIVATE KEY",
+// "EC PRIVATE KEY", and "PRIVATE KEY" for PKCS#8). The block contents are
+// not parsed; cryptographic validity and cert/key matching are exercised
+// at runtime by [crypto/tls.LoadX509KeyPair].
+func ValidatePEMKeyFile(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("failed to read PEM key file: %w", err)
+	}
+
+	for rest := data; len(rest) > 0; {
+		block, r := pem.Decode(rest)
+		if block == nil {
+			break
+		}
+
+		if strings.HasSuffix(block.Type, "PRIVATE KEY") {
+			return nil
+		}
+
+		rest = r
+	}
+
+	return errors.New("no PRIVATE KEY block found in PEM data")
 }
 
 // ValidatePEM parses all CERTIFICATE blocks from pemData and runs each

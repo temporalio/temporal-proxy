@@ -10,7 +10,15 @@
 //
 // Higher-level validation is expressed by passing a list of [Rule] values to
 // [Validate], typically constructed via [Field] and the built-in [Check]
-// functions ([Required], [Unique]). Validate accumulates every rule's output
-// into one Errors value and stamps the supplied subject onto entries that
-// don't already carry one.
+// functions ([Required], [Unique], [IsHostPort]). Validate accumulates every
+// rule's output into one Errors value and stamps the supplied subject onto
+// entries that don't already carry one.
+//
+// Conditional logic is expressed with the [When] family of combinators:
+// [When] guards Checks on a value-aware predicate, [WhenFn] guards Checks on
+// a value-free predicate (closing over outer state), and [WhenRules] guards
+// an entire block of Rules. Nested struct validation is expressed with
+// [Nested], which embeds a child's [Validator] (anything with
+// Validate() error) as a Rule and stamps a subject onto entries the child
+// left unattributed.
 package validation

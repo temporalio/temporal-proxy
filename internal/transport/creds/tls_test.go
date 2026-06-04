@@ -94,8 +94,10 @@ func TestTLS_Validate(t *testing.T) {
 		t.Parallel()
 
 		// preferredCipherSuites are RSA-only, so the leaf must use an RSA key.
+		// Validate only checks that the key file exists and is PEM; it does
+		// not verify cert/key matching (LoadX509KeyPair does that at runtime).
 		certFile := writePEMFile(t, testutil.RSACert(t, validTemplate()))
-		require.NoError(t, creds.NewServerTLS(certFile, "").Validate())
+		require.NoError(t, creds.NewServerTLS(certFile, validKey(t)).Validate())
 	})
 
 	t.Run("missing cert file", func(t *testing.T) {

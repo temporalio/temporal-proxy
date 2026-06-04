@@ -1,9 +1,9 @@
 package validation
 
-// Validate runs each rule, accumulating failures into a single Errors. Any
-// Error returned by a rule whose Subject is empty is stamped with subject.
-// Returns nil when no rule produced an error.
-func Validate(subject string, rules ...Rule) Errors {
+// Validate runs each rule, accumulating failures into a single error (which
+// will typically be an [Errors] instance). Any [Error] whose Subject is empty is
+// stamped with subject.
+func Validate(subject string, rules ...Rule) error {
 	var errs Errors
 	for _, r := range rules {
 		errs = append(errs, r()...)
@@ -31,13 +31,17 @@ func toErrors(field string, err error) Errors {
 				out[i].Field = field
 			}
 		}
+
 		return out
 	}
+
 	if ve, ok := err.(Error); ok {
 		if ve.Field == "" {
 			ve.Field = field
 		}
+
 		return Errors{ve}
 	}
+
 	return Errors{{Field: field, Message: err.Error()}}
 }

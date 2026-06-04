@@ -83,7 +83,7 @@ func (c *TLS) ServerOption() (grpc.ServerOption, error) {
 // certFile and will fail with a read error; callers should only invoke Validate
 // on server-mode credentials.
 func (c *TLS) Validate() error {
-	if errs := validation.Validate(
+	return validation.Validate(
 		"",
 		validation.Field("cert", c.certFile, func(path string) error {
 			return ValidatePEMFile(
@@ -92,9 +92,6 @@ func (c *TLS) Validate() error {
 				UsesSecureCertificateAlgorithm(preferredCipherSuites...),
 			)
 		}),
-	); len(errs) > 0 {
-		return errs
-	}
-
-	return nil
+		validation.Field("key", c.keyFile, ValidatePEMKeyFile),
+	)
 }
