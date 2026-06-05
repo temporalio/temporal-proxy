@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"os"
 	"testing"
 	"time"
 
@@ -291,9 +292,86 @@ func TestUsesSecureCertificateAlgorithm_WeakAlgorithm(t *testing.T) {
 	require.Contains(t, err.Error(), "weak signature algorithm")
 }
 
+func TestValidatePEMKeyFile(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid private key file", func(t *testing.T) {
+		t.Parallel()
+
+		require.NoError(t, creds.ValidatePEMKeyFile(validKey(t)))
+	})
+
+	t.Run("missing file", func(t *testing.T) {
+		t.Parallel()
+
+		err := creds.ValidatePEMKeyFile("/tmp/definitely-not-a-real-key.pem")
+		require.Error(t, err)
+		require.ErrorContains(t, err, "failed to read PEM key file")
+	})
+
+	t.Run("empty path", func(t *testing.T) {
+		t.Parallel()
+
+		err := creds.ValidatePEMKeyFile("")
+		require.Error(t, err)
+		require.ErrorContains(t, err, "failed to read PEM key file")
+	})
+
+	t.Run("non-PEM contents", func(t *testing.T) {
+		t.Parallel()
+
+		path := testutil.WriteFile(t, t.TempDir(), "key.pem", []byte("not pem at all"))
+		err := creds.ValidatePEMKeyFile(path)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "no PRIVATE KEY block")
+	})
+
+	t.Run("PEM with only certificate block", func(t *testing.T) {
+		t.Parallel()
+
+		// A CERTIFICATE block is valid PEM but not a private key.
+		path := writePEMFile(t, testutil.RSACert(t, validTemplate()))
+		err := creds.ValidatePEMKeyFile(path)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "no PRIVATE KEY block")
+	})
+
+	t.Run("PEM with mixed blocks accepts first PRIVATE KEY", func(t *testing.T) {
+		t.Parallel()
+
+		// A CERTIFICATE then a PRIVATE KEY block: the loop should keep
+		// scanning past the cert and accept the key.
+		certPEM := testutil.RSACert(t, validTemplate())
+
+		_, keyFile := testutil.GenerateSelfSignedCert(t)
+		keyPEM := readFile(t, keyFile)
+
+		mixed := append(append([]byte{}, certPEM...), keyPEM...)
+		path := testutil.WriteFile(t, t.TempDir(), "mixed.pem", mixed)
+		require.NoError(t, creds.ValidatePEMKeyFile(path))
+	})
+}
+
+func readFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return data
+}
+
 func writePEMFile(t *testing.T, data []byte) string {
 	t.Helper()
 	return testutil.WriteFile(t, t.TempDir(), "cert.pem", data)
+}
+
+// validKey returns a path to a PEM-encoded private key file. The key
+// contents are not parsed by ValidatePEMKeyFile, so any PEM block typed
+// *PRIVATE KEY satisfies the check; this helper reuses the ECDSA key
+// produced by testutil to avoid duplicating key-generation code.
+func validKey(t *testing.T) string {
+	t.Helper()
+	_, keyFile := testutil.GenerateSelfSignedCert(t)
+	return keyFile
 }
 
 func validTemplate() *x509.Certificate {

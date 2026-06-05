@@ -15,6 +15,10 @@ import (
 // Module is the fx module that constructs a [Server] from [ServerParams] and
 // binds its lifecycle to the application.
 var Module = fx.Option(fx.Invoke(func(p ServerParams) error {
+	if err := p.Config.Validate(); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
+
 	opts := make([]Option, 0, 3)
 	opts = append(opts, WithCredentials(p.creds()))
 
@@ -82,15 +86,16 @@ func (p *ServerParams) creds() Credentials {
 		return creds.NewInsecure()
 	}
 
-	if tls.CAFile != "" {
+	if tls.CA != "" {
 		return creds.NewMTLS(
-			tls.CAFile,
-			tls.CertFile,
-			tls.KeyFile,
+			tls.CA,
+			tls.Cert,
+			tls.Key,
 			creds.MTLSOptions{
 				ServerName: tls.ServerName,
-			})
+			},
+		)
 	}
 
-	return creds.NewServerTLS(tls.CertFile, tls.KeyFile)
+	return creds.NewServerTLS(tls.Cert, tls.Key)
 }

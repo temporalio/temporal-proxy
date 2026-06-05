@@ -114,7 +114,7 @@ func (c *MTLS) ServerOption() (grpc.ServerOption, error) {
 // strong algorithm. Both files are always checked; failures are collected
 // into a single [validation.Errors] so callers see every problem in one call.
 func (c *MTLS) Validate() error {
-	if errs := validation.Validate(
+	return validation.Validate(
 		"",
 		validation.Field("cert", c.certFile, func(path string) error {
 			return ValidatePEMFile(
@@ -123,6 +123,7 @@ func (c *MTLS) Validate() error {
 				UsesSecureCertificateAlgorithm(preferredCipherSuites...),
 			)
 		}),
+		validation.Field("key", c.keyFile, ValidatePEMKeyFile),
 		validation.Field("ca", c.caFile, func(path string) error {
 			return ValidatePEMFile(
 				path,
@@ -131,9 +132,5 @@ func (c *MTLS) Validate() error {
 				UsesSecureCertificateAlgorithm(),
 			)
 		}),
-	); len(errs) > 0 {
-		return errs
-	}
-
-	return nil
+	)
 }

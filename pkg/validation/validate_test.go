@@ -12,7 +12,7 @@ import (
 func TestValidate_NoRules(t *testing.T) {
 	t.Parallel()
 
-	require.Nil(t, validation.Validate("subj"))
+	require.NoError(t, validation.Validate("subj"))
 }
 
 func TestValidate_AllRulesPass(t *testing.T) {
@@ -20,7 +20,7 @@ func TestValidate_AllRulesPass(t *testing.T) {
 
 	pass := func() validation.Errors { return nil }
 
-	require.Nil(t, validation.Validate("subj", pass, pass))
+	require.NoError(t, validation.Validate("subj", pass, pass))
 }
 
 func TestValidate_SubjectStamping(t *testing.T) {
@@ -51,7 +51,9 @@ func TestValidate_SubjectStamping(t *testing.T) {
 			t.Parallel()
 
 			rule := func() validation.Errors { return validation.Errors{tt.ruleErr} }
-			errs := validation.Validate(tt.outerSubj, rule)
+			err := validation.Validate(tt.outerSubj, rule)
+			var errs validation.Errors
+			require.True(t, errors.As(err, &errs))
 			require.Len(t, errs, 1)
 			require.Equal(t, tt.wantSubject, errs[0].Subject)
 		})
@@ -71,11 +73,11 @@ func TestValidate_ConcatenatesFromMultipleRules(t *testing.T) {
 		}
 	}
 
-	errs := validation.Validate("subj", a, b)
-	require.Len(t, errs, 3)
+	err := validation.Validate("subj", a, b)
+	require.Error(t, err)
 
-	// Errors implements error, so errors.As must still find the aggregate.
-	var verrs validation.Errors
-	require.True(t, errors.As(errs, &verrs))
-	require.Len(t, verrs, 3)
+	// Errors implements error, so errors.As finds the aggregate.
+	var errs validation.Errors
+	require.True(t, errors.As(err, &errs))
+	require.Len(t, errs, 3)
 }

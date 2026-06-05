@@ -2,7 +2,6 @@ package server_test
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/server"
+	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
 func TestModule(t *testing.T) {
@@ -22,7 +22,8 @@ func TestModule(t *testing.T) {
 	t.Run("wires defaults and runs the lifecycle", func(t *testing.T) {
 		t.Parallel()
 
-		app := newTestApp(t,
+		app := newTestApp(
+			t,
 			fx.Supply(&config.Config{
 				Listen: config.ListenConfig{HostPort: "127.0.0.1:0"},
 			}),
@@ -44,7 +45,8 @@ func TestModule(t *testing.T) {
 			return grpc_health_v1.HealthCheckResponse_SERVING
 		})
 
-		app := newTestApp(t,
+		app := newTestApp(
+			t,
 			fx.Supply(
 				&config.Config{Listen: config.ListenConfig{HostPort: "127.0.0.1:0"}},
 				fx.Annotate(hc, fx.As(new(server.HealthCheck))),
@@ -61,9 +63,12 @@ func TestModule(t *testing.T) {
 		require.NoError(t, app.Stop(stopCtx))
 	})
 
-	t.Run("surfaces server construction errors", func(t *testing.T) {
+	t.Run("rejects invalid configuration before construction", func(t *testing.T) {
 		t.Parallel()
 
+		// TLS paths that don't exist trip creds.TLS.Validate at config-validation
+		// time, before any server is constructed or listener bound. The fx
+		// Invoke wraps the validation.Errors with "invalid configuration: %w".
 		missing := filepath.Join(t.TempDir(), "missing.pem")
 
 		app := fx.New(
@@ -73,8 +78,8 @@ func TestModule(t *testing.T) {
 					Listen: config.ListenConfig{
 						HostPort: "127.0.0.1:0",
 						TLS: &config.TLSConfig{
-							CertFile: missing,
-							KeyFile:  missing,
+							Cert: missing,
+							Key:  missing,
 						},
 					},
 				},
@@ -84,15 +89,24 @@ func TestModule(t *testing.T) {
 		)
 
 		require.Error(t, app.Err())
-		require.ErrorIs(t, app.Err(), os.ErrNotExist)
+		require.ErrorContains(t, app.Err(), "invalid configuration")
+
+		var errs validation.Errors
+		require.ErrorAs(t, app.Err(), &errs, "expected validation.Errors in chain")
+		require.NotEmpty(t, errs)
 	})
 
 	t.Run("surfaces listener creation errors at start", func(t *testing.T) {
 		t.Parallel()
 
-		app := newTestApp(t,
+		// 1.2.3.4:0 is a well-formed host:port (passes IsHostPort and so
+		// passes config validation) but isn't a local interface, so the
+		// runtime bind fails with EADDRNOTAVAIL. This exercises the
+		// listener-failure path that validation alone can't catch.
+		app := newTestApp(
+			t,
 			fx.Supply(&config.Config{
-				Listen: config.ListenConfig{HostPort: "not-a-valid-host:port"},
+				Listen: config.ListenConfig{HostPort: "1.2.3.4:0"},
 			}),
 		)
 

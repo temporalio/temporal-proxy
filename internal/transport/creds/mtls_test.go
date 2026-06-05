@@ -203,7 +203,7 @@ func TestMTLS_Validate(t *testing.T) {
 	t.Run("valid leaf and CA pass", func(t *testing.T) {
 		t.Parallel()
 
-		err := creds.NewMTLS(validCA(t), validLeaf(t), "", creds.MTLSOptions{}).Validate()
+		err := creds.NewMTLS(validCA(t), validLeaf(t), validKey(t), creds.MTLSOptions{}).Validate()
 		require.NoError(t, err)
 	})
 
@@ -244,7 +244,9 @@ func TestMTLS_Validate(t *testing.T) {
 		}))
 		nonCAFile := writePEMFile(t, testutil.RSACert(t, validTemplate()))
 
-		err := creds.NewMTLS(nonCAFile, expiredLeaf, "", creds.MTLSOptions{}).Validate()
+		// Pass a valid key file so the leaf/CA failures aren't joined by a
+		// third key-file error; this test's intent is leaf+CA aggregation.
+		err := creds.NewMTLS(nonCAFile, expiredLeaf, validKey(t), creds.MTLSOptions{}).Validate()
 		require.ErrorContains(t, err, "expired-leaf")
 		require.ErrorContains(t, err, "not a CA")
 
