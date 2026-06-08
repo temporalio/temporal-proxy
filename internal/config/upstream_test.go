@@ -1,0 +1,461 @@
+package config_test
+
+import (
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/pkg/validation"
+)
+
+func TestNamespaceRules_Local(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		yaml     string
+		remoteNS string
+		want     string
+	}{
+		{
+			name:     "no prefix, suffix, or override returns input unchanged",
+			yaml:     "upstream:\n  namespaces:\n    rules: {}\n",
+			remoteNS: "payments",
+			want:     "payments",
+		},
+		{
+			name:     "strips configured prefix",
+			yaml:     "upstream:\n  namespaces:\n    rules:\n      prefix: \"acme-\"\n",
+			remoteNS: "acme-payments",
+			want:     "payments",
+		},
+		{
+			name:     "strips configured suffix",
+			yaml:     "upstream:\n  namespaces:\n    rules:\n      suffix: \".cloud\"\n",
+			remoteNS: "payments.cloud",
+			want:     "payments",
+		},
+		{
+			name:     "strips both prefix and suffix",
+			yaml:     "upstream:\n  namespaces:\n    rules:\n      prefix: \"acme-\"\n      suffix: \".cloud\"\n",
+			remoteNS: "acme-payments.cloud",
+			want:     "payments",
+		},
+		{
+			name: "override wins over prefix/suffix",
+			yaml: "upstream:\n  namespaces:\n    rules:\n" +
+				"      prefix: \"acme-\"\n" +
+				"      suffix: \".cloud\"\n" +
+				"      overrides:\n" +
+				"        - local: billing\n" +
+				"          remote: legacy-billing-prod\n",
+			remoteNS: "legacy-billing-prod",
+			want:     "billing",
+		},
+		{
+			name: "no override match falls back to prefix/suffix stripping",
+			yaml: "upstream:\n  namespaces:\n    rules:\n" +
+				"      prefix: \"acme-\"\n" +
+				"      overrides:\n" +
+				"        - local: billing\n" +
+				"          remote: legacy-billing\n",
+			remoteNS: "acme-payments",
+			want:     "payments",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := config.Load(strings.NewReader(tc.yaml))
+			require.NoError(t, err)
+			require.Equal(t, tc.want, cfg.Upstream.Namespaces.Rules.Local(tc.remoteNS))
+		})
+	}
+}
+
+func TestNamespaceRules_Remote(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		yaml    string
+		localNS string
+		want    string
+	}{
+		{
+			name:    "no prefix, suffix, or override returns input unchanged",
+			yaml:    "upstream:\n  namespaces:\n    rules: {}\n",
+			localNS: "payments",
+			want:    "payments",
+		},
+		{
+			name:    "applies configured prefix",
+			yaml:    "upstream:\n  namespaces:\n    rules:\n      prefix: \"acme-\"\n",
+			localNS: "payments",
+			want:    "acme-payments",
+		},
+		{
+			name:    "applies configured suffix",
+			yaml:    "upstream:\n  namespaces:\n    rules:\n      suffix: \".cloud\"\n",
+			localNS: "payments",
+			want:    "payments.cloud",
+		},
+		{
+			name:    "applies both prefix and suffix",
+			yaml:    "upstream:\n  namespaces:\n    rules:\n      prefix: \"acme-\"\n      suffix: \".cloud\"\n",
+			localNS: "payments",
+			want:    "acme-payments.cloud",
+		},
+		{
+			name: "override wins over prefix/suffix",
+			yaml: "upstream:\n  namespaces:\n    rules:\n" +
+				"      prefix: \"acme-\"\n" +
+				"      suffix: \".cloud\"\n" +
+				"      overrides:\n" +
+				"        - local: billing\n" +
+				"          remote: legacy-billing-prod\n",
+			localNS: "billing",
+			want:    "legacy-billing-prod",
+		},
+		{
+			name: "no override match falls back to prefix/suffix wrapping",
+			yaml: "upstream:\n  namespaces:\n    rules:\n" +
+				"      prefix: \"acme-\"\n" +
+				"      overrides:\n" +
+				"        - local: billing\n" +
+				"          remote: legacy-billing\n",
+			localNS: "payments",
+			want:    "acme-payments",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := config.Load(strings.NewReader(tc.yaml))
+			require.NoError(t, err)
+			require.Equal(t, tc.want, cfg.Upstream.Namespaces.Rules.Remote(tc.localNS))
+		})
+	}
+}
+
+func TestNamespaceMapping_Validate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		mapping  *config.NamespaceMapping
+		wantErrs []validation.Error
+	}{
+		{
+			name:    "both local and remote set",
+			mapping: &config.NamespaceMapping{Local: "billing", Remote: "legacy-billing"},
+		},
+		{
+			name:    "missing local",
+			mapping: &config.NamespaceMapping{Remote: "legacy-billing"},
+			wantErrs: []validation.Error{
+				{Field: "local", Message: "is required"},
+			},
+		},
+		{
+			name:    "missing remote",
+			mapping: &config.NamespaceMapping{Local: "billing"},
+			wantErrs: []validation.Error{
+				{Field: "remote", Message: "is required"},
+			},
+		},
+		{
+			name:    "both missing",
+			mapping: &config.NamespaceMapping{},
+			wantErrs: []validation.Error{
+				{Field: "local", Message: "is required"},
+				{Field: "remote", Message: "is required"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tt.mapping.Validate()
+			if len(tt.wantErrs) == 0 {
+				require.NoError(t, err)
+				return
+			}
+
+			var errs validation.Errors
+			require.True(t, errors.As(err, &errs), "expected validation.Errors, got %T", err)
+			require.ElementsMatch(t, tt.wantErrs, []validation.Error(errs))
+		})
+	}
+}
+
+func TestNamespaceRules_Validate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		rules      *config.NamespaceRules
+		wantTuples [][2]string // (Subject, Field); empty slice means no error expected
+	}{
+		{
+			name:  "no overrides yields no error",
+			rules: &config.NamespaceRules{Prefix: "acme-", Suffix: ".cloud"},
+		},
+		{
+			name: "valid overrides yield no error",
+			rules: &config.NamespaceRules{
+				Overrides: []config.NamespaceMapping{
+					{Local: "billing", Remote: "legacy-billing"},
+					{Local: "payments", Remote: "acme-payments"},
+				},
+			},
+		},
+		{
+			name: "single invalid override stamped with its index",
+			rules: &config.NamespaceRules{
+				Overrides: []config.NamespaceMapping{
+					{Remote: "legacy-billing"},
+				},
+			},
+			wantTuples: [][2]string{
+				{"overrides[0]", "local"},
+			},
+		},
+		{
+			name: "invalid overrides keep their own indices",
+			rules: &config.NamespaceRules{
+				Overrides: []config.NamespaceMapping{
+					{Local: "billing", Remote: "legacy-billing"},
+					{Local: "payments"},
+					{Remote: "legacy-orders"},
+				},
+			},
+			wantTuples: [][2]string{
+				{"overrides[1]", "remote"},
+				{"overrides[2]", "local"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tt.rules.Validate()
+			if len(tt.wantTuples) == 0 {
+				require.NoError(t, err)
+				return
+			}
+
+			var errs validation.Errors
+			require.True(t, errors.As(err, &errs), "expected validation.Errors, got %T", err)
+
+			got := make([][2]string, len(errs))
+			for i, e := range errs {
+				got[i] = [2]string{e.Subject, e.Field}
+			}
+
+			require.ElementsMatch(t, tt.wantTuples, got)
+		})
+	}
+}
+
+func TestNamespaceRules_Validate_Uniqueness(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		rules    *config.NamespaceRules
+		wantErrs []validation.Error
+	}{
+		{
+			name: "duplicate local names reported on overrides field",
+			rules: &config.NamespaceRules{
+				Overrides: []config.NamespaceMapping{
+					{Local: "billing", Remote: "legacy-billing"},
+					{Local: "billing", Remote: "legacy-payments"},
+				},
+			},
+			wantErrs: []validation.Error{
+				{Field: "overrides[local]", Message: "contains duplicate value: billing"},
+			},
+		},
+		{
+			name: "duplicate remote names reported on overrides field",
+			rules: &config.NamespaceRules{
+				Overrides: []config.NamespaceMapping{
+					{Local: "billing", Remote: "legacy"},
+					{Local: "payments", Remote: "legacy"},
+				},
+			},
+			wantErrs: []validation.Error{
+				{Field: "overrides[remote]", Message: "contains duplicate value: legacy"},
+			},
+		},
+		{
+			name: "duplicate locals and remotes both reported",
+			rules: &config.NamespaceRules{
+				Overrides: []config.NamespaceMapping{
+					{Local: "billing", Remote: "legacy"},
+					{Local: "billing", Remote: "legacy"},
+				},
+			},
+			wantErrs: []validation.Error{
+				{Field: "overrides[local]", Message: "contains duplicate value: billing"},
+				{Field: "overrides[remote]", Message: "contains duplicate value: legacy"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tt.rules.Validate()
+			var errs validation.Errors
+			require.True(t, errors.As(err, &errs), "expected validation.Errors, got %T", err)
+			require.ElementsMatch(t, tt.wantErrs, []validation.Error(errs))
+		})
+	}
+}
+
+func TestNamespaceConfig_Validate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		cfg        *config.NamespaceConfig
+		wantTuples [][2]string
+	}{
+		{
+			name: "empty config yields no error",
+			cfg:  &config.NamespaceConfig{},
+		},
+		{
+			name: "rules failure surfaces with override-index subject preserved",
+			cfg: &config.NamespaceConfig{
+				Rules: config.NamespaceRules{
+					Overrides: []config.NamespaceMapping{
+						{Local: "billing"},
+					},
+				},
+			},
+			wantTuples: [][2]string{
+				{"overrides[0]", "remote"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tt.cfg.Validate()
+			if len(tt.wantTuples) == 0 {
+				require.NoError(t, err)
+				return
+			}
+
+			var errs validation.Errors
+			require.True(t, errors.As(err, &errs), "expected validation.Errors, got %T", err)
+
+			got := make([][2]string, len(errs))
+			for i, e := range errs {
+				got[i] = [2]string{e.Subject, e.Field}
+			}
+
+			require.ElementsMatch(t, tt.wantTuples, got)
+		})
+	}
+}
+
+func TestUpstream_Validate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		upstream   *config.Upstream
+		wantTuples [][2]string
+	}{
+		{
+			name: "valid listen and no overrides",
+			upstream: &config.Upstream{
+				Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
+			},
+		},
+		{
+			name: "invalid hostPort surfaces from Listen",
+			upstream: &config.Upstream{
+				Listen: config.ListenConfig{HostPort: "not-a-host-port"},
+			},
+			wantTuples: [][2]string{
+				{"", "hostPort"},
+			},
+		},
+		{
+			name: "namespace override failure surfaces with override-index subject",
+			upstream: &config.Upstream{
+				Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
+				Namespaces: config.NamespaceConfig{
+					Rules: config.NamespaceRules{
+						Overrides: []config.NamespaceMapping{
+							{Local: "billing"},
+						},
+					},
+				},
+			},
+			wantTuples: [][2]string{
+				{"overrides[0]", "remote"},
+			},
+		},
+		{
+			name: "listen and namespace failures aggregate",
+			upstream: &config.Upstream{
+				Listen: config.ListenConfig{HostPort: "not-a-host-port"},
+				Namespaces: config.NamespaceConfig{
+					Rules: config.NamespaceRules{
+						Overrides: []config.NamespaceMapping{
+							{},
+						},
+					},
+				},
+			},
+			wantTuples: [][2]string{
+				{"", "hostPort"},
+				{"overrides[0]", "local"},
+				{"overrides[0]", "remote"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tt.upstream.Validate()
+			if len(tt.wantTuples) == 0 {
+				require.NoError(t, err)
+				return
+			}
+
+			var errs validation.Errors
+			require.True(t, errors.As(err, &errs), "expected validation.Errors, got %T", err)
+
+			got := make([][2]string, len(errs))
+			for i, e := range errs {
+				got[i] = [2]string{e.Subject, e.Field}
+			}
+
+			require.ElementsMatch(t, tt.wantTuples, got)
+		})
+	}
+}

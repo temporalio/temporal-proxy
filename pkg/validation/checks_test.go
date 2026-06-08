@@ -117,8 +117,16 @@ func TestIsHostPort(t *testing.T) {
 	}{
 		{name: "host and port", in: "localhost:8080"},
 		{name: "ipv4 and port", in: "127.0.0.1:8080"},
+		{name: "ipv6 and port", in: "[::1]:8080"},
 		{name: "wildcard host", in: ":8080"},
+		{name: "wildcard port zero", in: ":0"},
+		// Reserved TLD per RFC 2606; passing this proves we no longer do DNS lookup.
+		{name: "non-resolvable hostname is syntactically valid", in: "host.invalid:8080"},
 		{name: "missing port", in: "localhost", wantErr: true},
+		{name: "empty port after colon", in: "localhost:", wantErr: true},
+		{name: "non-numeric port", in: "localhost:http", wantErr: true},
+		{name: "port out of range", in: "localhost:70000", wantErr: true},
+		{name: "negative port", in: "localhost:-1", wantErr: true},
 		{name: "url with scheme", in: "https://example.com:8080", wantErr: true},
 	}
 

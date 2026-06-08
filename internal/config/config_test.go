@@ -133,6 +133,10 @@ func TestLoadFile_MissingFile(t *testing.T) {
 func TestConfig_Validate(t *testing.T) {
 	t.Parallel()
 
+	validUpstream := config.Upstream{
+		Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
+	}
+
 	tests := []struct {
 		name       string
 		cfg        *config.Config
@@ -141,13 +145,15 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "valid hostPort, no TLS",
 			cfg: &config.Config{
-				Listen: config.ListenConfig{HostPort: ":8080"},
+				Listen:   config.ListenConfig{HostPort: ":8080"},
+				Upstream: validUpstream,
 			},
 		},
 		{
 			name: "invalid hostPort surfaces from ListenConfig",
 			cfg: &config.Config{
-				Listen: config.ListenConfig{HostPort: "localhost"},
+				Listen:   config.ListenConfig{HostPort: "localhost"},
+				Upstream: validUpstream,
 			},
 			wantTuples: [][2]string{{"", "hostPort"}},
 		},
@@ -158,6 +164,7 @@ func TestConfig_Validate(t *testing.T) {
 					HostPort: ":8080",
 					TLS:      &config.TLSConfig{}, // empty -> creds.TLS PEM read failures
 				},
+				Upstream: validUpstream,
 			},
 			wantTuples: [][2]string{
 				{"tls", "cert"},
@@ -171,12 +178,20 @@ func TestConfig_Validate(t *testing.T) {
 					HostPort: "localhost",
 					TLS:      &config.TLSConfig{},
 				},
+				Upstream: validUpstream,
 			},
 			wantTuples: [][2]string{
 				{"", "hostPort"},
 				{"tls", "cert"},
 				{"tls", "key"},
 			},
+		},
+		{
+			name: "missing upstream hostPort surfaces with upstream subject",
+			cfg: &config.Config{
+				Listen: config.ListenConfig{HostPort: ":8080"},
+			},
+			wantTuples: [][2]string{{"upstream", "hostPort"}},
 		},
 	}
 
