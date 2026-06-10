@@ -6,7 +6,7 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/prometheus/client_golang v1.21.0
 	github.com/stretchr/testify v1.11.1
-	github.com/urfave/cli/v3 v3.8.0
+	github.com/urfave/cli/v3 v3.9.1
 	go.temporal.io/server v1.30.4
 	go.uber.org/fx v1.24.0
 	google.golang.org/grpc v1.79.3
