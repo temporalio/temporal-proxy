@@ -7,6 +7,7 @@ experimental = true
 "github:temporalio/cli" = "latest"
 go = "1.26"
 mkcert = "1.4.4"
+goreleaser = "2.16.0"
 
 ################################################################################
 # Dependencies
@@ -15,7 +16,7 @@ mkcert = "1.4.4"
 [deps.go]
 
 [deps.tools]
-sources = ["mise.toml"]
+sources = [".mise/config.toml"]
 outputs = ["dev/tools.sum"]
 description = "Sync dev tools"
 run = """
@@ -38,10 +39,6 @@ run = "goreman -exit-on-error -set-ports=false -f dev/Procfile start"
 # Development Tasks
 ################################################################################
 
-[tasks.build]
-description = "Build binaries"
-run = ["go build -o dist/proxy ./cmd/proxy"]
-
 [tasks.lint]
 description = "Lint Go files"
 run = ["go tool -modfile=dev/tools.mod golangci-lint run"]
@@ -54,7 +51,7 @@ run = ["go fix ./...", "go tool -modfile=dev/tools.mod golangci-lint fmt"]
 description = "Run unit tests"
 run = "go test -cover ./..."
 
-[tasks.test-bench]
+[tasks."test:bench"]
 description = "Run bench tests"
 usage = '''
 flag "-c --count <count>" default="3"
@@ -82,3 +79,11 @@ run = [
   "mv rootCA.pem ca.crt",
   "rm -f rootCA-key.pem",
 ]
+
+################################################################################
+# Build Tasks
+################################################################################
+
+[tasks.build]
+description = "Build binaries"
+run = "goreleaser release --snapshot --clean --skip=publish"

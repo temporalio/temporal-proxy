@@ -1,0 +1,99 @@
+version: 2
+
+project_name: temporal-proxy
+
+builds:
+  - id: proxy
+    main: ./cmd/proxy
+    binary: proxy
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.sha={{.Commit}}
+      - -X main.buildTime={{.Date}}
+
+archives:
+  - id: default
+    ids:
+      - proxy
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+dockers_v2:
+  - images:
+      - temporalio/{{ .ProjectName }}
+
+    tags:
+      - "v{{.Version }}"
+      - "{{ if .IsNightly }}nightly{{ end }}"
+      - "{{ if not .IsNightly }}latest{{ end }}"
+
+    labels:
+      "org.opencontainers.image.title": "{{ .ProjectName }}"
+      "org.opencontainers.image.description": "A proxy for applications, workers, and the Temporal UI"
+      "org.opencontainers.image.url": "https://github.com/temporalio/{{ .ProjectName }}"
+      "org.opencontainers.image.source": "https://github.com/temporalio/{{ .ProjectName }}"
+      "org.opencontainers.image.version": "{{ .Version }}"
+      "org.opencontainers.image.created": "{{ .Date }}"
+      "org.opencontainers.image.revision": "{{ .FullCommit }}"
+      "org.opencontainers.image.licenses": "MIT"
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^build:"
+      - "^chore:"
+  groups:
+    - title: Features
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 0
+    - title: Bug Fixes
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 1
+    - title: Others
+      order: 999
+
+release:
+  github:
+    owner: temporalio
+    name: temporal-proxy
+  draft: false
+  prerelease: auto
+  name_template: "Release {{ .Version }}"
+  header: |
+    ## Temporal Proxy
+
+    Version {{ .Version }} release!
+
+    ### Container Image
+
+    Container image is available on GitHub Container Registry:
+
+    ```bash
+    docker pull temporalio/{{ .ProjectName }}:{{ .Version }}
+    ```
+
+    ### Installation
+
+    Download the appropriate binary for your platform from the assets below, or use the container image.
+
+  footer: |
+    **Full Changelog**: https://github.com/temporalio/{{ .ProjectName }}/compare/{{ .PreviousTag }}...{{ .Tag }}
