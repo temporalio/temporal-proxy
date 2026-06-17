@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"net"
+	"sync"
 	"time"
 
 	"go.temporal.io/server/common/log"
@@ -21,10 +22,14 @@ type (
 		grpcSvr   *grpc.Server
 		healthSvr *health.Server
 
-		cancelFunc  context.CancelFunc
 		creds       Credentials
 		healthCheck HealthCheck
-		logger      log.Logger
+
+		// mu guards logger and cancelFunc, which Start writes from its own
+		// goroutine while Stop reads them from the caller's goroutine.
+		mu         sync.Mutex
+		cancelFunc context.CancelFunc
+		logger     log.Logger
 	}
 
 	// Credentials produces the [grpc.ServerOption] used to configure
@@ -102,24 +107,44 @@ func WithLogger(log log.Logger) Option {
 // the periodic health check, which runs until ctx is cancelled or [Server.Stop]
 // is called.
 func (s *Server) Start(ctx context.Context, lis net.Listener) error {
+	ctx, cancel := context.WithCancel(ctx)
+
+	s.mu.Lock()
 	s.logger = log.With(s.logger, tag.NewStringerTag("addr", lis.Addr()))
 	if !s.creds.Encrypted() {
 		s.logger.Warn("Running with insecure credentials. Configure TLS for production use.")
 	}
 
-	s.logger.Info("Starting the server")
+	s.cancelFunc = cancel
+	logger := s.logger
+	s.mu.Unlock()
 
-	ctx, s.cancelFunc = context.WithCancel(ctx)
+	logger.Info("Starting the server")
+
 	go s.runHealthCheck(ctx)
-	return s.grpcSvr.Serve(lis)
+
+	// Serve returns a non-nil error only when it stops for a reason other than
+	// a graceful stop (GracefulStop makes it return nil), so anything here is a
+	// genuine failure worth surfacing.
+	if err := s.grpcSvr.Serve(lis); err != nil {
+		logger.Error("Server stopped serving", tag.Error(err))
+		return err
+	}
+
+	return nil
 }
 
 // Stop gracefully shuts the server down, halting the health check loop and
 // waiting for in-flight RPCs to complete.
 func (s *Server) Stop(ctx context.Context) error {
-	s.logger.Info("Shutting down")
-	if s.cancelFunc != nil {
-		s.cancelFunc()
+	s.mu.Lock()
+	logger := s.logger
+	cancel := s.cancelFunc
+	s.mu.Unlock()
+
+	logger.Info("Shutting down")
+	if cancel != nil {
+		cancel()
 	}
 
 	s.grpcSvr.GracefulStop()
