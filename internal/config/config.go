@@ -10,7 +10,7 @@ import (
 )
 
 type (
-	// Config is the top-level codec-server configuration.
+	// Config is the top-level proxy configuration.
 	Config struct {
 		Listen   ListenConfig `yaml:",inline"`
 		Upstream Upstream     `yaml:"upstream"`
@@ -47,6 +47,7 @@ func LoadFile(path string) (*Config, error) {
 	return Load(f)
 }
 
+// Validate checks the listen and upstream configuration.
 func (c *Config) Validate() error {
 	return validation.Validate(
 		"",

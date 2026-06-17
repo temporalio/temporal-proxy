@@ -1,5 +1,7 @@
 package validation
 
+import "errors"
+
 // Validate runs each rule, accumulating failures into a single error (which
 // will typically be an [Errors] instance). Any [Error] whose Subject is empty is
 // stamped with subject.
@@ -23,7 +25,7 @@ func Validate(subject string, rules ...Rule) error {
 }
 
 func toErrors(field string, err error) Errors {
-	if ves, ok := err.(Errors); ok {
+	if ves, ok := errors.AsType[Errors](err); ok {
 		out := make(Errors, len(ves))
 		copy(out, ves)
 		for i := range out {
@@ -35,7 +37,7 @@ func toErrors(field string, err error) Errors {
 		return out
 	}
 
-	if ve, ok := err.(Error); ok {
+	if ve, ok := errors.AsType[Error](err); ok {
 		if ve.Field == "" {
 			ve.Field = field
 		}
