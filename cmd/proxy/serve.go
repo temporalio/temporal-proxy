@@ -11,6 +11,7 @@ import (
 
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/server"
+	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 )
 
 func serve() *cli.Command {
@@ -49,6 +50,7 @@ func serve() *cli.Command {
 					func() log.Logger { return logger },
 				),
 				config.Module,
+				connect.Module,
 				server.Module,
 				fx.NopLogger,
 			)
