@@ -109,10 +109,11 @@ func (c *MTLS) ServerOption() (grpc.ServerOption, error) {
 
 // Validate checks both the leaf certificate and the CA certificate for
 // configuration problems. The leaf must be unexpired, signed with a strong
-// algorithm, and use a key type compatible with [preferredCipherSuites]; the CA
-// must be unexpired, have the CA basic constraint set, and be signed with a
-// strong algorithm. Both files are always checked; failures are collected
-// into a single [validation.Errors] so callers see every problem in one call.
+// algorithm, use a key type compatible with [preferredCipherSuites], and have a
+// sufficiently large key; the CA must be unexpired, have the CA basic
+// constraint set, be signed with a strong algorithm, and have a sufficiently
+// large key. Both files are always checked; failures are collected into a
+// single [validation.Errors] so callers see every problem in one call.
 func (c *MTLS) Validate() error {
 	return validation.Validate(
 		"",
@@ -121,6 +122,7 @@ func (c *MTLS) Validate() error {
 				path,
 				CertificateNotExpired(),
 				UsesSecureCertificateAlgorithm(preferredCipherSuites...),
+				HasSufficientKeySize(),
 			)
 		}),
 		validation.Field("key", c.keyFile, ValidatePEMKeyFile),
@@ -130,6 +132,7 @@ func (c *MTLS) Validate() error {
 				CertificateNotExpired(),
 				IsCACertificate(),
 				UsesSecureCertificateAlgorithm(),
+				HasSufficientKeySize(),
 			)
 		}),
 	)
