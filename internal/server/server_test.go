@@ -20,9 +20,15 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/server"
 )
 
+const insecureMessage = "Running with insecure credentials. Configure TLS for production use."
+
 type (
 	failingCredentials struct {
 		err error
+	}
+
+	stubCredentials struct {
+		secure bool
 	}
 
 	recordingLogger struct {
@@ -82,6 +88,60 @@ func TestNew(t *testing.T) {
 	})
 }
 
+func TestServerInsecureWarning(t *testing.T) {
+	t.Parallel()
+
+	t.Run("warns when credentials are insecure", func(t *testing.T) {
+		t.Parallel()
+
+		logger := &recordingLogger{}
+		svr, err := server.New(
+			server.WithLogger(logger),
+			server.WithCredentials(stubCredentials{secure: false}),
+		)
+		require.NoError(t, err)
+
+		lis := bufconn.Listen(1024)
+		defer func() { _ = lis.Close() }()
+
+		errCh := make(chan error, 1)
+		go func() { errCh <- svr.Start(t.Context(), lis) }()
+
+		require.Eventually(t, func() bool {
+			return logger.contains(insecureMessage)
+		}, time.Second, 10*time.Millisecond)
+
+		require.NoError(t, svr.Stop(t.Context()))
+		<-errCh
+	})
+
+	t.Run("does not warn when credentials are secure", func(t *testing.T) {
+		t.Parallel()
+
+		logger := &recordingLogger{}
+		svr, err := server.New(
+			server.WithLogger(logger),
+			server.WithCredentials(stubCredentials{secure: true}),
+		)
+		require.NoError(t, err)
+
+		lis := bufconn.Listen(1024)
+		defer func() { _ = lis.Close() }()
+
+		errCh := make(chan error, 1)
+		go func() { errCh <- svr.Start(t.Context(), lis) }()
+
+		require.Eventually(t, func() bool {
+			return logger.contains("Starting the server")
+		}, time.Second, 10*time.Millisecond)
+
+		require.NoError(t, svr.Stop(t.Context()))
+		<-errCh
+
+		require.False(t, logger.contains(insecureMessage))
+	})
+}
+
 func TestServerStartAndStop(t *testing.T) {
 	t.Parallel()
 
@@ -137,6 +197,14 @@ func TestServerStartAndStop(t *testing.T) {
 func (f failingCredentials) ServerOption() (grpc.ServerOption, error) {
 	return nil, f.err
 }
+
+func (f failingCredentials) Encrypted() bool { return false }
+
+func (c stubCredentials) ServerOption() (grpc.ServerOption, error) {
+	return grpc.Creds(insecure.NewCredentials()), nil
+}
+
+func (c stubCredentials) Encrypted() bool { return c.secure }
 
 func (l *recordingLogger) record(msg string) {
 	l.mu.Lock()

@@ -30,3 +30,10 @@ func TestInsecure_Validate(t *testing.T) {
 	// Insecure has no certificate material to inspect; Validate is a no-op.
 	require.NoError(t, creds.NewInsecure().Validate())
 }
+
+func TestInsecure_Encrypted(t *testing.T) {
+	t.Parallel()
+
+	// Insecure disables transport security, so it is never secure.
+	require.False(t, creds.NewInsecure().Encrypted())
+}

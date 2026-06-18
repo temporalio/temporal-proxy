@@ -21,15 +21,10 @@ type (
 		certFile   string
 		keyFile    string
 		serverName string
-		skipVerify bool
 	}
 
 	// MTLSOptions holds optional configuration for [MTLS] connections.
 	MTLSOptions struct {
-		// InsecureSkipVerify disables server certificate verification on the
-		// client side. This should only be used in testing; never in production.
-		InsecureSkipVerify bool
-
 		// ServerName overrides the server name used to verify the server's
 		// certificate hostname. Useful when the server's certificate CN does not
 		// match its dial address.
@@ -46,7 +41,6 @@ func NewMTLS(caFile, certFile, keyFile string, opts MTLSOptions) *MTLS {
 		certFile:   certFile,
 		keyFile:    keyFile,
 		serverName: opts.ServerName,
-		skipVerify: opts.InsecureSkipVerify,
 	}
 }
 
@@ -70,11 +64,10 @@ func (c *MTLS) DialOption() (grpc.DialOption, error) {
 	}
 
 	return grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		MinVersion:         minTLSVersion,
-		RootCAs:            ca,
-		ServerName:         c.serverName,
-		InsecureSkipVerify: c.skipVerify,
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   minTLSVersion,
+		RootCAs:      ca,
+		ServerName:   c.serverName,
 	})), nil
 }
 
@@ -133,4 +126,11 @@ func (c *MTLS) Validate() error {
 			)
 		}),
 	)
+}
+
+// Encrypted reports whether the transport is encrypted. mTLS always encrypts the
+// transport; InsecureSkipVerify weakens peer verification but does not disable
+// encryption, so it returns true.
+func (c *MTLS) Encrypted() bool {
+	return true
 }

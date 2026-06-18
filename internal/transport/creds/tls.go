@@ -95,3 +95,9 @@ func (c *TLS) Validate() error {
 		validation.Field("key", c.keyFile, ValidatePEMKeyFile),
 	)
 }
+
+// Encrypted reports whether the transport is encrypted. TLS always encrypts the
+// transport, so it returns true.
+func (c *TLS) Encrypted() bool {
+	return true
+}

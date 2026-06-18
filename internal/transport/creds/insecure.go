@@ -34,3 +34,9 @@ func (c *Insecure) ServerOption() (grpc.ServerOption, error) {
 func (c *Insecure) Validate() error {
 	return nil
 }
+
+// Encrypted reports whether the transport is encrypted. Insecure disables
+// transport security entirely, so it always returns false.
+func (c *Insecure) Encrypted() bool {
+	return false
+}
