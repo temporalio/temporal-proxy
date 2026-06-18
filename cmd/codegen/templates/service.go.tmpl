@@ -5,7 +5,7 @@ package {{ .Package }}
 import (
 	"context"
 
-	{{ .Service.Name | lower }} "{{ .Service.ImportPath }}"
+	{{ .Service.Name | lower }} "{{ .ImportPath }}"
 )
 
 // {{ .Service.Name }} is a {{ .Service.Name }}Server that proxies every RPC to
@@ -21,11 +21,11 @@ func New{{ .Service.Name }}(client {{ .Service.Name | lower }}.{{ .Service.Name 
 	return &{{ .Service.Name }}{client: client}
 }
 
-{{ range .Methods }}
+{{ range .Service.RPCs }}
 func (s *{{ $.Service.Name }}) {{ .Name }}(
 	ctx context.Context,
-	req *{{ $.Service.Name | lower }}.{{ .Req }},
-) (*{{ $.Service.Name | lower }}.{{ .Resp }}, error) {
+	req *{{ $.Service.Name | lower }}.{{ .Req.Name }},
+) (*{{ $.Service.Name | lower }}.{{ .Resp.Name }}, error) {
 	return forward(ctx, req, s.client.{{ .Name }})
 }
 {{ end }}

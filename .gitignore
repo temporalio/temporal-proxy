@@ -25,5 +25,6 @@ CLAUDE.local.md
 dev/certs/
 
 # build things
+./codegen
 ./proxy
 dist/
