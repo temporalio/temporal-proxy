@@ -9,6 +9,8 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/proxy"
+	"github.com/temporalio/temporal-proxy/internal/router"
 	"github.com/temporalio/temporal-proxy/internal/server"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
@@ -50,6 +52,8 @@ func serve() *cli.Command {
 				),
 				config.Module,
 				connect.Module,
+				proxy.Module,
+				router.Module,
 				server.Module,
 				fx.NopLogger,
 			)

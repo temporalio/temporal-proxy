@@ -2,13 +2,19 @@ package server_test
 
 import (
 	"context"
+	"net"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/server"
@@ -79,22 +85,15 @@ func TestModule(t *testing.T) {
 		// Invoke wraps the validation.Errors with "invalid configuration: %w".
 		missing := filepath.Join(t.TempDir(), "missing.pem")
 
-		app := fx.New(
-			fx.Supply(
-				fx.Annotate(t.Context(), fx.As(new(context.Context))),
-				&config.Config{
-					Listen: config.ListenConfig{
-						HostPort: "127.0.0.1:0",
-						TLS: &config.TLSConfig{
-							Cert: missing,
-							Key:  missing,
-						},
-					},
+		app := newTestApp(t, fx.Supply(&config.Config{
+			Listen: config.ListenConfig{
+				HostPort: "127.0.0.1:0",
+				TLS: &config.TLSConfig{
+					Cert: missing,
+					Key:  missing,
 				},
-			),
-			server.Module,
-			fx.NopLogger,
-		)
+			},
+		}))
 
 		require.Error(t, app.Err())
 		require.ErrorContains(t, app.Err(), "invalid configuration")
@@ -130,14 +129,104 @@ func TestModule(t *testing.T) {
 	})
 }
 
+func TestModuleWiresInjectedCodecAndHandler(t *testing.T) {
+	t.Parallel()
+
+	// The module forces the injected codec on the server and installs the
+	// injected handler as the unknown-service handler. A recording codec proves
+	// the former (the locally hosted health service exercises it); a sentinel
+	// handler proves the latter (an unregistered method reaches it).
+	rec := &recordingCodec{delegate: encoding.GetCodecV2("proto")}
+	handler := grpc.StreamHandler(func(any, grpc.ServerStream) error {
+		return status.Error(codes.Unimplemented, "injected-handler-reached")
+	})
+
+	addr := freeTCPAddr(t)
+	app := fx.New(
+		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
+		fx.Supply(&config.Config{
+			Listen:   config.ListenConfig{HostPort: addr},
+			Upstream: config.Upstream{Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
+		}),
+		fx.Provide(
+			func() encoding.CodecV2 { return rec },
+			func() grpc.StreamHandler { return handler },
+		),
+		server.Module,
+		fx.NopLogger,
+	)
+
+	startCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, app.Start(startCtx))
+
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	callCtx, callCancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer callCancel()
+
+	// Local health is answered by the server itself and runs through the forced
+	// codec. WaitForReady rides out the window before the serve goroutine begins
+	// accepting.
+	resp, err := grpc_health_v1.NewHealthClient(conn).Check(
+		callCtx,
+		&grpc_health_v1.HealthCheckRequest{},
+		grpc.WaitForReady(true),
+	)
+	require.NoError(t, err)
+	require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.GetStatus())
+	require.Positive(t, rec.calls.Load(), "the injected codec should be forced on the server")
+
+	// An unregistered method routes to the injected handler.
+	err = conn.Invoke(
+		callCtx,
+		"/unknown.Service/Method",
+		&grpc_health_v1.HealthCheckRequest{},
+		new(grpc_health_v1.HealthCheckResponse),
+	)
+	require.Error(t, err)
+	require.Equal(t, codes.Unimplemented, status.Code(err))
+	require.ErrorContains(t, err, "injected-handler-reached")
+
+	stopCtx, stopCancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stopCancel()
+	require.NoError(t, app.Stop(stopCtx))
+}
+
 func newTestApp(t *testing.T, opts ...fx.Option) *fx.App {
 	t.Helper()
 
 	base := []fx.Option{
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
+		// Stand-in transparent-forwarding dependencies; the router module
+		// provides the real ones in production.
+		fx.Provide(
+			func() encoding.CodecV2 { return encoding.GetCodecV2("proto") },
+			func() grpc.StreamHandler {
+				return func(any, grpc.ServerStream) error {
+					return status.Error(codes.Unimplemented, "stub handler")
+				}
+			},
+		),
 		server.Module,
 		fx.NopLogger,
 	}
 
 	return fx.New(append(base, opts...)...)
+}
+
+// freeTCPAddr reserves an ephemeral localhost TCP port and returns its address.
+// The listener is closed before returning so the caller can bind it; the small
+// race window is acceptable in tests.
+func freeTCPAddr(t *testing.T) string {
+	t.Helper()
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	addr := lis.Addr().String()
+	require.NoError(t, lis.Close())
+	return addr
 }

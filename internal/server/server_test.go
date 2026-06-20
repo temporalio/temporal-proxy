@@ -4,14 +4,20 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/encoding"
+	_ "google.golang.org/grpc/encoding/proto"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/mem"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/temporalio/temporal-proxy/internal/server"
@@ -27,6 +33,11 @@ type (
 
 	stubCredentials struct {
 		secure bool
+	}
+
+	recordingCodec struct {
+		delegate encoding.CodecV2
+		calls    atomic.Int32
 	}
 )
 
@@ -135,13 +146,221 @@ func TestServerInsecureWarning(t *testing.T) {
 	})
 }
 
+func TestWithUnaryInterceptor(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	var calls []string
+
+	record := func(name string) grpc.UnaryServerInterceptor {
+		return func(
+			ctx context.Context,
+			req any,
+			_ *grpc.UnaryServerInfo,
+			handler grpc.UnaryHandler,
+		) (any, error) {
+			mu.Lock()
+			calls = append(calls, name)
+			mu.Unlock()
+			return handler(ctx, req)
+		}
+	}
+
+	svr, err := server.New(
+		server.WithUnaryInterceptor(record("first"), record("second")),
+	)
+	require.NoError(t, err)
+
+	lis := bufconn.Listen(1024 * 1024)
+	defer func() { _ = lis.Close() }()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- svr.Start(t.Context(), lis) }()
+
+	conn := newBufConnClient(t, lis)
+	defer func() { _ = conn.Close() }()
+
+	client := grpc_health_v1.NewHealthClient(conn)
+	_, err = client.Check(t.Context(), &grpc_health_v1.HealthCheckRequest{})
+	require.NoError(t, err)
+
+	require.NoError(t, svr.Stop(t.Context()))
+	<-errCh
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, []string{"first", "second"}, calls)
+}
+
+func TestWithStreamInterceptor(t *testing.T) {
+	t.Parallel()
+
+	var called atomic.Bool
+	interceptor := func(
+		srv any,
+		ss grpc.ServerStream,
+		_ *grpc.StreamServerInfo,
+		handler grpc.StreamHandler,
+	) error {
+		called.Store(true)
+		return handler(srv, ss)
+	}
+
+	svr, err := server.New(server.WithStreamInterceptor(interceptor))
+	require.NoError(t, err)
+
+	lis := bufconn.Listen(1024 * 1024)
+	defer func() { _ = lis.Close() }()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- svr.Start(t.Context(), lis) }()
+
+	conn := newBufConnClient(t, lis)
+	defer func() { _ = conn.Close() }()
+
+	client := grpc_health_v1.NewHealthClient(conn)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	stream, err := client.Watch(ctx, &grpc_health_v1.HealthCheckRequest{})
+	require.NoError(t, err)
+
+	// Recv once to ensure the server-side handler (and thus the interceptor) ran.
+	_, err = stream.Recv()
+	require.NoError(t, err)
+	cancel()
+
+	require.True(t, called.Load())
+
+	require.NoError(t, svr.Stop(t.Context()))
+	<-errCh
+}
+
+func TestWithService(t *testing.T) {
+	t.Parallel()
+
+	echoDesc := grpc.ServiceDesc{
+		ServiceName: "test.v1.Echo",
+		HandlerType: (*any)(nil),
+		Methods: []grpc.MethodDesc{
+			{
+				MethodName: "Ping",
+				Handler: func(
+					_ any,
+					ctx context.Context,
+					dec func(any) error,
+					_ grpc.UnaryServerInterceptor,
+				) (any, error) {
+					in := new(grpc_health_v1.HealthCheckRequest)
+					if err := dec(in); err != nil {
+						return nil, err
+					}
+					return &grpc_health_v1.HealthCheckResponse{
+						Status: grpc_health_v1.HealthCheckResponse_SERVING,
+					}, nil
+				},
+			},
+		},
+	}
+
+	var registered bool
+	svr, err := server.New(server.WithService(func(r grpc.ServiceRegistrar) {
+		registered = true
+		r.RegisterService(&echoDesc, nil)
+	}))
+	require.NoError(t, err)
+	require.True(t, registered, "service registration callback should be invoked")
+
+	lis := bufconn.Listen(1024 * 1024)
+	defer func() { _ = lis.Close() }()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- svr.Start(t.Context(), lis) }()
+
+	conn := newBufConnClient(t, lis)
+	defer func() { _ = conn.Close() }()
+
+	resp := new(grpc_health_v1.HealthCheckResponse)
+	err = conn.Invoke(
+		t.Context(),
+		"/test.v1.Echo/Ping",
+		&grpc_health_v1.HealthCheckRequest{},
+		resp,
+	)
+	require.NoError(t, err)
+	require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.GetStatus())
+
+	require.NoError(t, svr.Stop(t.Context()))
+	<-errCh
+}
+
+func TestWithUnknownServiceHandler(t *testing.T) {
+	t.Parallel()
+
+	handler := func(_ any, stream grpc.ServerStream) error {
+		return status.Error(codes.Unimplemented, "reached-unknown-handler")
+	}
+
+	svr, err := server.New(server.WithUnknownServiceHandler(handler))
+	require.NoError(t, err)
+
+	lis := bufconn.Listen(1024 * 1024)
+	defer func() { _ = lis.Close() }()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- svr.Start(t.Context(), lis) }()
+
+	conn := newBufConnClient(t, lis)
+	defer func() { _ = conn.Close() }()
+
+	err = conn.Invoke(
+		t.Context(),
+		"/not.registered.Service/Method",
+		&grpc_health_v1.HealthCheckRequest{},
+		&grpc_health_v1.HealthCheckResponse{},
+	)
+	require.Error(t, err)
+	require.Equal(t, codes.Unimplemented, status.Code(err))
+	require.ErrorContains(t, err, "reached-unknown-handler")
+
+	require.NoError(t, svr.Stop(t.Context()))
+	<-errCh
+}
+
+func TestWithServerCodec(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingCodec{delegate: encoding.GetCodecV2("proto")}
+
+	svr, err := server.New(server.WithServerCodec(rec))
+	require.NoError(t, err)
+
+	lis := bufconn.Listen(1024 * 1024)
+	defer func() { _ = lis.Close() }()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- svr.Start(t.Context(), lis) }()
+
+	conn := newBufConnClient(t, lis)
+	defer func() { _ = conn.Close() }()
+
+	client := grpc_health_v1.NewHealthClient(conn)
+	resp, err := client.Check(t.Context(), &grpc_health_v1.HealthCheckRequest{})
+	require.NoError(t, err)
+	require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.GetStatus())
+
+	require.NoError(t, svr.Stop(t.Context()))
+	<-errCh
+
+	require.Positive(t, rec.calls.Load(), "forced server codec should be exercised")
+}
+
 func TestServerStartAndStop(t *testing.T) {
 	t.Parallel()
 
-	var statusCalls atomic.Int32
+	var status atomic.Int32
+	status.Store(int32(grpc_health_v1.HealthCheckResponse_SERVING))
 	hc := server.HealthCheckFunc(10*time.Millisecond, func(context.Context) grpc_health_v1.HealthCheckResponse_ServingStatus {
-		statusCalls.Add(1)
-		return grpc_health_v1.HealthCheckResponse_NOT_SERVING
+		return grpc_health_v1.HealthCheckResponse_ServingStatus(status.Load())
 	})
 
 	svr, err := server.New(server.WithHealthCheck(hc))
@@ -168,13 +387,13 @@ func TestServerStartAndStop(t *testing.T) {
 		return err == nil && resp.GetStatus() == grpc_health_v1.HealthCheckResponse_SERVING
 	}, time.Second, 10*time.Millisecond)
 
+	// Flip the reported status and confirm the periodic health check propagates
+	// the change to the gRPC health service.
+	status.Store(int32(grpc_health_v1.HealthCheckResponse_NOT_SERVING))
+
 	require.Eventually(t, func() bool {
 		resp, err := client.Check(t.Context(), &grpc_health_v1.HealthCheckRequest{})
 		return err == nil && resp.GetStatus() == grpc_health_v1.HealthCheckResponse_NOT_SERVING
-	}, time.Second, 10*time.Millisecond)
-
-	require.Eventually(t, func() bool {
-		return statusCalls.Load() > 0
 	}, time.Second, 10*time.Millisecond)
 
 	require.NoError(t, svr.Stop(t.Context()))
@@ -198,6 +417,18 @@ func (c stubCredentials) ServerOption() (grpc.ServerOption, error) {
 }
 
 func (c stubCredentials) Encrypted() bool { return c.secure }
+
+func (c *recordingCodec) Marshal(v any) (mem.BufferSlice, error) {
+	c.calls.Add(1)
+	return c.delegate.Marshal(v)
+}
+
+func (c *recordingCodec) Unmarshal(data mem.BufferSlice, v any) error {
+	c.calls.Add(1)
+	return c.delegate.Unmarshal(data, v)
+}
+
+func (c *recordingCodec) Name() string { return c.delegate.Name() }
 
 func newBufConnClient(t *testing.T, lis *bufconn.Listener) *grpc.ClientConn {
 	t.Helper()
