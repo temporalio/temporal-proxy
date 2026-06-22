@@ -140,3 +140,11 @@ func TestTLS_Validate(t *testing.T) {
 		require.ErrorContains(t, err, "failed to read PEM file")
 	})
 }
+
+func TestTLS_Encrypted(t *testing.T) {
+	t.Parallel()
+
+	// TLS encrypts the transport in both client and server modes.
+	require.True(t, creds.NewClientTLS().Encrypted())
+	require.True(t, creds.NewServerTLS("", "").Encrypted())
+}

@@ -22,14 +22,17 @@ type (
 		healthSvr *health.Server
 
 		cancelFunc  context.CancelFunc
+		creds       Credentials
 		healthCheck HealthCheck
 		logger      log.Logger
 	}
 
 	// Credentials produces the [grpc.ServerOption] used to configure
-	// transport security for inbound connections.
+	// transport security for inbound connections and reports whether that
+	// transport is encrypted.
 	Credentials interface {
 		ServerOption() (grpc.ServerOption, error)
+		Encrypted() bool
 	}
 
 	// Option configures a [Server] at construction time.
@@ -73,6 +76,7 @@ func New(sopts ...Option) (*Server, error) {
 	return &Server{
 		grpcSvr:     svr,
 		healthSvr:   hc,
+		creds:       opts.creds,
 		healthCheck: opts.healthCheck,
 		logger:      opts.logger,
 	}, nil
@@ -99,6 +103,10 @@ func WithLogger(log log.Logger) Option {
 // is called.
 func (s *Server) Start(ctx context.Context, lis net.Listener) error {
 	s.logger = log.With(s.logger, tag.NewStringerTag("addr", lis.Addr()))
+	if !s.creds.Encrypted() {
+		s.logger.Warn("Running with insecure credentials. Configure TLS for production use.")
+	}
+
 	s.logger.Info("Starting the server")
 
 	ctx, s.cancelFunc = context.WithCancel(ctx)

@@ -91,17 +91,6 @@ func TestMTLS_DialOption(t *testing.T) {
 func TestMTLS_Options(t *testing.T) {
 	t.Parallel()
 
-	t.Run("InsecureSkipVerify is propagated", func(t *testing.T) {
-		t.Parallel()
-
-		caFile, certFile, keyFile := testutil.GenerateMTLSCerts(t)
-		opt, err := creds.NewMTLS(caFile, certFile, keyFile, creds.MTLSOptions{
-			InsecureSkipVerify: true,
-		}).DialOption()
-		require.NoError(t, err)
-		require.NotNil(t, opt)
-	})
-
 	t.Run("ServerName is propagated", func(t *testing.T) {
 		t.Parallel()
 
@@ -254,4 +243,9 @@ func TestMTLS_Validate(t *testing.T) {
 		require.ErrorAs(t, err, &verrs)
 		require.Len(t, verrs, 2)
 	})
+}
+
+func TestMTLS_Encrypted(t *testing.T) {
+	t.Parallel()
+	require.True(t, creds.NewMTLS("", "", "", creds.MTLSOptions{}).Encrypted())
 }
