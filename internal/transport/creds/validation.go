@@ -15,6 +15,16 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
+const (
+	// minRSAKeyBits is the smallest RSA modulus size accepted by
+	// HasSufficientKeySize. 2048 bits is the current NIST-recommended minimum.
+	minRSAKeyBits = 2048
+
+	// minECDSAKeyBits is the smallest ECDSA curve size accepted by
+	// HasSufficientKeySize. 256 bits (e.g. P-256) is the recommended minimum.
+	minECDSAKeyBits = 256
+)
+
 var (
 	// weakAlgorithms lists signature algorithms considered cryptographically broken.
 	// SHA-1 and MD5 are vulnerable to collision attacks; MD2 is obsolete; DSA is deprecated in X.509.
@@ -207,6 +217,42 @@ func UsesSecureCertificateAlgorithm(allowedSuites ...uint16) Validator {
 				Subject: cert.Subject.CommonName,
 				Field:   "key_type",
 				Message: fmt.Sprintf("key type %q incompatible with allowed cipher suites", kt),
+			}
+		}
+
+		return nil
+	}
+}
+
+// HasSufficientKeySize returns a Validator that rejects certificates whose
+// public key is below the recommended minimum size: RSA keys must be at least
+// minRSAKeyBits and ECDSA keys at least minECDSAKeyBits. Key types other than
+// RSA and ECDSA (e.g. Ed25519) are unsupported and rejected, since the proxy's
+// allowed cipher suites cover only RSA and ECDSA keys.
+func HasSufficientKeySize() Validator {
+	return func(cert *x509.Certificate) error {
+		switch pub := cert.PublicKey.(type) {
+		case *rsa.PublicKey:
+			if bits := pub.N.BitLen(); bits < minRSAKeyBits {
+				return validation.Error{
+					Subject: cert.Subject.CommonName,
+					Field:   "key_size",
+					Message: fmt.Sprintf("RSA key size %d below minimum %d", bits, minRSAKeyBits),
+				}
+			}
+		case *ecdsa.PublicKey:
+			if bits := pub.Curve.Params().BitSize; bits < minECDSAKeyBits {
+				return validation.Error{
+					Subject: cert.Subject.CommonName,
+					Field:   "key_size",
+					Message: fmt.Sprintf("ECDSA key size %d below minimum %d", bits, minECDSAKeyBits),
+				}
+			}
+		default:
+			return validation.Error{
+				Subject: cert.Subject.CommonName,
+				Field:   "key_type",
+				Message: fmt.Sprintf("unsupported public key type %T", pub),
 			}
 		}
 

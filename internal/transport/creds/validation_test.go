@@ -1,6 +1,9 @@
 package creds_test
 
 import (
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -292,6 +295,70 @@ func TestUsesSecureCertificateAlgorithm_WeakAlgorithm(t *testing.T) {
 	require.Contains(t, err.Error(), "weak signature algorithm")
 }
 
+func TestHasSufficientKeySize(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		certPEM func(t *testing.T) []byte
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "RSA 2048 passes",
+			certPEM: func(t *testing.T) []byte { return rsaCert(t, 2048) },
+			wantErr: false,
+		},
+		{
+			name:    "RSA 4096 passes",
+			certPEM: func(t *testing.T) []byte { return rsaCert(t, 4096) },
+			wantErr: false,
+		},
+		{
+			name:    "RSA 1024 fails",
+			certPEM: func(t *testing.T) []byte { return rsaCert(t, 1024) },
+			wantErr: true,
+			errMsg:  "RSA key size 1024 below minimum 2048",
+		},
+		{
+			name:    "ECDSA P-256 passes",
+			certPEM: func(t *testing.T) []byte { return ecdsaCert(t, elliptic.P256()) },
+			wantErr: false,
+		},
+		{
+			name:    "ECDSA P-384 passes",
+			certPEM: func(t *testing.T) []byte { return ecdsaCert(t, elliptic.P384()) },
+			wantErr: false,
+		},
+		{
+			name:    "ECDSA P-224 fails",
+			certPEM: func(t *testing.T) []byte { return ecdsaCert(t, elliptic.P224()) },
+			wantErr: true,
+			errMsg:  "ECDSA key size 224 below minimum 256",
+		},
+		{
+			name:    "Ed25519 fails",
+			certPEM: ed25519Cert,
+			wantErr: true,
+			errMsg:  "unsupported public key type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := creds.ValidatePEM(tt.certPEM(t), creds.HasSufficientKeySize())
+			if tt.wantErr {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.errMsg)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestValidatePEMKeyFile(t *testing.T) {
 	t.Parallel()
 
@@ -372,6 +439,53 @@ func validKey(t *testing.T) string {
 	t.Helper()
 	_, keyFile := testutil.GenerateSelfSignedCert(t)
 	return keyFile
+}
+
+// rsaCert generates a self-signed RSA certificate with a key of the given bit
+// size and returns its PEM encoding. Unlike testutil.RSACert, the key size is
+// caller-controlled so tests can exercise below-minimum keys.
+func rsaCert(t *testing.T, bits int) []byte {
+	t.Helper()
+
+	key, err := rsa.GenerateKey(rand.Reader, bits)
+	require.NoError(t, err)
+
+	tmpl := validTemplate()
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+// ecdsaCert generates a self-signed ECDSA certificate over the given curve and
+// returns its PEM encoding, allowing tests to exercise below-minimum curves.
+func ecdsaCert(t *testing.T, curve elliptic.Curve) []byte {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(curve, rand.Reader)
+	require.NoError(t, err)
+
+	tmpl := validTemplate()
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+// ed25519Cert generates a self-signed Ed25519 certificate and returns its PEM
+// encoding. Ed25519 is unsupported by HasSufficientKeySize, so this exercises
+// the rejection path for key types other than RSA and ECDSA.
+func ed25519Cert(t *testing.T) []byte {
+	t.Helper()
+
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+
+	tmpl := validTemplate()
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, key)
+	require.NoError(t, err)
+
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
 
 func validTemplate() *x509.Certificate {

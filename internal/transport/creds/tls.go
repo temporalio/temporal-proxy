@@ -90,6 +90,7 @@ func (c *TLS) Validate() error {
 				path,
 				CertificateNotExpired(),
 				UsesSecureCertificateAlgorithm(preferredCipherSuites...),
+				HasSufficientKeySize(),
 			)
 		}),
 		validation.Field("key", c.keyFile, ValidatePEMKeyFile),
