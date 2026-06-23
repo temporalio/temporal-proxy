@@ -45,6 +45,7 @@ type (
 	}
 )
 
+// Validate checks the upstream listen and namespace configuration.
 func (u *Upstream) Validate() error {
 	return validation.Validate(
 		"",
@@ -53,6 +54,7 @@ func (u *Upstream) Validate() error {
 	)
 }
 
+// Validate checks the namespace translation rules.
 func (c *NamespaceConfig) Validate() error {
 	return validation.Validate(
 		"",
@@ -101,6 +103,8 @@ func (r *NamespaceRules) UnmarshalYAML(unmarshal func(any) error) error {
 	return nil
 }
 
+// Validate checks that override entries are complete and that no local or
+// remote name is mapped more than once.
 func (r *NamespaceRules) Validate() error {
 	if len(r.Overrides) == 0 {
 		return nil
@@ -121,6 +125,7 @@ func (r *NamespaceRules) Validate() error {
 	return validation.Validate("", rules...)
 }
 
+// Validate requires both the local and remote namespace names.
 func (m *NamespaceMapping) Validate() error {
 	return validation.Validate(
 		"",

@@ -23,7 +23,7 @@ func serve() *cli.Command {
 				Aliases:   []string{"c"},
 				Usage:     "Path to the config file",
 				TakesFile: true,
-				Sources:   cli.EnvVars("CODEC_SERVER_CONFIG"),
+				Sources:   cli.EnvVars("PROXY_CONFIG"),
 				Required:  true,
 			},
 			&cli.StringFlag{

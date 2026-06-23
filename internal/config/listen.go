@@ -26,6 +26,7 @@ type (
 	}
 )
 
+// Validate checks the host:port and, when present, the TLS configuration.
 func (l *ListenConfig) Validate() error {
 	return validation.Validate(
 		"",
@@ -37,6 +38,8 @@ func (l *ListenConfig) Validate() error {
 	)
 }
 
+// Validate checks the configured certificate material: mutual TLS when a CA is
+// set, otherwise server-only TLS.
 func (t *TLSConfig) Validate() error {
 	return validation.Validate(
 		"",
