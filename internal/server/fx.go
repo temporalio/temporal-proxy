@@ -49,7 +49,12 @@ var Module = fx.Option(fx.Invoke(func(p ServerParams) error {
 			go func() {
 				defer func() { _ = lis.Close() }()
 
-				svr.Start(p.Context, lis) // nolint:errcheck
+				if err := svr.Start(p.Context, lis); err != nil {
+					// The server stopped serving unexpectedly. Bring the app
+					// down rather than linger in a non-serving state; Start has
+					// already logged the cause.
+					_ = p.Shutdowner.Shutdown(fx.ExitCode(1))
+				}
 			}()
 
 			return nil
@@ -63,13 +68,13 @@ var Module = fx.Option(fx.Invoke(func(p ServerParams) error {
 }))
 
 // ServerParams collects the fx-provided dependencies needed to construct a
-// [Server]. HostPort, Credentials, HealthCheck, and Logger are optional and
-// fall back to the defaults used by [New] (or [DefaultHostPort]) when not
-// supplied. HostPort must be provided as a named string value tagged
-// "serverHostPort".
+// [Server]. Context and Config are required; HealthCheck and Logger are
+// optional and fall back to the defaults used by [New] when not supplied. The
+// listen address and transport credentials are derived from Config.
 type ServerParams struct {
 	fx.In
-	Lifecycle fx.Lifecycle
+	Lifecycle  fx.Lifecycle
+	Shutdowner fx.Shutdowner
 
 	// Required values
 	Context context.Context
