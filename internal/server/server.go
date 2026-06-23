@@ -108,6 +108,7 @@ func WithLogger(log log.Logger) Option {
 // is called.
 func (s *Server) Start(ctx context.Context, lis net.Listener) error {
 	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	s.mu.Lock()
 	s.logger = log.With(s.logger, tag.NewStringerTag("addr", lis.Addr()))
