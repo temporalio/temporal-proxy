@@ -6,13 +6,13 @@ import (
 	"sync"
 	"time"
 
-	"go.temporal.io/server/common/log"
-	"go.temporal.io/server/common/log/tag"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/temporalio/temporal-proxy/internal/transport/creds"
+	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
 
 type (
@@ -29,7 +29,7 @@ type (
 		// goroutine while Stop reads them from the caller's goroutine.
 		mu         sync.Mutex
 		cancelFunc context.CancelFunc
-		logger     log.Logger
+		logger     logger.Logger
 	}
 
 	// Credentials produces the [grpc.ServerOption] used to configure
@@ -48,7 +48,7 @@ type (
 	options struct {
 		creds       Credentials
 		healthCheck HealthCheck
-		logger      log.Logger
+		logger      logger.Logger
 	}
 
 	optFunc func(*options)
@@ -61,7 +61,7 @@ func New(sopts ...Option) (*Server, error) {
 	opts := &options{
 		creds:       creds.NewInsecure(),
 		healthCheck: defaultHealthCheck(),
-		logger:      log.NewCLILogger(),
+		logger:      logger.Default(),
 	}
 	for _, opt := range sopts {
 		opt.apply(opts)
@@ -99,7 +99,7 @@ func WithHealthCheck(hc HealthCheck) Option {
 }
 
 // WithLogger sets the logger used by the server.
-func WithLogger(log log.Logger) Option {
+func WithLogger(log logger.Logger) Option {
 	return optFunc(func(o *options) { o.logger = log })
 }
 
@@ -111,24 +111,23 @@ func (s *Server) Start(ctx context.Context, lis net.Listener) error {
 	defer cancel()
 
 	s.mu.Lock()
-	s.logger = log.With(s.logger, tag.NewStringerTag("addr", lis.Addr()))
+	s.logger = s.logger.With(tag.Stringer("addr", lis.Addr()))
 	if !s.creds.Encrypted() {
 		s.logger.Warn("Running with insecure credentials. Configure TLS for production use.")
 	}
 
 	s.cancelFunc = cancel
-	logger := s.logger
+	log := s.logger
 	s.mu.Unlock()
 
-	logger.Info("Starting the server")
-
+	log.Info("Starting the server")
 	go s.runHealthCheck(ctx)
 
 	// Serve returns a non-nil error only when it stops for a reason other than
 	// a graceful stop (GracefulStop makes it return nil), so anything here is a
 	// genuine failure worth surfacing.
 	if err := s.grpcSvr.Serve(lis); err != nil {
-		logger.Error("Server stopped serving", tag.Error(err))
+		log.Error("Server stopped serving", tag.Error(err))
 		return err
 	}
 

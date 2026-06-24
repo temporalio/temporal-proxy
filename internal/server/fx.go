@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"net"
 
-	"go.temporal.io/server/common/log"
 	"go.uber.org/fx"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/transport/creds"
+	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
 
 // Module is the fx module that constructs a [Server] from [ServerParams] and
@@ -81,8 +81,8 @@ type ServerParams struct {
 	Config  *config.Config
 
 	// Optional values
-	HealthCheck HealthCheck `optional:"true"`
-	Logger      log.Logger  `optional:"true"`
+	HealthCheck HealthCheck   `optional:"true"`
+	Logger      logger.Logger `optional:"true"`
 }
 
 func (p *ServerParams) creds() Credentials {
