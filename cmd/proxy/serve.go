@@ -9,6 +9,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/proxy"
 	"github.com/temporalio/temporal-proxy/internal/router"
 	"github.com/temporalio/temporal-proxy/internal/server"
@@ -36,22 +37,30 @@ func serve() *cli.Command {
 				Value:   "info",
 				Sources: cli.EnvVars("LOG_LEVEL"),
 			},
+			&cli.StringFlag{
+				Name:    "metrics-addr",
+				Usage:   "The host:port on which to serve /metrics",
+				Value:   ":9090",
+				Sources: cli.EnvVars("METRICS_ADDR"),
+			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			log := logger.NewZeroLogger(os.Stderr, logger.ParseLevel(cmd.String("level")))
 
 			fxApp := fx.New(
 				fx.Supply(
-					prometheus.WrapRegistererWithPrefix("proxy_", prometheus.NewRegistry()),
 					fx.Annotate(ctx, fx.As(new(context.Context))),
 					fx.Annotate(cmd.String("config"), config.ConfigFileTag),
+					fx.Annotate(cmd.String("metrics-addr"), metrics.AddrTag),
 				),
 				fx.Provide(
-					func() prometheus.Gatherer { return prometheus.DefaultGatherer },
 					func() logger.Logger { return log },
+					func() prometheus.Gatherer { return prometheus.DefaultGatherer },
+					func() prometheus.Registerer { return prometheus.DefaultRegisterer },
 				),
 				config.Module,
 				connect.Module,
+				metrics.Module,
 				proxy.Module,
 				router.Module,
 				server.Module,
