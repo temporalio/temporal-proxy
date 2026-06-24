@@ -4,20 +4,18 @@ import (
 	"context"
 	"errors"
 	"net"
-	"slices"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"go.temporal.io/server/common/log/tag"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/temporalio/temporal-proxy/internal/server"
+	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
 
 const insecureMessage = "Running with insecure credentials. Configure TLS for production use."
@@ -29,11 +27,6 @@ type (
 
 	stubCredentials struct {
 		secure bool
-	}
-
-	recordingLogger struct {
-		mu   sync.Mutex
-		msgs []string
 	}
 )
 
@@ -60,13 +53,13 @@ func TestNew(t *testing.T) {
 	t.Run("uses the supplied logger for lifecycle events", func(t *testing.T) {
 		t.Parallel()
 
-		logger := &recordingLogger{}
+		log := logger.NewTestLogger()
 		hc := server.HealthCheckFunc(time.Hour, func(context.Context) grpc_health_v1.HealthCheckResponse_ServingStatus {
 			return grpc_health_v1.HealthCheckResponse_SERVING
 		})
 
 		svr, err := server.New(
-			server.WithLogger(logger),
+			server.WithLogger(log),
 			server.WithHealthCheck(hc),
 		)
 		require.NoError(t, err)
@@ -78,13 +71,13 @@ func TestNew(t *testing.T) {
 		go func() { errCh <- svr.Start(t.Context(), lis) }()
 
 		require.Eventually(t, func() bool {
-			return logger.contains("Starting the server")
+			return log.Contains("Starting the server")
 		}, time.Second, 10*time.Millisecond)
 
 		require.NoError(t, svr.Stop(t.Context()))
 		<-errCh
 
-		require.True(t, logger.contains("Shutting down"), "expected shutdown to be logged")
+		require.True(t, log.Contains("Shutting down"), "expected shutdown to be logged")
 	})
 }
 
@@ -94,9 +87,9 @@ func TestServerInsecureWarning(t *testing.T) {
 	t.Run("warns when credentials are insecure", func(t *testing.T) {
 		t.Parallel()
 
-		logger := &recordingLogger{}
+		log := logger.NewTestLogger()
 		svr, err := server.New(
-			server.WithLogger(logger),
+			server.WithLogger(log),
 			server.WithCredentials(stubCredentials{secure: false}),
 		)
 		require.NoError(t, err)
@@ -108,7 +101,7 @@ func TestServerInsecureWarning(t *testing.T) {
 		go func() { errCh <- svr.Start(t.Context(), lis) }()
 
 		require.Eventually(t, func() bool {
-			return logger.contains(insecureMessage)
+			return log.Contains(insecureMessage)
 		}, time.Second, 10*time.Millisecond)
 
 		require.NoError(t, svr.Stop(t.Context()))
@@ -118,9 +111,9 @@ func TestServerInsecureWarning(t *testing.T) {
 	t.Run("does not warn when credentials are secure", func(t *testing.T) {
 		t.Parallel()
 
-		logger := &recordingLogger{}
+		log := logger.NewTestLogger()
 		svr, err := server.New(
-			server.WithLogger(logger),
+			server.WithLogger(log),
 			server.WithCredentials(stubCredentials{secure: true}),
 		)
 		require.NoError(t, err)
@@ -132,13 +125,13 @@ func TestServerInsecureWarning(t *testing.T) {
 		go func() { errCh <- svr.Start(t.Context(), lis) }()
 
 		require.Eventually(t, func() bool {
-			return logger.contains("Starting the server")
+			return log.Contains("Starting the server")
 		}, time.Second, 10*time.Millisecond)
 
 		require.NoError(t, svr.Stop(t.Context()))
 		<-errCh
 
-		require.False(t, logger.contains(insecureMessage))
+		require.False(t, log.Contains(insecureMessage))
 	})
 }
 
@@ -205,26 +198,6 @@ func (c stubCredentials) ServerOption() (grpc.ServerOption, error) {
 }
 
 func (c stubCredentials) Encrypted() bool { return c.secure }
-
-func (l *recordingLogger) record(msg string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.msgs = append(l.msgs, msg)
-}
-
-func (l *recordingLogger) contains(msg string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return slices.Contains(l.msgs, msg)
-}
-
-func (l *recordingLogger) Debug(msg string, _ ...tag.Tag)  { l.record(msg) }
-func (l *recordingLogger) Info(msg string, _ ...tag.Tag)   { l.record(msg) }
-func (l *recordingLogger) Warn(msg string, _ ...tag.Tag)   { l.record(msg) }
-func (l *recordingLogger) Error(msg string, _ ...tag.Tag)  { l.record(msg) }
-func (l *recordingLogger) DPanic(msg string, _ ...tag.Tag) { l.record(msg) }
-func (l *recordingLogger) Panic(msg string, _ ...tag.Tag)  { l.record(msg) }
-func (l *recordingLogger) Fatal(msg string, _ ...tag.Tag)  { l.record(msg) }
 
 func newBufConnClient(t *testing.T, lis *bufconn.Listener) *grpc.ClientConn {
 	t.Helper()

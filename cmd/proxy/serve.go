@@ -2,16 +2,17 @@ package main
 
 import (
 	"context"
+	"os"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/urfave/cli/v3"
-	"go.temporal.io/server/common/log"
-	"go.temporal.io/server/common/log/tag"
 	"go.uber.org/fx"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/server"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
+	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
 
 func serve() *cli.Command {
@@ -35,9 +36,7 @@ func serve() *cli.Command {
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			logger := log.NewZapLogger(log.BuildZapLogger(log.Config{
-				Level: cmd.String("level"),
-			}))
+			log := logger.NewZeroLogger(os.Stderr, logger.ParseLevel(cmd.String("level")))
 
 			fxApp := fx.New(
 				fx.Supply(
@@ -47,7 +46,7 @@ func serve() *cli.Command {
 				),
 				fx.Provide(
 					func() prometheus.Gatherer { return prometheus.DefaultGatherer },
-					func() log.Logger { return logger },
+					func() logger.Logger { return log },
 				),
 				config.Module,
 				connect.Module,
@@ -56,7 +55,7 @@ func serve() *cli.Command {
 			)
 
 			if err := fxApp.Err(); err != nil {
-				logger.Error("Misconfigured fx app", tag.Error(err))
+				log.Error("Misconfigured fx app", tag.Error(err))
 				return err
 			}
 

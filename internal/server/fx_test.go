@@ -7,12 +7,12 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"go.temporal.io/server/common/log"
 	"go.uber.org/fx"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/server"
+	"github.com/temporalio/temporal-proxy/pkg/logger"
 	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
@@ -59,7 +59,7 @@ func TestModule(t *testing.T) {
 				},
 				fx.Annotate(hc, fx.As(new(server.HealthCheck))),
 			),
-			fx.Provide(func() log.Logger { return log.NewNoopLogger() }),
+			fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
 		)
 
 		startCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
