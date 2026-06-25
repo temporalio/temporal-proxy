@@ -43,8 +43,8 @@ generate_tag_name() {
 
 create_tag() {
   local tag="${1}"
-  echo git tag -s "${tag}" -m "Release ${tag}"
-  echo git push origin "${tag}"
+  git tag -s "${tag}" -m "Release ${tag}"
+  git push origin "${tag}"
   echo "Tag ${tag} created and pushed. GitHub Actions will handle build and release."
 }
 
