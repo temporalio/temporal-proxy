@@ -6,6 +6,8 @@ import (
 	"net"
 
 	"go.uber.org/fx"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/encoding"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/transport/creds"
@@ -19,8 +21,13 @@ var Module = fx.Option(fx.Invoke(func(p ServerParams) error {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	opts := make([]Option, 0, 3)
-	opts = append(opts, WithCredentials(p.creds()))
+	opts := make([]Option, 0, 5)
+	opts = append(
+		opts,
+		WithCredentials(p.creds()),
+		WithUnknownServiceHandler(p.Handler),
+		WithServerCodec(p.Codec),
+	)
 
 	if p.Logger != nil {
 		opts = append(opts, WithLogger(p.Logger))
@@ -32,7 +39,7 @@ var Module = fx.Option(fx.Invoke(func(p ServerParams) error {
 
 	svr, err := New(opts...)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create server: %w", err)
 	}
 
 	p.Lifecycle.Append(fx.Hook{
@@ -59,18 +66,17 @@ var Module = fx.Option(fx.Invoke(func(p ServerParams) error {
 
 			return nil
 		},
-		OnStop: func(ctx context.Context) error {
-			return svr.Stop(ctx)
-		},
+		OnStop: svr.Stop,
 	})
 
 	return nil
 }))
 
-// ServerParams collects the fx-provided dependencies needed to construct a
-// [Server]. Context and Config are required; HealthCheck and Logger are
-// optional and fall back to the defaults used by [New] when not supplied. The
-// listen address and transport credentials are derived from Config.
+// ServerParams collects the fx-provided dependencies needed to construct and
+// run a [Server]. Context, Config, Codec, and Handler are required; the Codec
+// and Handler are the transparent-forwarding pieces supplied by the router
+// module. HealthCheck and Logger are optional and fall back to the defaults
+// used by [New] when not supplied.
 type ServerParams struct {
 	fx.In
 	Lifecycle  fx.Lifecycle
@@ -79,6 +85,8 @@ type ServerParams struct {
 	// Required values
 	Context context.Context
 	Config  *config.Config
+	Codec   encoding.CodecV2
+	Handler grpc.StreamHandler
 
 	// Optional values
 	HealthCheck HealthCheck   `optional:"true"`

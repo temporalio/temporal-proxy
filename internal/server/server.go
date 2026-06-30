@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
@@ -46,9 +47,14 @@ type (
 	}
 
 	options struct {
-		creds       Credentials
-		healthCheck HealthCheck
-		logger      logger.Logger
+		creds              Credentials
+		healthCheck        HealthCheck
+		logger             logger.Logger
+		unaryInterceptors  []grpc.UnaryServerInterceptor
+		streamInterceptors []grpc.StreamServerInterceptor
+		services           []func(grpc.ServiceRegistrar)
+		unknownHandler     grpc.StreamHandler
+		serverCodec        encoding.CodecV2
 	}
 
 	optFunc func(*options)
@@ -78,6 +84,10 @@ func New(sopts ...Option) (*Server, error) {
 	hc := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(svr, hc)
 
+	for _, register := range opts.services {
+		register(svr)
+	}
+
 	return &Server{
 		grpcSvr:     svr,
 		healthSvr:   hc,
@@ -90,6 +100,39 @@ func New(sopts ...Option) (*Server, error) {
 // WithCredentials sets the transport credentials used for inbound connections.
 func WithCredentials(creds Credentials) Option {
 	return optFunc(func(o *options) { o.creds = creds })
+}
+
+// WithUnaryInterceptor appends unary server interceptors. They are chained in
+// the order supplied across all calls and run before the handler.
+func WithUnaryInterceptor(in ...grpc.UnaryServerInterceptor) Option {
+	return optFunc(func(o *options) { o.unaryInterceptors = append(o.unaryInterceptors, in...) })
+}
+
+// WithStreamInterceptor appends stream server interceptors. They are chained in
+// the order supplied across all calls and run before the handler.
+func WithStreamInterceptor(in ...grpc.StreamServerInterceptor) Option {
+	return optFunc(func(o *options) { o.streamInterceptors = append(o.streamInterceptors, in...) })
+}
+
+// WithService registers gRPC services on the server. The callback receives the
+// underlying server as a grpc.ServiceRegistrar, so callers register via the
+// generated pb.RegisterXxxServer(reg, impl) functions.
+func WithService(fn func(grpc.ServiceRegistrar)) Option {
+	return optFunc(func(o *options) { o.services = append(o.services, fn) })
+}
+
+// WithUnknownServiceHandler installs a catch-all handler invoked for any method
+// that is not a locally registered service. Used to transparently forward
+// unmatched requests.
+func WithUnknownServiceHandler(h grpc.StreamHandler) Option {
+	return optFunc(func(o *options) { o.unknownHandler = h })
+}
+
+// WithServerCodec forces the codec used for all messages on this server. A
+// pass-through codec paired with WithUnknownServiceHandler enables transparent
+// proxying while locally registered services keep working via codec delegation.
+func WithServerCodec(c encoding.CodecV2) Option {
+	return optFunc(func(o *options) { o.serverCodec = c })
 }
 
 // WithHealthCheck sets the [HealthCheck] used to drive the gRPC health
@@ -173,7 +216,24 @@ func (o *options) serverOptions() ([]grpc.ServerOption, error) {
 		return nil, err
 	}
 
-	return []grpc.ServerOption{creds}, nil
+	opts := []grpc.ServerOption{creds}
+	if len(o.unaryInterceptors) > 0 {
+		opts = append(opts, grpc.ChainUnaryInterceptor(o.unaryInterceptors...))
+	}
+
+	if len(o.streamInterceptors) > 0 {
+		opts = append(opts, grpc.ChainStreamInterceptor(o.streamInterceptors...))
+	}
+
+	if o.unknownHandler != nil {
+		opts = append(opts, grpc.UnknownServiceHandler(o.unknownHandler))
+	}
+
+	if o.serverCodec != nil {
+		opts = append(opts, grpc.ForceServerCodecV2(o.serverCodec))
+	}
+
+	return opts, nil
 }
 
 func (f optFunc) apply(o *options) {

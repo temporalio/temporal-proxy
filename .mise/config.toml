@@ -5,6 +5,7 @@ experimental = true
 [tools]
 "github:mattn/goreman" = "latest"
 "github:temporalio/cli" = "latest"
+buf = "1.69.0"
 go = "1.26"
 mkcert = "1.4.4"
 goreleaser = "2.16.0"
@@ -16,13 +17,14 @@ goreleaser = "2.16.0"
 [deps.go]
 
 [deps.tools]
+dir = "dev"
 sources = [".mise/config.toml"]
 outputs = ["dev/tools.sum"]
 description = "Sync dev tools"
 run = """
-  go get -tool -modfile=dev/tools.mod github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8
-  go get -tool -modfile=dev/tools.mod go.uber.org/mock/mockgen@v0.6.0
-  go mod tidy -modfile=dev/tools.mod 2>/dev/null || true
+  go get -tool -modfile=tools.mod github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8
+  go get -tool -modfile=tools.mod go.uber.org/mock/mockgen@v0.6.0
+  go mod tidy -modfile=tools.mod 2>/dev/null || true
 """
 
 ################################################################################
@@ -34,6 +36,30 @@ description = "Run the server locally"
 interactive = true
 depends = ["gen-certs"]
 run = "goreman -exit-on-error -set-ports=false -f dev/Procfile start"
+
+# Bare method names are assumed to be on WorkflowService; anything containing a
+# slash is treated as a full service/method path (e.g. grpc.health.v1.Health/Check).
+[tasks.grpc]
+description = "Call the local proxy via buf curl using the dev mTLS certs"
+depends = ["gen-certs"]
+usage = '''
+arg "<method>" help="Method name (e.g. GetSystemInfo) or a full service/method path"
+arg "[data]" help="Request body as JSON" default="{}"
+'''
+run = '''
+case "$usage_method" in
+  */*) path="$usage_method" ;;
+  *)   path="temporal.api.workflowservice.v1.WorkflowService/$usage_method" ;;
+esac
+
+buf curl --protocol grpc --http2-prior-knowledge \
+  --cacert dev/certs/ca.crt \
+  --cert dev/certs/client.crt \
+  --key dev/certs/client.key \
+  --schema buf.build/temporalio/api \
+  -d "$usage_data" \
+  "https://localhost:8444/$path"
+'''
 
 ################################################################################
 # Development Tasks
