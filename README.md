@@ -1,6 +1,8 @@
 # Temporal Proxy ([Pre-release])
 
 [![ci](https://github.com/temporalio/temporal-proxy/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/temporalio/temporal-proxy/actions/workflows/ci.yaml)
+[![codecov](https://codecov.io/gh/temporalio/temporal-proxy/branch/main/graph/badge.svg)](https://codecov.io/gh/temporalio/temporal-proxy)
+[![Go Reference](https://pkg.go.dev/badge/github.com/temporalio/temporal-proxy.svg)](https://pkg.go.dev/github.com/temporalio/temporal-proxy)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A gRPC proxy that sits between Temporal SDK clients, workers, and the Temporal UI on one side and one or more upstream

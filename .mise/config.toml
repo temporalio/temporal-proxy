@@ -75,7 +75,7 @@ run = ["go fix ./...", "go tool -modfile=dev/tools.mod golangci-lint fmt"]
 
 [tasks.test]
 description = "Run unit tests"
-run = "go test -race -cover ./..."
+run = "go test -race -covermode=atomic -coverprofile=coverage.out ./..."
 
 [tasks."test:bench"]
 description = "Run bench tests"
