@@ -9,8 +9,11 @@ import (
 
 type (
 	// Upstream describes a single upstream Temporal cluster the proxy connects
-	// workers to along with configuration for that remote cluster.
+	// workers to along with configuration for that remote cluster. Name
+	// identifies the upstream so routing rules can refer to it; it must be
+	// unique within the config.
 	Upstream struct {
+		Name       string          `yaml:"name"`
 		Listen     ListenConfig    `yaml:",inline"`
 		Namespaces NamespaceConfig `yaml:"namespaces"`
 	}
@@ -45,11 +48,22 @@ type (
 	}
 )
 
-// Validate checks the upstream listen and namespace configuration.
+// Validate checks the upstream name, dial target, and namespace configuration.
+// A templated hostPort (containing a text/template action) is resolved
+// per-request, so it is not checked as a literal host:port here; a static
+// hostPort still is.
 func (u *Upstream) Validate() error {
 	return validation.Validate(
 		"",
-		validation.Nested("", &u.Listen),
+		validation.Field("name", u.Name, validation.Required[string]()),
+		validation.WhenRules(
+			func() bool { return !isTemplated(u.Listen.HostPort) },
+			validation.Field("hostPort", u.Listen.HostPort, validation.IsHostPort()),
+		),
+		validation.WhenRules(
+			func() bool { return u.Listen.TLS != nil },
+			validation.Nested("tls", u.Listen.TLS),
+		),
 		validation.Nested("namespaces", &u.Namespaces),
 	)
 }
@@ -132,4 +146,12 @@ func (m *NamespaceMapping) Validate() error {
 		validation.Field("local", m.Local, validation.Required[string]()),
 		validation.Field("remote", m.Remote, validation.Required[string]()),
 	)
+}
+
+// isTemplated reports whether s contains a text/template action ("{{ ... }}").
+// Templated upstream targets (e.g. "{{ .RemoteNamespace }}.acme.cloud:7233")
+// are rendered per-request, so they cannot be validated as a literal host:port
+// at config-load time.
+func isTemplated(s string) bool {
+	return strings.Contains(s, "{{") && strings.Contains(s, "}}")
 }
