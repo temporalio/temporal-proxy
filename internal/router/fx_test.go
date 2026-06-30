@@ -32,7 +32,7 @@ func TestModule(t *testing.T) {
 
 		app := fx.New(
 			fx.Supply(&config.Config{
-				Upstream: config.Upstream{Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
+				Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
 			}),
 			router.Module,
 			fx.Populate(&codec, &handler),
@@ -96,7 +96,7 @@ func TestModule(t *testing.T) {
 		)
 		app := fx.New(
 			fx.Supply(&config.Config{
-				Upstream: config.Upstream{Listen: config.ListenConfig{HostPort: upstream}},
+				Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: upstream}}},
 			}),
 			router.Module,
 			fx.Populate(&codec, &handler),

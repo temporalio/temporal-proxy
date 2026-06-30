@@ -133,9 +133,10 @@ func TestLoadFile_MissingFile(t *testing.T) {
 func TestConfig_Validate(t *testing.T) {
 	t.Parallel()
 
-	validUpstream := config.Upstream{
+	validUpstreams := []config.Upstream{{
+		Name:   "primary",
 		Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
-	}
+	}}
 
 	tests := []struct {
 		name       string
@@ -145,15 +146,15 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "valid hostPort, no TLS",
 			cfg: &config.Config{
-				Listen:   config.ListenConfig{HostPort: ":8080"},
-				Upstream: validUpstream,
+				Listen:    config.ListenConfig{HostPort: ":8080"},
+				Upstreams: validUpstreams,
 			},
 		},
 		{
 			name: "invalid hostPort surfaces from ListenConfig",
 			cfg: &config.Config{
-				Listen:   config.ListenConfig{HostPort: "localhost"},
-				Upstream: validUpstream,
+				Listen:    config.ListenConfig{HostPort: "localhost"},
+				Upstreams: validUpstreams,
 			},
 			wantTuples: [][2]string{{"", "hostPort"}},
 		},
@@ -164,7 +165,7 @@ func TestConfig_Validate(t *testing.T) {
 					HostPort: ":8080",
 					TLS:      &config.TLSConfig{}, // empty -> creds.TLS PEM read failures
 				},
-				Upstream: validUpstream,
+				Upstreams: validUpstreams,
 			},
 			wantTuples: [][2]string{
 				{"tls", "cert"},
@@ -178,7 +179,7 @@ func TestConfig_Validate(t *testing.T) {
 					HostPort: "localhost",
 					TLS:      &config.TLSConfig{},
 				},
-				Upstream: validUpstream,
+				Upstreams: validUpstreams,
 			},
 			wantTuples: [][2]string{
 				{"", "hostPort"},
@@ -187,11 +188,45 @@ func TestConfig_Validate(t *testing.T) {
 			},
 		},
 		{
-			name: "missing upstream hostPort surfaces with upstream subject",
+			name: "missing upstream hostPort surfaces with indexed upstream subject",
 			cfg: &config.Config{
 				Listen: config.ListenConfig{HostPort: ":8080"},
+				Upstreams: []config.Upstream{{
+					Name: "primary",
+				}},
 			},
-			wantTuples: [][2]string{{"upstream", "hostPort"}},
+			wantTuples: [][2]string{{"upstreams[0]", "hostPort"}},
+		},
+		{
+			name: "empty upstream name surfaces with indexed upstream subject",
+			cfg: &config.Config{
+				Listen: config.ListenConfig{HostPort: ":8080"},
+				Upstreams: []config.Upstream{{
+					Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
+				}},
+			},
+			wantTuples: [][2]string{{"upstreams[0]", "name"}},
+		},
+		{
+			name: "duplicate upstream names surface on the upstreams[name] field",
+			cfg: &config.Config{
+				Listen: config.ListenConfig{HostPort: ":8080"},
+				Upstreams: []config.Upstream{
+					{Name: "dup", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
+					{Name: "dup", Listen: config.ListenConfig{HostPort: "127.0.0.1:7234"}},
+				},
+			},
+			wantTuples: [][2]string{{"", "upstreams[name]"}},
+		},
+		{
+			name: "templated upstream hostPort is accepted",
+			cfg: &config.Config{
+				Listen: config.ListenConfig{HostPort: ":8080"},
+				Upstreams: []config.Upstream{{
+					Name:   "templated",
+					Listen: config.ListenConfig{HostPort: "{{ .RemoteNamespace }}.acme-cloud.tmprl.cloud:7233"},
+				}},
+			},
 		},
 	}
 
@@ -215,6 +250,30 @@ func TestConfig_Validate(t *testing.T) {
 			require.ElementsMatch(t, tt.wantTuples, got)
 		})
 	}
+}
+
+func TestConfig_PrimaryUpstream(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns the first configured upstream", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := &config.Config{Upstreams: []config.Upstream{
+			{Name: "first", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
+			{Name: "second", Listen: config.ListenConfig{HostPort: "127.0.0.1:7234"}},
+		}}
+
+		up, err := cfg.PrimaryUpstream()
+		require.NoError(t, err)
+		require.Equal(t, "first", up.Name)
+	})
+
+	t.Run("errors when no upstreams are configured", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := (&config.Config{}).PrimaryUpstream()
+		require.Error(t, err)
+	})
 }
 
 func (e *errReader) Read(_ []byte) (int, error) { return 0, e.err }

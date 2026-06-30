@@ -11,6 +11,13 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
+// namespaceConfigYAML wraps a `namespaces:` body (each line indented to sit
+// under a single named upstream) so Load produces one upstream carrying those
+// translation rules.
+func namespaceConfigYAML(namespacesBody string) string {
+	return "upstreams:\n  - name: primary\n    namespaces:\n" + namespacesBody
+}
+
 func TestNamespaceRules_Local(t *testing.T) {
 	t.Parallel()
 
@@ -22,46 +29,46 @@ func TestNamespaceRules_Local(t *testing.T) {
 	}{
 		{
 			name:     "no prefix, suffix, or override returns input unchanged",
-			yaml:     "upstream:\n  namespaces:\n    rules: {}\n",
+			yaml:     namespaceConfigYAML("      rules: {}\n"),
 			remoteNS: "payments",
 			want:     "payments",
 		},
 		{
 			name:     "strips configured prefix",
-			yaml:     "upstream:\n  namespaces:\n    rules:\n      prefix: \"acme-\"\n",
+			yaml:     namespaceConfigYAML("      rules:\n        prefix: \"acme-\"\n"),
 			remoteNS: "acme-payments",
 			want:     "payments",
 		},
 		{
 			name:     "strips configured suffix",
-			yaml:     "upstream:\n  namespaces:\n    rules:\n      suffix: \".cloud\"\n",
+			yaml:     namespaceConfigYAML("      rules:\n        suffix: \".cloud\"\n"),
 			remoteNS: "payments.cloud",
 			want:     "payments",
 		},
 		{
 			name:     "strips both prefix and suffix",
-			yaml:     "upstream:\n  namespaces:\n    rules:\n      prefix: \"acme-\"\n      suffix: \".cloud\"\n",
+			yaml:     namespaceConfigYAML("      rules:\n        prefix: \"acme-\"\n        suffix: \".cloud\"\n"),
 			remoteNS: "acme-payments.cloud",
 			want:     "payments",
 		},
 		{
 			name: "override wins over prefix/suffix",
-			yaml: "upstream:\n  namespaces:\n    rules:\n" +
-				"      prefix: \"acme-\"\n" +
-				"      suffix: \".cloud\"\n" +
-				"      overrides:\n" +
-				"        - local: billing\n" +
-				"          remote: legacy-billing-prod\n",
+			yaml: namespaceConfigYAML("      rules:\n" +
+				"        prefix: \"acme-\"\n" +
+				"        suffix: \".cloud\"\n" +
+				"        overrides:\n" +
+				"          - local: billing\n" +
+				"            remote: legacy-billing-prod\n"),
 			remoteNS: "legacy-billing-prod",
 			want:     "billing",
 		},
 		{
 			name: "no override match falls back to prefix/suffix stripping",
-			yaml: "upstream:\n  namespaces:\n    rules:\n" +
-				"      prefix: \"acme-\"\n" +
-				"      overrides:\n" +
-				"        - local: billing\n" +
-				"          remote: legacy-billing\n",
+			yaml: namespaceConfigYAML("      rules:\n" +
+				"        prefix: \"acme-\"\n" +
+				"        overrides:\n" +
+				"          - local: billing\n" +
+				"            remote: legacy-billing\n"),
 			remoteNS: "acme-payments",
 			want:     "payments",
 		},
@@ -73,7 +80,7 @@ func TestNamespaceRules_Local(t *testing.T) {
 
 			cfg, err := config.Load(strings.NewReader(tc.yaml))
 			require.NoError(t, err)
-			require.Equal(t, tc.want, cfg.Upstream.Namespaces.Rules.Local(tc.remoteNS))
+			require.Equal(t, tc.want, cfg.Upstreams[0].Namespaces.Rules.Local(tc.remoteNS))
 		})
 	}
 }
@@ -89,46 +96,46 @@ func TestNamespaceRules_Remote(t *testing.T) {
 	}{
 		{
 			name:    "no prefix, suffix, or override returns input unchanged",
-			yaml:    "upstream:\n  namespaces:\n    rules: {}\n",
+			yaml:    namespaceConfigYAML("      rules: {}\n"),
 			localNS: "payments",
 			want:    "payments",
 		},
 		{
 			name:    "applies configured prefix",
-			yaml:    "upstream:\n  namespaces:\n    rules:\n      prefix: \"acme-\"\n",
+			yaml:    namespaceConfigYAML("      rules:\n        prefix: \"acme-\"\n"),
 			localNS: "payments",
 			want:    "acme-payments",
 		},
 		{
 			name:    "applies configured suffix",
-			yaml:    "upstream:\n  namespaces:\n    rules:\n      suffix: \".cloud\"\n",
+			yaml:    namespaceConfigYAML("      rules:\n        suffix: \".cloud\"\n"),
 			localNS: "payments",
 			want:    "payments.cloud",
 		},
 		{
 			name:    "applies both prefix and suffix",
-			yaml:    "upstream:\n  namespaces:\n    rules:\n      prefix: \"acme-\"\n      suffix: \".cloud\"\n",
+			yaml:    namespaceConfigYAML("      rules:\n        prefix: \"acme-\"\n        suffix: \".cloud\"\n"),
 			localNS: "payments",
 			want:    "acme-payments.cloud",
 		},
 		{
 			name: "override wins over prefix/suffix",
-			yaml: "upstream:\n  namespaces:\n    rules:\n" +
-				"      prefix: \"acme-\"\n" +
-				"      suffix: \".cloud\"\n" +
-				"      overrides:\n" +
-				"        - local: billing\n" +
-				"          remote: legacy-billing-prod\n",
+			yaml: namespaceConfigYAML("      rules:\n" +
+				"        prefix: \"acme-\"\n" +
+				"        suffix: \".cloud\"\n" +
+				"        overrides:\n" +
+				"          - local: billing\n" +
+				"            remote: legacy-billing-prod\n"),
 			localNS: "billing",
 			want:    "legacy-billing-prod",
 		},
 		{
 			name: "no override match falls back to prefix/suffix wrapping",
-			yaml: "upstream:\n  namespaces:\n    rules:\n" +
-				"      prefix: \"acme-\"\n" +
-				"      overrides:\n" +
-				"        - local: billing\n" +
-				"          remote: legacy-billing\n",
+			yaml: namespaceConfigYAML("      rules:\n" +
+				"        prefix: \"acme-\"\n" +
+				"        overrides:\n" +
+				"          - local: billing\n" +
+				"            remote: legacy-billing\n"),
 			localNS: "payments",
 			want:    "acme-payments",
 		},
@@ -140,7 +147,7 @@ func TestNamespaceRules_Remote(t *testing.T) {
 
 			cfg, err := config.Load(strings.NewReader(tc.yaml))
 			require.NoError(t, err)
-			require.Equal(t, tc.want, cfg.Upstream.Namespaces.Rules.Remote(tc.localNS))
+			require.Equal(t, tc.want, cfg.Upstreams[0].Namespaces.Rules.Remote(tc.localNS))
 		})
 	}
 }
@@ -387,14 +394,32 @@ func TestUpstream_Validate(t *testing.T) {
 		wantTuples [][2]string
 	}{
 		{
-			name: "valid listen and no overrides",
+			name: "valid name and listen, no overrides",
 			upstream: &config.Upstream{
+				Name:   "primary",
 				Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
 			},
 		},
 		{
-			name: "invalid hostPort surfaces from Listen",
+			name: "missing name surfaces required error",
 			upstream: &config.Upstream{
+				Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
+			},
+			wantTuples: [][2]string{
+				{"", "name"},
+			},
+		},
+		{
+			name: "templated hostPort is accepted",
+			upstream: &config.Upstream{
+				Name:   "primary",
+				Listen: config.ListenConfig{HostPort: "{{ .RemoteNamespace }}.acme-cloud.tmprl.cloud:7233"},
+			},
+		},
+		{
+			name: "invalid static hostPort surfaces from Listen",
+			upstream: &config.Upstream{
+				Name:   "primary",
 				Listen: config.ListenConfig{HostPort: "not-a-host-port"},
 			},
 			wantTuples: [][2]string{
@@ -404,6 +429,7 @@ func TestUpstream_Validate(t *testing.T) {
 		{
 			name: "namespace override failure surfaces with override-index subject",
 			upstream: &config.Upstream{
+				Name:   "primary",
 				Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
 				Namespaces: config.NamespaceConfig{
 					Rules: config.NamespaceRules{
@@ -420,6 +446,7 @@ func TestUpstream_Validate(t *testing.T) {
 		{
 			name: "listen and namespace failures aggregate",
 			upstream: &config.Upstream{
+				Name:   "primary",
 				Listen: config.ListenConfig{HostPort: "not-a-host-port"},
 				Namespaces: config.NamespaceConfig{
 					Rules: config.NamespaceRules{
