@@ -20,7 +20,12 @@ import (
 var Module = fx.Options(fx.Provide(
 	Codec,
 	func(p RouterParams) (grpc.StreamHandler, error) {
-		sockPath, err := socket.UnixPath(p.Config.Upstream.Listen.HostPort)
+		upstream, err := p.Config.PrimaryUpstream()
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve upstream: %w", err)
+		}
+
+		sockPath, err := socket.UnixPath(upstream.Listen.HostPort)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve proxy socket path: %w", err)
 		}

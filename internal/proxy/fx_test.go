@@ -25,7 +25,7 @@ func TestModule(t *testing.T) {
 		const upstream = "127.0.0.1:47233"
 
 		app := newProxyApp(t, &config.Config{
-			Upstream: config.Upstream{Listen: config.ListenConfig{HostPort: upstream}},
+			Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: upstream}}},
 		})
 		require.NoError(t, app.Err())
 
@@ -40,7 +40,7 @@ func TestModule(t *testing.T) {
 		log := logger.NewTestLogger()
 		app := newProxyApp(
 			t,
-			&config.Config{Upstream: config.Upstream{Listen: config.ListenConfig{HostPort: upstream}}},
+			&config.Config{Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: upstream}}}},
 			fx.Provide(func() logger.Logger { return log }),
 		)
 		require.NoError(t, app.Err())
@@ -54,7 +54,7 @@ func TestModule(t *testing.T) {
 		t.Parallel()
 
 		app := newProxyApp(t, &config.Config{
-			Upstream: config.Upstream{Listen: config.ListenConfig{HostPort: "not-a-host-port"}},
+			Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "not-a-host-port"}}},
 		})
 
 		require.Error(t, app.Err())

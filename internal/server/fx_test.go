@@ -32,8 +32,8 @@ func TestModule(t *testing.T) {
 			t,
 			fx.Supply(&config.Config{
 				Listen: config.ListenConfig{HostPort: "127.0.0.1:0"},
-				Upstream: config.Upstream{
-					Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
+				Upstreams: []config.Upstream{
+					{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
 				},
 			}),
 		)
@@ -59,8 +59,8 @@ func TestModule(t *testing.T) {
 			fx.Supply(
 				&config.Config{
 					Listen: config.ListenConfig{HostPort: "127.0.0.1:0"},
-					Upstream: config.Upstream{
-						Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
+					Upstreams: []config.Upstream{
+						{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
 					},
 				},
 				fx.Annotate(hc, fx.As(new(server.HealthCheck))),
@@ -114,8 +114,8 @@ func TestModule(t *testing.T) {
 			t,
 			fx.Supply(&config.Config{
 				Listen: config.ListenConfig{HostPort: "1.2.3.4:0"},
-				Upstream: config.Upstream{
-					Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
+				Upstreams: []config.Upstream{
+					{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
 				},
 			}),
 		)
@@ -145,8 +145,8 @@ func TestModuleWiresInjectedCodecAndHandler(t *testing.T) {
 	app := fx.New(
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(&config.Config{
-			Listen:   config.ListenConfig{HostPort: addr},
-			Upstream: config.Upstream{Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
+			Listen:    config.ListenConfig{HostPort: addr},
+			Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
 		}),
 		fx.Provide(
 			func() encoding.CodecV2 { return rec },

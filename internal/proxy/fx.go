@@ -14,16 +14,21 @@ import (
 // Module is the fx module that constructs the proxy [Server] from [ProxyParams]
 // and binds its lifecycle to the application.
 var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
-	if err := p.Config.Upstream.Validate(); err != nil {
+	upstream, err := p.Config.PrimaryUpstream()
+	if err != nil {
 		return fmt.Errorf("invalid upstream configuration: %w", err)
 	}
 
-	opts := []Option{WithCredentials(p.creds())}
+	if err := upstream.Validate(); err != nil {
+		return fmt.Errorf("invalid upstream configuration: %w", err)
+	}
+
+	opts := []Option{WithCredentials(upstreamCreds(upstream))}
 	if p.Logger != nil {
 		opts = append(opts, WithLogger(p.Logger))
 	}
 
-	svr, err := New(p.Config.Upstream.Listen.HostPort, opts...)
+	svr, err := New(upstream.Listen.HostPort, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to create proxy: %w", err)
 	}
@@ -63,11 +68,11 @@ type ProxyParams struct {
 	Logger logger.Logger `optional:"true"`
 }
 
-// creds derives the credentials used to dial the upstream frontend from the
-// upstream TLS configuration: mutual TLS when a CA is set, server-verified
+// upstreamCreds derives the credentials used to dial the upstream frontend from
+// the upstream TLS configuration: mutual TLS when a CA is set, server-verified
 // client TLS when TLS is configured without one, and insecure otherwise.
-func (p *ProxyParams) creds() Credentials {
-	tls := p.Config.Upstream.Listen.TLS
+func upstreamCreds(upstream *config.Upstream) Credentials {
+	tls := upstream.Listen.TLS
 	if tls == nil {
 		return creds.NewInsecure()
 	}
