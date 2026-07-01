@@ -7,7 +7,7 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/rs/zerolog v1.35.1
 	github.com/stretchr/testify v1.11.1
-	github.com/urfave/cli/v3 v3.10.0
+	github.com/urfave/cli/v3 v3.10.1
 	go.temporal.io/api v1.63.0
 	go.uber.org/fx v1.24.0
 	google.golang.org/grpc v1.81.1
