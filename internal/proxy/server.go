@@ -35,14 +35,16 @@ type (
 		path string // path to unix socket
 	}
 
-	// Options configures a [Server] at construction time.
-	Options struct {
-		creds  Credentials
-		logger logger.Logger
+	// options configures a [Server] at construction time.
+	options struct {
+		creds              Credentials
+		logger             logger.Logger
+		unaryInterceptors  []grpc.UnaryClientInterceptor
+		streamInterceptors []grpc.StreamClientInterceptor
 	}
 
 	// Option configures a [Server] via [New].
-	Option func(*Options)
+	Option func(*options)
 )
 
 // New constructs a [Server] that forwards WorkflowService traffic to the
@@ -50,7 +52,7 @@ type (
 // is derived from hostPort (see [Server.Start]). With no options it dials the
 // upstream with insecure credentials and logs via a CLI logger.
 func New(hostPort string, opts ...Option) (*Server, error) {
-	pops := &Options{
+	pops := &options{
 		creds:  creds.NewInsecure(),
 		logger: logger.Default(),
 	}
@@ -63,7 +65,17 @@ func New(hostPort string, opts ...Option) (*Server, error) {
 		return nil, fmt.Errorf("failed to generate outbound credentials: %w", err)
 	}
 
-	conn, err := grpc.NewClient(hostPort, upstreamCreds)
+	dialOpts := make([]grpc.DialOption, 0, 3)
+	dialOpts = append(dialOpts, upstreamCreds)
+	if len(pops.unaryInterceptors) > 0 {
+		dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(pops.unaryInterceptors...))
+	}
+
+	if len(pops.streamInterceptors) > 0 {
+		dialOpts = append(dialOpts, grpc.WithChainStreamInterceptor(pops.streamInterceptors...))
+	}
+
+	conn, err := grpc.NewClient(hostPort, dialOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial: %s, %w", hostPort, err)
 	}
@@ -103,12 +115,28 @@ func New(hostPort string, opts ...Option) (*Server, error) {
 // WithCredentials sets the transport credentials used to dial the upstream
 // frontend.
 func WithCredentials(creds Credentials) Option {
-	return Option(func(o *Options) { o.creds = creds })
+	return Option(func(o *options) { o.creds = creds })
 }
 
 // WithLogger sets the logger used by the proxy.
 func WithLogger(log logger.Logger) Option {
-	return Option(func(o *Options) { o.logger = log })
+	return Option(func(o *options) { o.logger = log })
+}
+
+// WithUnaryInterceptor adds unary client interceptors to the outbound
+// connection to the upstream frontend. Interceptors are chained in the order
+// supplied, accumulating across calls, and run on every unary RPC the proxy
+// forwards upstream.
+func WithUnaryInterceptor(in ...grpc.UnaryClientInterceptor) Option {
+	return Option(func(o *options) { o.unaryInterceptors = append(o.unaryInterceptors, in...) })
+}
+
+// WithStreamInterceptor adds stream client interceptors to the outbound
+// connection to the upstream frontend. Interceptors are chained in the order
+// supplied, accumulating across calls, and run on every streaming RPC the proxy
+// forwards upstream.
+func WithStreamInterceptor(in ...grpc.StreamClientInterceptor) Option {
+	return Option(func(o *options) { o.streamInterceptors = append(o.streamInterceptors, in...) })
 }
 
 // Start binds the local unix socket and serves until the proxy is stopped or
