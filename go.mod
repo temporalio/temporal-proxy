@@ -4,6 +4,9 @@ go 1.26.4
 
 require (
 	github.com/goccy/go-yaml v1.19.2
+	github.com/golang/snappy v1.0.0
+	github.com/klauspost/compress v1.18.0
+	github.com/pierrec/lz4/v4 v4.1.27
 	github.com/prometheus/client_golang v1.23.2
 	github.com/rs/zerolog v1.35.1
 	github.com/stretchr/testify v1.11.1
