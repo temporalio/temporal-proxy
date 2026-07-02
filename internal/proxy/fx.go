@@ -5,10 +5,25 @@ import (
 	"fmt"
 
 	"go.uber.org/fx"
+	"google.golang.org/grpc"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/transport/creds"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
+)
+
+var (
+	// UnaryInterceptorsTag annotates a provider that returns a
+	// []grpc.UnaryClientInterceptor so its elements are contributed into the
+	// group [ProxyParams] consumes. flatten spreads the slice into individual
+	// group members. The group name must match the ProxyParams.UnaryInterceptors
+	// struct tag.
+	UnaryInterceptorsTag = fx.ResultTags(`group:"proxy_unary_interceptors,flatten"`)
+
+	// StreamInterceptorsTag is the stream-interceptor counterpart to
+	// [UnaryInterceptorsTag]; see it for details. The group name must match the
+	// ProxyParams.StreamInterceptors struct tag.
+	StreamInterceptorsTag = fx.ResultTags(`group:"proxy_stream_interceptors,flatten"`)
 )
 
 // Module is the fx module that constructs the proxy [Server] from [ProxyParams]
@@ -18,7 +33,11 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 		return fmt.Errorf("invalid upstream configuration: %w", err)
 	}
 
-	opts := []Option{WithCredentials(p.creds())}
+	opts := []Option{
+		WithCredentials(p.creds()),
+		WithUnaryInterceptor(p.UnaryInterceptors...),
+		WithStreamInterceptor(p.StreamInterceptors...),
+	}
 	if p.Logger != nil {
 		opts = append(opts, WithLogger(p.Logger))
 	}
@@ -49,7 +68,9 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 
 // ProxyParams collects the fx-provided dependencies needed to construct and run
 // the proxy [Server]. Context and Config are required; Logger is optional and
-// falls back to the default used by [New] when not supplied.
+// falls back to the default used by [New] when not supplied. UnaryInterceptors
+// and StreamInterceptors are optional and, when provided, are chained onto the
+// outbound connection to the upstream frontend.
 type ProxyParams struct {
 	fx.In
 	Lifecycle  fx.Lifecycle
@@ -60,7 +81,9 @@ type ProxyParams struct {
 	Config  *config.Config
 
 	// Optional values
-	Logger logger.Logger `optional:"true"`
+	Logger             logger.Logger                  `optional:"true"`
+	UnaryInterceptors  []grpc.UnaryClientInterceptor  `group:"proxy_unary_interceptors"`
+	StreamInterceptors []grpc.StreamClientInterceptor `group:"proxy_stream_interceptors"`
 }
 
 // creds derives the credentials used to dial the upstream frontend from the
