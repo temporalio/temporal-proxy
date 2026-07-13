@@ -1,11 +1,17 @@
 package validation
 
-// Validator is satisfied by any type whose Validate method returns an
-// error. Types that already follow the standard "Validate() error"
-// convention satisfy this interface implicitly.
-type Validator interface {
-	Validate() error
-}
+import "fmt"
+
+type (
+	// Validator is satisfied by any type whose Validate method returns an
+	// error. Types that already follow the standard "Validate() error"
+	// convention satisfy this interface implicitly.
+	Validator interface {
+		Validate() error
+	}
+
+	validatorFunc func() error
+)
 
 // When runs the supplied checks only when pred(v) returns true. When pred
 // returns false the combinator yields nil and no inner check runs. Inner
@@ -53,12 +59,14 @@ func WhenRules(pred func() bool, rules ...Rule) Rule {
 	}
 }
 
-// Nested embeds the result of v.Validate as a Rule. Entries whose
-// Subject was left empty by the child are stamped with subject; entries
-// the child already attributed (or whose Subject is non-empty for any
-// reason) are preserved unchanged. A nil error from v yields no entries,
-// and any non-validation error is wrapped as a single entry whose
-// Message is err.Error() and whose Subject is subject.
+// Nested embeds the result of v.Validate as a Rule, prefixing subject onto
+// each entry to build a dotted path. An entry the child left unattributed gets
+// Subject set to subject; an entry the child already attributed gets its
+// Subject prefixed (subject + "." + child), so deeper nesting composes into a
+// path like "classes[0].subjects[1]". A nil error from v yields no entries, an
+// empty subject leaves entries unchanged, and any non-validation error is
+// wrapped as a single entry whose Message is err.Error() and whose Subject is
+// subject.
 func Nested(subject string, v Validator) Rule {
 	return func() Errors {
 		err := v.Validate()
@@ -74,9 +82,36 @@ func Nested(subject string, v Validator) Rule {
 		for i := range errs {
 			if errs[i].Subject == "" {
 				errs[i].Subject = subject
+			} else {
+				errs[i].Subject = subject + "." + errs[i].Subject
 			}
 		}
 
 		return errs
 	}
 }
+
+// Children is the slice counterpart to Nested: it validates each element of
+// items with validate, prefixing a "name[i]" segment onto the resulting
+// subjects to build a dotted path (e.g. "classes[0].subjects[1]"). Empty
+// subjects become the segment; already-set ones are prefixed into a path. The
+// per-element validate is supplied explicitly rather than via the Validator
+// interface, so callers can thread external context by closing over it - for
+// example Children("classes", c.Classes, func(x *Class) error { return x.validate(ctx) }).
+// A nil or empty slice yields no entries and never calls validate.
+func Children[S ~[]T, T any](name string, items S, validate func(*T) error) Rule {
+	return func() Errors {
+		var errs Errors
+		for i := range items {
+			item := &items[i]
+			segment := fmt.Sprintf("%s[%d]", name, i)
+			errs = append(errs, Nested(segment, validatorFunc(func() error {
+				return validate(item)
+			}))()...)
+		}
+
+		return errs
+	}
+}
+
+func (f validatorFunc) Validate() error { return f() }

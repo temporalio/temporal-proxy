@@ -15,3 +15,6 @@ upstreams:
           # Makes ns2 and ns3 both use ns2.remote on the remote cluster.
           - local: ns3
             remote: ns2.remote
+
+routing:
+  default: default
