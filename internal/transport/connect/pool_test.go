@@ -172,6 +172,87 @@ func TestPoolConcurrent(t *testing.T) {
 	wg.Wait()
 }
 
+func TestPoolGetOrSet(t *testing.T) {
+	t.Parallel()
+
+	insecureOpt := grpc.WithTransportCredentials(insecure.NewCredentials())
+
+	t.Run("creates and registers a connection when host is absent", func(t *testing.T) {
+		t.Parallel()
+
+		p := connect.NewPool()
+		t.Cleanup(func() { require.NoError(t, p.Close()) })
+
+		conn, err := p.GetOrSet("host", insecureOpt)
+		require.NoError(t, err)
+		require.NotNil(t, conn)
+
+		// The connection is registered, so a subsequent read returns the same one.
+		cn, err := p.Conn("host")
+		require.NoError(t, err)
+		require.Same(t, conn, cn)
+	})
+
+	t.Run("returns the existing connection when host is present", func(t *testing.T) {
+		t.Parallel()
+
+		p := connect.NewPool()
+		t.Cleanup(func() { require.NoError(t, p.Close()) })
+
+		existing := newConn(t)
+		require.NoError(t, p.Set("host", existing))
+
+		conn, err := p.GetOrSet("host", insecureOpt)
+		require.NoError(t, err)
+		require.Same(t, existing, conn)
+	})
+
+	t.Run("returns an error when dialing fails", func(t *testing.T) {
+		t.Parallel()
+
+		p := connect.NewPool()
+		t.Cleanup(func() { require.NoError(t, p.Close()) })
+
+		// No transport credentials option, so grpc.NewClient fails synchronously.
+		conn, err := p.GetOrSet("host")
+		require.Nil(t, conn)
+		require.ErrorContains(t, err, "failed to connect")
+	})
+
+	t.Run("hands every concurrent caller the same connection", func(t *testing.T) {
+		t.Parallel()
+
+		// Many goroutines race to create the same host. Only one dial can be
+		// retained; the losers must be closed and every caller must receive the
+		// winner. This only proves something under `go test -race`.
+		p := connect.NewPool()
+		t.Cleanup(func() { require.NoError(t, p.Close()) })
+
+		const workers = 50
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		conns := make([]*grpc.ClientConn, workers)
+
+		for i := range workers {
+			wg.Go(func() {
+				<-start // line every goroutine up so the calls actually overlap
+
+				conn, err := p.GetOrSet("host", insecureOpt)
+				require.NoError(t, err)
+				conns[i] = conn
+			})
+		}
+
+		close(start)
+		wg.Wait()
+
+		for i := range workers {
+			require.Same(t, conns[0], conns[i])
+		}
+	})
+}
+
 func newConn(t *testing.T) *grpc.ClientConn {
 	t.Helper()
 

@@ -4,13 +4,14 @@ tls:
   cert: dev/certs/server.crt
   key: dev/certs/server.key
 
-upstream:
-  hostPort: localhost:7233
-  namespaces:
-    rules:
-      # Always add .remote on the way out, and remove it on the way in.
-      suffix: .remote
-      overrides:
-        # Makes ns2 and ns3 both use ns2.remote on the remote cluster.
-        - local: ns3
-          remote: ns2.remote
+upstreams:
+  - name: default
+    hostPort: localhost:7233
+    namespaces:
+      rules:
+        # Always add .remote on the way out, and remove it on the way in.
+        suffix: .remote
+        overrides:
+          # Makes ns2 and ns3 both use ns2.remote on the remote cluster.
+          - local: ns3
+            remote: ns2.remote

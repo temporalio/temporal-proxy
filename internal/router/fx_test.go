@@ -16,6 +16,7 @@ import (
 
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/router"
+	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
 )
 
@@ -32,8 +33,9 @@ func TestModule(t *testing.T) {
 
 		app := fx.New(
 			fx.Supply(&config.Config{
-				Upstream: config.Upstream{Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
+				Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
 			}),
+			connect.Module,
 			router.Module,
 			fx.Populate(&codec, &handler),
 			fx.NopLogger,
@@ -96,8 +98,9 @@ func TestModule(t *testing.T) {
 		)
 		app := fx.New(
 			fx.Supply(&config.Config{
-				Upstream: config.Upstream{Listen: config.ListenConfig{HostPort: upstream}},
+				Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: upstream}}},
 			}),
+			connect.Module,
 			router.Module,
 			fx.Populate(&codec, &handler),
 			fx.NopLogger,

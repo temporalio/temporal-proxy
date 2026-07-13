@@ -50,6 +50,32 @@ func (p *Pool) Conn(host string) (*grpc.ClientConn, error) {
 	return cn, nil
 }
 
+// GetOrSet returns the connection registered for host, creating and registering
+// one with grpc.NewClient(host, opts...) when none exists yet. If callers race to
+// create the same host, each dials but only one connection is kept; the losers are
+// closed and every caller receives the same *grpc.ClientConn.
+func (p *Pool) GetOrSet(host string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	if conn, _ := p.Conn(host); conn != nil {
+		return conn, nil
+	}
+
+	conn, err := grpc.NewClient(host, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to %s, %w", host, err)
+	}
+
+	if err := p.Set(host, conn); err != nil {
+		if errors.Is(err, ErrDuplicateHost) {
+			_ = conn.Close()    // lost the race; don't leak our dial
+			return p.Conn(host) // return the connection that won
+		}
+
+		return nil, err
+	}
+
+	return conn, nil
+}
+
 // Set registers conn for host. It returns ErrDuplicateHost if a connection is
 // already registered for that host, leaving the existing connection untouched.
 func (p *Pool) Set(host string, conn *grpc.ClientConn) error {
