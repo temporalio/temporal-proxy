@@ -77,23 +77,14 @@ release:
     name: temporal-proxy
   draft: false
   prerelease: auto
-  name_template: "Release {{ .Version }}"
+  name_template: "{{ .Version }} Release"
   header: |
-    ## Temporal Proxy
-
-    Version {{ .Version }} release!
-
-    ### Container Image
-
-    Container image is available on GitHub Container Registry:
-
-    ```bash
-    docker pull temporalio/{{ .ProjectName }}:{{ .Version }}
-    ```
+    ## Temporal Proxy {{.Version}}
 
     ### Installation
 
-    Download the appropriate binary for your platform from the assets below, or use the container image.
+    Download the appropriate binary for your platform from the assets below. You can also use the container
+    image found at <https://hub.docker.com/r/temporalio/temporal-proxy>.
 
   footer: |
     **Full Changelog**: https://github.com/temporalio/{{ .ProjectName }}/compare/{{ .PreviousTag }}...{{ .Tag }}
