@@ -6,3 +6,8 @@ coverage:
     patch:
       default:
         informational: true
+
+comment:
+  layout: "condensed_header, condensed_footer"
+  hide_project_coverage: true
+  require_changes: false
