@@ -68,6 +68,12 @@ func (u *Upstream) Validate() error {
 	)
 }
 
+// IsTemplated reports whether the upstream's hostPort contains a text/template
+// action and so must be resolved per request.
+func (u *Upstream) IsTemplated() bool {
+	return isTemplated(u.Listen.HostPort)
+}
+
 // Validate checks the namespace translation rules.
 func (c *NamespaceConfig) Validate() error {
 	return validation.Validate(

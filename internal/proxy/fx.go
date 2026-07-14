@@ -14,40 +14,47 @@ import (
 // Module is the fx module that constructs the proxy [Server] from [ProxyParams]
 // and binds its lifecycle to the application.
 var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
-	upstream, err := p.Config.PrimaryUpstream()
-	if err != nil {
-		return fmt.Errorf("invalid upstream configuration: %w", err)
+	for i := range p.Config.Upstreams {
+		upstream := &p.Config.Upstreams[i]
+
+		if err := upstream.Validate(); err != nil {
+			return fmt.Errorf("invalid upstream configuration: %w", err)
+		}
+
+		if upstream.IsTemplated() {
+			return fmt.Errorf(
+				"upstream %q has a templated hostPort %q: templated upstreams are not yet supported",
+				upstream.Name,
+				upstream.Listen.HostPort,
+			)
+		}
+
+		opts := []Option{WithCredentials(upstreamCreds(upstream))}
+		if p.Logger != nil {
+			opts = append(opts, WithLogger(p.Logger))
+		}
+
+		svr, err := New(upstream.Listen.HostPort, opts...)
+		if err != nil {
+			return fmt.Errorf("failed to create proxy for upstream %q: %w", upstream.Name, err)
+		}
+
+		p.Lifecycle.Append(fx.Hook{
+			OnStart: func(context.Context) error {
+				go func() {
+					if err := svr.Start(p.Context); err != nil {
+						// The proxy stopped serving unexpectedly. Bring the app
+						// down rather than linger in a non-serving state; Start
+						// has already logged the cause.
+						_ = p.Shutdowner.Shutdown(fx.ExitCode(1))
+					}
+				}()
+
+				return nil
+			},
+			OnStop: svr.Stop,
+		})
 	}
-
-	if err := upstream.Validate(); err != nil {
-		return fmt.Errorf("invalid upstream configuration: %w", err)
-	}
-
-	opts := []Option{WithCredentials(upstreamCreds(upstream))}
-	if p.Logger != nil {
-		opts = append(opts, WithLogger(p.Logger))
-	}
-
-	svr, err := New(upstream.Listen.HostPort, opts...)
-	if err != nil {
-		return fmt.Errorf("failed to create proxy: %w", err)
-	}
-
-	p.Lifecycle.Append(fx.Hook{
-		OnStart: func(context.Context) error {
-			go func() {
-				if err := svr.Start(p.Context); err != nil {
-					// The proxy stopped serving unexpectedly. Bring the app down
-					// rather than linger in a non-serving state; Start has
-					// already logged the cause.
-					_ = p.Shutdowner.Shutdown(fx.ExitCode(1))
-				}
-			}()
-
-			return nil
-		},
-		OnStop: svr.Stop,
-	})
 
 	return nil
 }))
