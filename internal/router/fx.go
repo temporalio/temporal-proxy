@@ -2,6 +2,7 @@ package router
 
 import (
 	"fmt"
+	"strings"
 
 	"go.uber.org/fx"
 	"google.golang.org/grpc"
@@ -10,6 +11,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
+	"github.com/temporalio/temporal-proxy/pkg/match"
 )
 
 // Module is the fx module that provides the transparent-forwarding pieces: a
@@ -39,6 +41,52 @@ var Module = fx.Options(fx.Provide(
 		}
 
 		return Handler(conn), nil
+	},
+	func(c *config.Config) (*Mux, error) {
+		rules := make([]Rule, 0, len(c.Routing.Rules))
+		for i, r := range c.Routing.Rules {
+			p := r.Match.Namespace
+			if p == "" {
+				p = "*"
+			}
+
+			ns, err := match.Compile(p)
+			if err != nil {
+				return nil, fmt.Errorf("routing: rules[%d].match.namespace: %w", i, err)
+			}
+
+			meta := make(map[string]Matcher, len(r.Match.Metadata))
+			seen := make(map[string]string, len(r.Match.Metadata))
+			for k, v := range r.Match.Metadata {
+				lk := strings.ToLower(k)
+				if prev, ok := seen[lk]; ok {
+					return nil, fmt.Errorf(
+						"routing: rules[%d].match.metadata: keys %q and %q both map to %q when lowercased",
+						i, prev, k, lk,
+					)
+				}
+
+				seen[lk] = k
+				m, err := match.Compile(v)
+				if err != nil {
+					return nil, fmt.Errorf("routing: rules[%d].match.metadata[%q]: %w", i, k, err)
+				}
+
+				meta[lk] = m
+			}
+
+			rules = append(rules, Rule{
+				upstream: r.Upstream,
+				ns:       ns,
+				meta:     meta,
+			})
+		}
+
+		return New(
+			c.Routing.DefaultUpstream,
+			c.Routing.SystemUpstream,
+			rules...,
+		), nil
 	},
 ))
 
