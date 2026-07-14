@@ -10,6 +10,7 @@ import (
 
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
+	"github.com/temporalio/temporal-proxy/internal/protoutil"
 	"github.com/temporalio/temporal-proxy/internal/proxy"
 	"github.com/temporalio/temporal-proxy/internal/router"
 	"github.com/temporalio/temporal-proxy/internal/server"
@@ -61,6 +62,7 @@ func serve() *cli.Command {
 				config.Module,
 				connect.Module,
 				metrics.Module,
+				protoutil.Module,
 				proxy.Module,
 				router.Module,
 				server.Module,
