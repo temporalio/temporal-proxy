@@ -252,6 +252,85 @@ func TestConfig_Validate(t *testing.T) {
 	}
 }
 
+func TestConfig_Validate_RoutingReferences(t *testing.T) {
+	t.Parallel()
+
+	base := func(r config.Routing) *config.Config {
+		return &config.Config{
+			Listen:  config.ListenConfig{HostPort: ":8080"},
+			Routing: r,
+			Upstreams: []config.Upstream{
+				{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
+				{Name: "system", Listen: config.ListenConfig{HostPort: "127.0.0.1:7234"}},
+			},
+		}
+	}
+
+	tests := []struct {
+		name       string
+		cfg        *config.Config
+		wantTuples [][2]string
+	}{
+		{
+			name: "default and system reference known upstreams",
+			cfg:  base(config.Routing{DefaultUpstream: "primary", SystemUpstream: "system"}),
+		},
+		{
+			name:       "unknown default upstream",
+			cfg:        base(config.Routing{DefaultUpstream: "missing"}),
+			wantTuples: [][2]string{{"routing", "default"}},
+		},
+		{
+			name:       "unknown system upstream",
+			cfg:        base(config.Routing{SystemUpstream: "missing"}),
+			wantTuples: [][2]string{{"routing", "system"}},
+		},
+		{
+			name: "rule references known upstream",
+			cfg: base(config.Routing{Rules: []config.RoutingRule{
+				{Upstream: "primary", Match: config.RoutingMatch{Namespace: "payments"}},
+			}}),
+		},
+		{
+			name: "rule references unknown upstream",
+			cfg: base(config.Routing{Rules: []config.RoutingRule{
+				{Upstream: "missing", Match: config.RoutingMatch{Namespace: "payments"}},
+			}}),
+			wantTuples: [][2]string{{"routing.rules[0]", "upstream"}},
+		},
+		{
+			name: "rule with empty upstream is required, not a bad reference",
+			cfg: base(config.Routing{Rules: []config.RoutingRule{
+				{Match: config.RoutingMatch{Namespace: "payments"}},
+			}}),
+			wantTuples: [][2]string{{"routing.rules[0]", "upstream"}},
+		},
+		{
+			name: "unknown default, system, and rule aggregate",
+			cfg: base(config.Routing{
+				DefaultUpstream: "missing",
+				SystemUpstream:  "gone",
+				Rules: []config.RoutingRule{
+					{Upstream: "nope", Match: config.RoutingMatch{Namespace: "payments"}},
+				},
+			}),
+			wantTuples: [][2]string{
+				{"routing", "default"},
+				{"routing", "system"},
+				{"routing.rules[0]", "upstream"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assertTuples(t, tt.cfg.Validate(), tt.wantTuples)
+		})
+	}
+}
+
 func TestConfig_PrimaryUpstream(t *testing.T) {
 	t.Parallel()
 

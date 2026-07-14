@@ -348,7 +348,7 @@ func TestNamespaceConfig_Validate(t *testing.T) {
 			cfg:  &config.NamespaceConfig{},
 		},
 		{
-			name: "rules failure surfaces with override-index subject preserved",
+			name: "rules failure surfaces with rules path prefixed onto the subject",
 			cfg: &config.NamespaceConfig{
 				Rules: config.NamespaceRules{
 					Overrides: []config.NamespaceMapping{
@@ -357,7 +357,7 @@ func TestNamespaceConfig_Validate(t *testing.T) {
 				},
 			},
 			wantTuples: [][2]string{
-				{"overrides[0]", "remote"},
+				{"rules.overrides[0]", "remote"},
 			},
 		},
 	}
@@ -427,7 +427,7 @@ func TestUpstream_Validate(t *testing.T) {
 			},
 		},
 		{
-			name: "namespace override failure surfaces with override-index subject",
+			name: "namespace override failure surfaces with the full namespaces path",
 			upstream: &config.Upstream{
 				Name:   "primary",
 				Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
@@ -440,7 +440,7 @@ func TestUpstream_Validate(t *testing.T) {
 				},
 			},
 			wantTuples: [][2]string{
-				{"overrides[0]", "remote"},
+				{"namespaces.rules.overrides[0]", "remote"},
 			},
 		},
 		{
@@ -458,8 +458,8 @@ func TestUpstream_Validate(t *testing.T) {
 			},
 			wantTuples: [][2]string{
 				{"", "hostPort"},
-				{"overrides[0]", "local"},
-				{"overrides[0]", "remote"},
+				{"namespaces.rules.overrides[0]", "local"},
+				{"namespaces.rules.overrides[0]", "remote"},
 			},
 		},
 	}

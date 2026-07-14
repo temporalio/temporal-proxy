@@ -9,6 +9,11 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
+type recordingValidator struct {
+	calls int
+	err   error
+}
+
 func TestWhen_PredicateFalse_DoesNotInvokeChecks(t *testing.T) {
 	t.Parallel()
 
@@ -185,16 +190,6 @@ func TestWhenRules_IntegratesWithValidate(t *testing.T) {
 	require.Equal(t, "inner", errs[0].Field)
 }
 
-type recordingValidator struct {
-	calls int
-	err   error
-}
-
-func (r *recordingValidator) Validate() error {
-	r.calls++
-	return r.err
-}
-
 func TestNested_NilError_NoEntries(t *testing.T) {
 	t.Parallel()
 
@@ -222,7 +217,7 @@ func TestNested_StampsEmptySubjects(t *testing.T) {
 	require.Equal(t, "keyFile", out[1].Field)
 }
 
-func TestNested_PreservesExplicitSubjects(t *testing.T) {
+func TestNested_PrefixesChildSubjects(t *testing.T) {
 	t.Parallel()
 
 	v := &recordingValidator{
@@ -234,8 +229,8 @@ func TestNested_PreservesExplicitSubjects(t *testing.T) {
 
 	out := validation.Nested("outer", v)()
 	require.Len(t, out, 2)
-	require.Equal(t, "explicit", out[0].Subject, "explicit subject must be preserved")
-	require.Equal(t, "outer", out[1].Subject, "empty subject must be stamped")
+	require.Equal(t, "outer.explicit", out[0].Subject, "child subject must be prefixed into a path")
+	require.Equal(t, "outer", out[1].Subject, "empty subject must be set to the segment")
 }
 
 func TestNested_SingleValidationError(t *testing.T) {
@@ -305,4 +300,67 @@ func TestNested_OuterValidate_DoesNotReStampExplicitSubject(t *testing.T) {
 	require.True(t, errors.As(err, &errs))
 	require.Len(t, errs, 1)
 	require.Equal(t, "tls", errs[0].Subject)
+}
+
+func TestChildren_EmptyAndNil(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	validate := func(*int) error { called = true; return nil }
+
+	require.Empty(t, validation.Children("xs", []int{}, validate)())
+	require.Empty(t, validation.Children[[]int]("xs", nil, validate)())
+	require.False(t, called, "validate must not run for an empty slice")
+}
+
+func TestChildren_ReceivesEachElement(t *testing.T) {
+	t.Parallel()
+
+	var seen []int
+	validate := func(n *int) error {
+		seen = append(seen, *n)
+		return nil
+	}
+
+	require.Empty(t, validation.Children("xs", []int{10, 20, 30}, validate)())
+	require.Equal(t, []int{10, 20, 30}, seen)
+}
+
+func TestChildren_PrefixesIndexedSegment(t *testing.T) {
+	t.Parallel()
+
+	// Only the second element fails, with one attributed and one unattributed
+	// entry, so we can pin both the index and the path composition.
+	validate := func(n *int) error {
+		if *n != 1 {
+			return nil
+		}
+		return validation.Errors{
+			{Subject: "inner", Field: "x", Message: "boom"},
+			{Field: "y", Message: "boom"},
+		}
+	}
+
+	out := validation.Children("items", []int{0, 1}, validate)()
+	require.Len(t, out, 2)
+	require.Equal(t, "items[1].inner", out[0].Subject, "attributed child subject must be prefixed into a path")
+	require.Equal(t, "items[1]", out[1].Subject, "unattributed entry gets the segment")
+}
+
+func TestChildren_MultipleFailuresAccumulate(t *testing.T) {
+	t.Parallel()
+
+	validate := func(s *string) error { return errors.New(*s) }
+
+	out := validation.Children("items", []string{"a", "b"}, validate)()
+	require.Len(t, out, 2)
+	require.Equal(t, "items[0]", out[0].Subject)
+	require.Equal(t, "a", out[0].Message)
+	require.Equal(t, "items[1]", out[1].Subject)
+	require.Equal(t, "b", out[1].Message)
+}
+
+func (r *recordingValidator) Validate() error {
+	r.calls++
+	return r.err
 }
