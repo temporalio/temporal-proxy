@@ -1,6 +1,7 @@
 [settings]
 # Required for `mise deps` and the [deps.*] tables below.
 experimental = true
+lockfile = true
 
 [tools]
 "github:mattn/goreman" = "latest"
@@ -9,6 +10,7 @@ buf = "1.69.0"
 go = "1.26"
 mkcert = "1.4.4"
 goreleaser = "2.16.0"
+markdownlint-cli2 = "0.23.0"
 
 ################################################################################
 # Dependencies
@@ -66,12 +68,28 @@ buf curl --protocol grpc --http2-prior-knowledge \
 ################################################################################
 
 [tasks.lint]
+description = "Lint files"
+run = [{ task = "lint:go" }, { task = "lint:md" }]
+
+[tasks."lint:go"]
 description = "Lint Go files"
 run = ["go tool -modfile=dev/tools.mod golangci-lint run"]
 
+[tasks."lint:md"]
+description = "Lint markdown files"
+run = ["markdownlint-cli2 '**/*.md' --config .mise/markdownlint.yaml"]
+
 [tasks.format]
+description = "Format files"
+run = [{ task = "format:go" }, { task = "format:md" }]
+
+[tasks."format:go"]
 description = "Format Go files"
 run = ["go fix ./...", "go tool -modfile=dev/tools.mod golangci-lint fmt"]
+
+[tasks."format:md"]
+description = "Format markdown files"
+run = ["markdownlint-cli2 '**/*.md' --config .mise/markdownlint.yaml --fix"]
 
 [tasks.test]
 description = "Run unit tests"

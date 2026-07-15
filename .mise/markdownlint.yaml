@@ -1,0 +1,12 @@
+# See: https://github.com/DavidAnson/markdownlint-cli2/blob/534166213006ec869b773b7ed8c6ebeaad1165d0/schema/markdownlint-cli2-config-schema.json
+noBanner: true
+noProgress: true
+gitignore: true
+
+config:
+  default: true
+
+  MD013:
+    line_length: 120
+    code_blocks: false
+    tables: false

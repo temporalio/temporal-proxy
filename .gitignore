@@ -16,6 +16,7 @@ go.work.sum
 
 # Claude Code settings
 .claude/
+docs/superpowers/
 CLAUDE.local.md
 
 # git worktrees
