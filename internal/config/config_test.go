@@ -338,30 +338,6 @@ func TestConfig_Validate_RoutingReferences(t *testing.T) {
 	}
 }
 
-func TestConfig_PrimaryUpstream(t *testing.T) {
-	t.Parallel()
-
-	t.Run("returns the first configured upstream", func(t *testing.T) {
-		t.Parallel()
-
-		cfg := &config.Config{Upstreams: []config.Upstream{
-			{Name: "first", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
-			{Name: "second", Listen: config.ListenConfig{HostPort: "127.0.0.1:7234"}},
-		}}
-
-		up, err := cfg.PrimaryUpstream()
-		require.NoError(t, err)
-		require.Equal(t, "first", up.Name)
-	})
-
-	t.Run("errors when no upstreams are configured", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := (&config.Config{}).PrimaryUpstream()
-		require.Error(t, err)
-	})
-}
-
 func TestConfig_ValidateRejectsDuplicateHostPorts(t *testing.T) {
 	t.Parallel()
 

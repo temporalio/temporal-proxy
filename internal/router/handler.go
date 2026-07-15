@@ -1,7 +1,9 @@
 package router
 
 import (
+	"context"
 	"io"
+	"maps"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -9,26 +11,65 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+type (
+	// Director selects the upstream connection for a request. Resolve receives
+	// the full method, the namespace peeked from the first request message
+	// (empty when the client sent no message), and the incoming metadata, and
+	// returns the connection to forward the stream over. A non-nil error aborts
+	// the stream and is returned to the caller verbatim, so implementations
+	// should return a gRPC status error.
+	Director interface {
+		Resolve(ctx context.Context, method, namespace string, md map[string][]string) (*grpc.ClientConn, error)
+	}
+
+	// Reflector extracts the Temporal namespace from a request. Namespace
+	// receives the full method and the raw bytes of the first request message
+	// and returns the namespace, or "" when it cannot determine one.
+	Reflector interface {
+		Namespace(string, []byte) string
+	}
+)
+
 // Handler returns a grpc.StreamHandler suitable for grpc.UnknownServiceHandler.
-// It transparently forwards every stream to cc using the same full method name,
-// pumping raw frames in both directions and propagating header, trailer, and
+// It buffers the first request frame so r can peek the request namespace, asks d
+// for the upstream connection, then transparently forwards the stream to that
+// upstream using the same full method name: it replays the buffered first frame,
+// pumps raw frames in both directions, and propagates header, trailer, and
 // status verbatim.
-//
-// cc is resolved once per stream, which is the seam where future per-request
-// routing (selecting a connection from request details) will plug in.
-func Handler(cc *grpc.ClientConn) grpc.StreamHandler {
+func Handler(d Director, r Reflector) grpc.StreamHandler {
 	return func(_ any, serverStream grpc.ServerStream) error {
 		ctx := serverStream.Context()
-
 		sts := grpc.ServerTransportStreamFromContext(ctx)
 		if sts == nil {
 			return status.Error(codes.Internal, "router: no server transport stream in context")
 		}
-		method := sts.Method()
 
+		var md map[string][]string
+		method := sts.Method()
 		outCtx := ctx
-		if md, ok := metadata.FromIncomingContext(ctx); ok {
-			outCtx = metadata.NewOutgoingContext(ctx, md.Copy())
+		if inMD, ok := metadata.FromIncomingContext(ctx); ok {
+			outCtx = metadata.NewOutgoingContext(ctx, inMD.Copy())
+			md = inMD
+		}
+
+		// Buffer the first client frame so we can read the namespace before
+		// choosing an upstream. io.EOF means the client half-closed without
+		// sending a message (namespace is empty).
+		first := &frame{}
+		firstErr := serverStream.RecvMsg(first)
+		eof := firstErr == io.EOF
+		if firstErr != nil && !eof {
+			return StatusError(firstErr)
+		}
+
+		namespace := ""
+		if !eof {
+			namespace = r.Namespace(method, first.payload)
+		}
+
+		cc, err := d.Resolve(ctx, method, namespace, maps.Clone(md))
+		if err != nil {
+			return err
 		}
 
 		stream, err := cc.NewStream(
@@ -39,6 +80,14 @@ func Handler(cc *grpc.ClientConn) grpc.StreamHandler {
 		)
 		if err != nil {
 			return err
+		}
+
+		if eof {
+			if err := stream.CloseSend(); err != nil {
+				return StatusError(err)
+			}
+		} else if err := stream.SendMsg(first); err != nil {
+			return StatusError(err)
 		}
 
 		reqErr := pumpServerToClient(serverStream, stream)

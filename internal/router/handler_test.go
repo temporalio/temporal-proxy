@@ -1,10 +1,12 @@
 package router_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,9 +18,40 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/temporalio/temporal-proxy/internal/router"
 	"github.com/temporalio/temporal-proxy/internal/server"
+)
+
+type (
+	// recordingDirector captures what Resolve was called with and returns a fixed
+	// connection.
+	recordingDirector struct {
+		cc *grpc.ClientConn
+
+		mu        sync.Mutex
+		calls     int
+		method    string
+		namespace string
+		md        map[string][]string
+	}
+
+	// recordingReflector captures what Namespace was called with and returns a
+	// fixed namespace. It is safe for the handler goroutine to write while the test
+	// goroutine reads via snapshot.
+	recordingReflector struct {
+		ns string
+
+		mu      sync.Mutex
+		calls   int
+		method  string
+		payload []byte
+	}
+
+	stubDirector struct{ cc *grpc.ClientConn }
+
+	stubReflector struct{}
 )
 
 func TestHandlerForwardsUnary(t *testing.T) {
@@ -64,6 +97,127 @@ func TestHandlerPropagatesError(t *testing.T) {
 	)
 	require.Error(t, err)
 	require.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestHandlerRoutesUsingReflectorAndDirector(t *testing.T) {
+	t.Parallel()
+
+	echoDesc := grpc.ServiceDesc{
+		ServiceName: "test.v1.Echo",
+		HandlerType: (*any)(nil),
+		Methods: []grpc.MethodDesc{
+			{
+				MethodName: "Ping",
+				Handler: func(_ any, _ context.Context, dec func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
+					in := new(grpc_health_v1.HealthCheckRequest)
+					if err := dec(in); err != nil {
+						return nil, err
+					}
+					return &grpc_health_v1.HealthCheckResponse{Status: grpc_health_v1.HealthCheckResponse_SERVING}, nil
+				},
+			},
+		},
+	}
+
+	reflector := &recordingReflector{ns: "ns-from-reflector"}
+	var director *recordingDirector
+	relay := newRelayWith(
+		t,
+		func(s *grpc.Server) { s.RegisterService(&echoDesc, nil) },
+		func(cc *grpc.ClientConn) router.Director {
+			director = &recordingDirector{cc: cc}
+			return director
+		},
+		reflector,
+	)
+
+	ctx := metadata.AppendToOutgoingContext(t.Context(), "x-route", "gold")
+	resp := new(grpc_health_v1.HealthCheckResponse)
+	require.NoError(t, relay.Invoke(ctx, "/test.v1.Echo/Ping", &grpc_health_v1.HealthCheckRequest{Service: "abc"}, resp))
+	require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.GetStatus())
+
+	// The Reflector is handed the method and the raw bytes of the first frame.
+	rCalls, rMethod, rPayload := reflector.snapshot()
+	require.Equal(t, 1, rCalls)
+	require.Equal(t, "/test.v1.Echo/Ping", rMethod)
+	gotReq := new(grpc_health_v1.HealthCheckRequest)
+	require.NoError(t, proto.Unmarshal(rPayload, gotReq))
+	require.Equal(t, "abc", gotReq.GetService())
+
+	// The Director is handed the extracted namespace and the incoming metadata.
+	dCalls, dMethod, dNS, dMD := director.snapshot()
+	require.Equal(t, 1, dCalls)
+	require.Equal(t, "/test.v1.Echo/Ping", dMethod)
+	require.Equal(t, "ns-from-reflector", dNS)
+	require.Equal(t, []string{"gold"}, dMD["x-route"])
+}
+
+func TestHandlerForwardsEmptyMessageHalfClose(t *testing.T) {
+	t.Parallel()
+
+	// Sum reads request messages until the client half-closes, then reports how
+	// many it saw. It lets the test prove the upstream observed the half-close
+	// (it returns rather than blocking) and received no injected first frame.
+	countDesc := grpc.ServiceDesc{
+		ServiceName: "test.v1.Count",
+		HandlerType: (*any)(nil),
+		Streams: []grpc.StreamDesc{
+			{
+				StreamName:    "Sum",
+				ClientStreams: true,
+				Handler: func(_ any, stream grpc.ServerStream) error {
+					n := 0
+					for {
+						err := stream.RecvMsg(new(grpc_health_v1.HealthCheckRequest))
+						if err == io.EOF {
+							break
+						}
+						if err != nil {
+							return err
+						}
+						n++
+					}
+					return stream.SendMsg(&grpc_health_v1.HealthCheckResponse{
+						Status: grpc_health_v1.HealthCheckResponse_ServingStatus(n),
+					})
+				},
+			},
+		},
+	}
+
+	reflector := &recordingReflector{ns: "unused"}
+	var director *recordingDirector
+	relay := newRelayWith(
+		t,
+		func(s *grpc.Server) { s.RegisterService(&countDesc, nil) },
+		func(cc *grpc.ClientConn) router.Director {
+			director = &recordingDirector{cc: cc}
+			return director
+		},
+		reflector,
+	)
+
+	stream, err := relay.NewStream(
+		t.Context(),
+		&grpc.StreamDesc{ClientStreams: true, ServerStreams: true},
+		"/test.v1.Count/Sum",
+	)
+	require.NoError(t, err)
+	require.NoError(t, stream.CloseSend()) // Half-close without ever sending a message.
+
+	resp := new(grpc_health_v1.HealthCheckResponse)
+	require.NoError(t, stream.RecvMsg(resp))
+	require.Equal(t, 0, int(resp.GetStatus()), "upstream should observe zero request messages")
+	require.ErrorIs(t, stream.RecvMsg(new(grpc_health_v1.HealthCheckResponse)), io.EOF)
+
+	// With no first frame, there is nothing to peek, so the Reflector is skipped
+	// and the Director routes with an empty namespace.
+	rCalls, _, _ := reflector.snapshot()
+	require.Zero(t, rCalls)
+
+	dCalls, _, dNS, _ := director.snapshot()
+	require.Equal(t, 1, dCalls)
+	require.Empty(t, dNS)
 }
 
 func TestHandlerPropagatesHeaderAndTrailer(t *testing.T) {
@@ -174,7 +328,7 @@ func TestHandlerCoHostsLocalHealthWithForwarding(t *testing.T) {
 	t.Cleanup(func() { _ = upstreamConn.Close() })
 
 	svr, err := server.New(
-		server.WithUnknownServiceHandler(router.Handler(upstreamConn)),
+		server.WithUnknownServiceHandler(router.Handler(stubDirector{upstreamConn}, stubReflector{})),
 		server.WithServerCodec(router.Codec()),
 	)
 	require.NoError(t, err)
@@ -227,6 +381,43 @@ func TestStatusError(t *testing.T) {
 	})
 }
 
+func (s stubDirector) Resolve(context.Context, string, string, map[string][]string) (*grpc.ClientConn, error) {
+	return s.cc, nil
+}
+
+func (stubReflector) Namespace(string, []byte) string { return "" }
+
+func (r *recordingReflector) Namespace(method string, payload []byte) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls++
+	r.method = method
+	r.payload = bytes.Clone(payload)
+	return r.ns
+}
+
+func (r *recordingReflector) snapshot() (calls int, method string, payload []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls, r.method, bytes.Clone(r.payload)
+}
+
+func (d *recordingDirector) Resolve(_ context.Context, method, namespace string, md map[string][]string) (*grpc.ClientConn, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.calls++
+	d.method = method
+	d.namespace = namespace
+	d.md = md
+	return d.cc, nil
+}
+
+func (d *recordingDirector) snapshot() (calls int, method, namespace string, md map[string][]string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.calls, d.method, d.namespace, d.md
+}
+
 func dialBufconn(t *testing.T, lis *bufconn.Listener) *grpc.ClientConn {
 	t.Helper()
 	conn, err := grpc.NewClient(
@@ -248,9 +439,27 @@ func serve(t *testing.T, srv *grpc.Server, lis *bufconn.Listener) {
 }
 
 // newRelayToUpstream stands up a fake upstream (configured by registerUpstream),
-// then a bare relay server that forwards all methods to it via router.Handler.
-// Returns a client conn pointed at the relay.
+// then a bare relay server that forwards all methods to it via router.Handler
+// using pass-through routing. Returns a client conn pointed at the relay.
 func newRelayToUpstream(t *testing.T, registerUpstream func(*grpc.Server)) *grpc.ClientConn {
+	t.Helper()
+
+	return newRelayWith(
+		t, registerUpstream,
+		func(cc *grpc.ClientConn) router.Director { return stubDirector{cc} },
+		stubReflector{},
+	)
+}
+
+// newRelayWith is like newRelayToUpstream but lets the caller supply the Director
+// and Reflector, so tests can observe how the handler routes. makeDirector
+// receives the connection to the fake upstream.
+func newRelayWith(
+	t *testing.T,
+	registerUpstream func(*grpc.Server),
+	makeDirector func(cc *grpc.ClientConn) router.Director,
+	reflector router.Reflector,
+) *grpc.ClientConn {
 	t.Helper()
 
 	upstreamLis := bufconn.Listen(1024 * 1024)
@@ -264,7 +473,7 @@ func newRelayToUpstream(t *testing.T, registerUpstream func(*grpc.Server)) *grpc
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(upstreamConn)),
+		grpc.UnknownServiceHandler(router.Handler(makeDirector(upstreamConn), reflector)),
 	)
 	serve(t, relay, relayLis)
 
