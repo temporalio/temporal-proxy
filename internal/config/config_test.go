@@ -188,6 +188,13 @@ func TestConfig_Validate(t *testing.T) {
 			},
 		},
 		{
+			name: "no upstreams surfaces on the upstreams field",
+			cfg: &config.Config{
+				Listen: config.ListenConfig{HostPort: ":8080"},
+			},
+			wantTuples: [][2]string{{"", "upstreams"}},
+		},
+		{
 			name: "missing upstream hostPort surfaces with indexed upstream subject",
 			cfg: &config.Config{
 				Listen: config.ListenConfig{HostPort: ":8080"},
@@ -353,6 +360,29 @@ func TestConfig_PrimaryUpstream(t *testing.T) {
 		_, err := (&config.Config{}).PrimaryUpstream()
 		require.Error(t, err)
 	})
+}
+
+func TestConfig_ValidateRejectsDuplicateHostPorts(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Listen: config.ListenConfig{HostPort: "127.0.0.1:8443"},
+		Upstreams: []config.Upstream{
+			{Name: "a", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
+			{Name: "b", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
+		},
+	}
+
+	err := cfg.Validate()
+	require.Error(t, err)
+	require.ErrorContains(t, err, "upstreams[hostPort]")
+}
+
+func TestUpstream_IsTemplated(t *testing.T) {
+	t.Parallel()
+
+	require.True(t, (&config.Upstream{Listen: config.ListenConfig{HostPort: "{{ .LocalNamespace }}.acme.cloud:7233"}}).IsTemplated())
+	require.False(t, (&config.Upstream{Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}).IsTemplated())
 }
 
 func (e *errReader) Read(_ []byte) (int, error) { return 0, e.err }
