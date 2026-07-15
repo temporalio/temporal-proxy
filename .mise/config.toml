@@ -47,6 +47,7 @@ depends = ["gen-certs"]
 usage = '''
 arg "<method>" help="Method name (e.g. GetSystemInfo) or a full service/method path"
 arg "[data]" help="Request body as JSON" default="{}"
+flag "-H --header <header>" help="Repeatable gRPC header, e.g. 'x-cluster: 3'" var=#true
 '''
 run = '''
 case "$usage_method" in
@@ -54,11 +55,23 @@ case "$usage_method" in
   *)   path="temporal.api.workflowservice.v1.WorkflowService/$usage_method" ;;
 esac
 
+# mise exposes the repeatable --header flag as a shell-quoted list. Rebuild the
+# positional parameters as interleaved "-H <value>" pairs so header values that
+# contain spaces (e.g. "x-cluster: 3") survive intact.
+eval "set -- $usage_header"
+n=$#
+while [ "$n" -gt 0 ]; do
+  h="$1"; shift
+  set -- "$@" -H "$h"
+  n=$((n - 1))
+done
+
 buf curl --protocol grpc --http2-prior-knowledge \
   --cacert dev/certs/ca.crt \
   --cert dev/certs/client.crt \
   --key dev/certs/client.key \
   --schema buf.build/temporalio/api \
+  "$@" \
   -d "$usage_data" \
   "https://localhost:8444/$path"
 '''

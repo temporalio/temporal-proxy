@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/protoutil"
 	"github.com/temporalio/temporal-proxy/internal/router"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
@@ -36,6 +37,7 @@ func TestModule(t *testing.T) {
 				Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
 			}),
 			connect.Module,
+			protoutil.Module,
 			router.Module,
 			fx.Populate(&codec, &handler),
 			fx.NopLogger,
@@ -98,9 +100,11 @@ func TestModule(t *testing.T) {
 		)
 		app := fx.New(
 			fx.Supply(&config.Config{
+				Routing:   config.Routing{DefaultUpstream: "primary"},
 				Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: upstream}}},
 			}),
 			connect.Module,
+			protoutil.Module,
 			router.Module,
 			fx.Populate(&codec, &handler),
 			fx.NopLogger,

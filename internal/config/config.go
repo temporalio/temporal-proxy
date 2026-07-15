@@ -84,14 +84,3 @@ func (c *Config) Validate() error {
 	rules = append(rules, c.Routing.referentialRules(known)...)
 	return validation.Validate("", rules...)
 }
-
-// PrimaryUpstream returns the first configured upstream. It is a temporary
-// bridge for the single-upstream wiring in the proxy and router modules until
-// per-request routing is in place.
-func (c *Config) PrimaryUpstream() (*Upstream, error) {
-	if len(c.Upstreams) == 0 {
-		return nil, errors.New("no upstreams configured")
-	}
-
-	return &c.Upstreams[0], nil
-}

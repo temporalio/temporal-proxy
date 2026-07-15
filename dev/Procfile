@@ -1,2 +1,4 @@
-temporal: temporal server start-dev -n ns1.remote -n ns2.remote
+temporal1: temporal server start-dev -n ns1.remote -n ns2.remote
+temporal2: temporal server start-dev -p 7234 -n test
+temporal3: temporal server start-dev -p 7235 -n test2
 proxy: go run ./cmd/proxy serve -c dev/config.yaml
