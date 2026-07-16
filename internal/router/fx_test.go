@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
 	"google.golang.org/grpc"
@@ -15,6 +17,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
 	"github.com/temporalio/temporal-proxy/internal/router"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
@@ -36,6 +39,7 @@ func TestModule(t *testing.T) {
 			fx.Supply(&config.Config{
 				Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
 			}),
+			fx.Provide(func() *metrics.Factory { return metrics.New("tmprl_proxy", promauto.With(prometheus.NewRegistry())) }),
 			connect.Module,
 			protoutil.Module,
 			router.Module,
@@ -103,6 +107,7 @@ func TestModule(t *testing.T) {
 				Routing:   config.Routing{DefaultUpstream: "primary"},
 				Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: upstream}}},
 			}),
+			fx.Provide(func() *metrics.Factory { return metrics.New("tmprl_proxy", promauto.With(prometheus.NewRegistry())) }),
 			connect.Module,
 			protoutil.Module,
 			router.Module,
@@ -168,10 +173,14 @@ func TestModuleMux(t *testing.T) {
 		require.NoError(t, app.Err())
 		require.NotNil(t, mux)
 
-		require.Equal(t, "prod", mux.Switch("prod-1", nil), "namespace rule")
-		require.Equal(t, "gold", mux.Switch("any", map[string][]string{"x-tier": {"gold"}}), "metadata rule with lowercased key")
-		require.Equal(t, "default", mux.Switch("other", nil), "no match falls to default")
-		require.Equal(t, "system", mux.Switch("", nil), "no namespace falls to system")
+		got, _ := mux.Switch("prod-1", nil)
+		require.Equal(t, "prod", got, "namespace rule")
+		got, _ = mux.Switch("any", map[string][]string{"x-tier": {"gold"}})
+		require.Equal(t, "gold", got, "metadata rule with lowercased key")
+		got, _ = mux.Switch("other", nil)
+		require.Equal(t, "default", got, "no match falls to default")
+		got, _ = mux.Switch("", nil)
+		require.Equal(t, "system", got, "no namespace falls to system")
 	})
 
 	t.Run("rejects an invalid rule", func(t *testing.T) {

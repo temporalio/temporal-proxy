@@ -2,6 +2,17 @@ package router
 
 import "slices"
 
+const (
+	// OutcomeMatch means a rule matched the request.
+	OutcomeMatch Outcome = iota
+	// OutcomeDefault means the request fell through to the default upstream.
+	OutcomeDefault
+	// OutcomeSystem means a no-namespace request went to the system upstream.
+	OutcomeSystem
+	// OutcomeUnroutable means no upstream was selected (result "").
+	OutcomeUnroutable
+)
+
 type (
 	// Mux selects the upstream that serves a request by matching it against an
 	// ordered list of rules. It holds upstream names only, not connections, so
@@ -19,6 +30,9 @@ type (
 	Matcher interface {
 		Match(string) bool
 	}
+
+	// Outcome describes why Switch chose (or failed to choose) an upstream.
+	Outcome byte
 
 	// Rule routes every request it matches to a named upstream. A request
 	// matches when the rule's namespace matcher accepts the request namespace
@@ -45,24 +59,25 @@ func New(defUpstream, sysUpstream string, rules ...Rule) *Mux {
 	}
 }
 
-// Switch returns the name of the upstream that serves a request with the given
-// namespace and metadata. Rules are evaluated in order and the first match
-// wins. When no rule matches, a request with no namespace goes to the system
-// upstream if one is configured, and every other request goes to the default
-// upstream. The result is empty when the selected upstream is unset, which the
-// caller reports as an unroutable request.
-func (m *Mux) Switch(ns string, md map[string][]string) string {
+// Switch returns the upstream that serves a request with the given namespace and
+// metadata, and the Outcome describing why it was chosen. Rules are evaluated in
+// order and the first match wins. With no matching rule, a request with no
+// namespace goes to the system upstream if configured, and every other request
+// goes to the default upstream. An empty result (the selected upstream is unset)
+// is reported as OutcomeUnroutable and the caller treats the request as
+// unroutable.
+func (m *Mux) Switch(ns string, md map[string][]string) (string, Outcome) {
 	for _, rule := range m.rules {
 		if rule.matches(ns, md) {
-			return rule.upstream
+			return rule.upstream, outcomeFor(rule.upstream, OutcomeMatch)
 		}
 	}
 
 	if ns == "" && m.sys != "" {
-		return m.sys
+		return m.sys, outcomeFor(m.sys, OutcomeSystem)
 	}
 
-	return m.def
+	return m.def, outcomeFor(m.def, OutcomeDefault)
 }
 
 // matches reports whether the rule accepts a request with the given namespace
@@ -80,4 +95,29 @@ func (r *Rule) matches(ns string, md map[string][]string) bool {
 	}
 
 	return true
+}
+
+// String returns the metric label value for the outcome.
+func (o Outcome) String() string {
+	switch o {
+	case OutcomeMatch:
+		return "match"
+	case OutcomeDefault:
+		return "default"
+	case OutcomeSystem:
+		return "system"
+	default:
+		return "unroutable"
+	}
+}
+
+// outcomeFor collapses an empty upstream name to OutcomeUnroutable, preserving
+// the invariant that a "" result is always unroutable regardless of which path
+// produced it.
+func outcomeFor(name string, o Outcome) Outcome {
+	if name == "" {
+		return OutcomeUnroutable
+	}
+
+	return o
 }

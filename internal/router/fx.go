@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
@@ -49,11 +50,21 @@ var Module = fx.Options(fx.Provide(
 
 		return Handler(
 			&director{
-				conns: conns,
-				mux:   p.Mux,
+				conns:    conns,
+				mux:      p.Mux,
+				reporter: p.Reporter,
 			},
 			p.Extractor,
+			p.Reporter,
 		), nil
+	},
+	func(c *config.Config, f *metrics.Factory) *Reporter {
+		names := make([]string, 0, len(c.Upstreams))
+		for i := range c.Upstreams {
+			names = append(names, c.Upstreams[i].Name)
+		}
+
+		return NewReporter(f.ForSubsystem("router"), names)
 	},
 	func(c *config.Config) (*Mux, error) {
 		rules := make([]Rule, 0, len(c.Routing.Rules))
@@ -113,34 +124,42 @@ type (
 		Extractor *protoutil.Extractor
 		Mux       *Mux
 		Pool      *connect.Pool
+		Reporter  *Reporter
 	}
 
 	// director is the [Director] used by the module's handler. It maps the
 	// upstream name chosen by the Mux to that upstream's pooled connection.
 	director struct {
-		conns map[string]*grpc.ClientConn
-		mux   *Mux
+		conns    map[string]*grpc.ClientConn
+		mux      *Mux
+		reporter *Reporter
 	}
 )
 
 // Resolve routes a request by matching it against the Mux and returning the
-// connection for the resulting upstream. It fails with FailedPrecondition when
+// Target for the resulting upstream. It fails with FailedPrecondition when
 // no upstream matches (and no default is configured) and with Unavailable when
-// the matched upstream has no connection.
+// the matched upstream has no connection. It records a decision metric on
+// every call, plus a no_connection forwarding-error metric when the chosen
+// upstream has no connection.
 func (d *director) Resolve(
 	ctx context.Context,
 	_, namespace string,
 	md map[string][]string,
-) (*grpc.ClientConn, error) {
-	upstream := d.mux.Switch(namespace, md)
-	if upstream == "" {
-		return nil, status.Error(codes.FailedPrecondition, "no upstream matched the request and no default is configured")
+) (Target, error) {
+	upstream, outcome := d.mux.Switch(namespace, md)
+	if outcome == OutcomeUnroutable {
+		d.reporter.Decision(upstreamUnknown, OutcomeUnroutable)
+		return Target{}, status.Error(codes.FailedPrecondition, "no upstream matched the request and no default is configured")
 	}
+
+	d.reporter.Decision(upstream, outcome)
 
 	cc, ok := d.conns[upstream]
 	if !ok {
-		return nil, status.Errorf(codes.Unavailable, "router: no connection for upstream %q", upstream)
+		d.reporter.ForwardingError(upstream, reasonNoConnection)
+		return Target{}, status.Errorf(codes.Unavailable, "router: no connection for upstream %q", upstream)
 	}
 
-	return cc, nil
+	return Target{Upstream: upstream, Conn: cc}, nil
 }

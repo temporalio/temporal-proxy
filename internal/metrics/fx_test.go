@@ -9,7 +9,6 @@ import (
 	"time"
 
 	goprom "github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
 
@@ -25,7 +24,7 @@ func TestModule(t *testing.T) {
 
 		addr := freeAddr(t)
 
-		var factory promauto.Factory
+		var factory *metrics.Factory
 		app := newTestApp(t, addr, fx.Populate(&factory))
 		require.NoError(t, app.Err())
 
@@ -33,12 +32,13 @@ func TestModule(t *testing.T) {
 		t.Cleanup(cancel)
 		require.NoError(t, app.Start(ctx))
 
-		// Emit a gauge so the scrape has something proxy-specific to assert on.
-		factory.NewGauge(goprom.GaugeOpts{
-			Namespace: "temporal_proxy",
-			Name:      "answer",
-			Help:      "smoke-test gauge",
-		}).Set(42)
+		// Emit a counter via the provided Factory so the scrape has something
+		// proxy-specific to assert on. newTestApp supplies the "tmprl_proxy"
+		// namespace, so the series is tmprl_proxy_answer_total.
+		factory.NewCounter(goprom.CounterOpts{
+			Name: "answer_total",
+			Help: "smoke-test counter",
+		}, nil).WithLabelValues().Inc()
 
 		url := "http://" + addr + "/metrics"
 
@@ -53,7 +53,7 @@ func TestModule(t *testing.T) {
 			return ok
 		}, 5*time.Second, 20*time.Millisecond)
 
-		require.Contains(t, body, "temporal_proxy_answer")
+		require.Contains(t, body, "tmprl_proxy_answer_total")
 
 		ctx, cancel = context.WithTimeout(t.Context(), 5*time.Second)
 		t.Cleanup(cancel)
@@ -115,6 +115,7 @@ func newTestApp(t *testing.T, addr string, opts ...fx.Option) *fx.App {
 	base := []fx.Option{
 		fx.Supply(
 			fx.Annotate(addr, metrics.AddrTag),
+			fx.Annotate("tmprl_proxy", metrics.NamespaceTag),
 			fx.Annotate(reg, fx.As(new(goprom.Registerer))),
 			fx.Annotate(reg, fx.As(new(goprom.Gatherer))),
 			fx.Annotate(logger.NewNoopLogger(), fx.As(new(logger.Logger))),
