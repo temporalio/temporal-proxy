@@ -47,3 +47,16 @@ func (f *Factory) NewCounter(opts prometheus.CounterOpts, labelNames []string) *
 
 	return f.factory.NewCounterVec(opts, labelNames)
 }
+
+// NewHistogram creates and registers a HistogramVec. It forces the bound
+// namespace (and subsystem, when set) onto opts, overriding any the caller set,
+// so every histogram shares the same prefix. labelNames are the histogram's
+// variable label dimensions.
+func (f *Factory) NewHistogram(opts prometheus.HistogramOpts, labelNames []string) *prometheus.HistogramVec {
+	opts.Namespace = f.namespace
+	if f.subsystem != "" {
+		opts.Subsystem = f.subsystem
+	}
+
+	return f.factory.NewHistogramVec(opts, labelNames)
+}

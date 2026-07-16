@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
 	"google.golang.org/grpc"
@@ -141,6 +142,7 @@ func TestModuleWiresInjectedCodecAndHandler(t *testing.T) {
 		return status.Error(codes.Unimplemented, "injected-handler-reached")
 	})
 
+	f, _ := newTestFactory(t)
 	addr := freeTCPAddr(t)
 	app := fx.New(
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
@@ -148,6 +150,7 @@ func TestModuleWiresInjectedCodecAndHandler(t *testing.T) {
 			Listen:    config.ListenConfig{HostPort: addr},
 			Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
 		}),
+		fx.Supply(f),
 		fx.Provide(
 			func() encoding.CodecV2 { return rec },
 			func() grpc.StreamHandler { return handler },
@@ -195,11 +198,71 @@ func TestModuleWiresInjectedCodecAndHandler(t *testing.T) {
 	require.NoError(t, app.Stop(stopCtx))
 }
 
+func TestModuleWiresMetricsInterceptor(t *testing.T) {
+	t.Parallel()
+
+	factory, reg := newTestFactory(t)
+
+	handler := grpc.StreamHandler(func(any, grpc.ServerStream) error {
+		return status.Error(codes.Unimplemented, "stub")
+	})
+
+	addr := freeTCPAddr(t)
+	app := fx.New(
+		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
+		fx.Supply(&config.Config{
+			Listen:    config.ListenConfig{HostPort: addr},
+			Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
+		}),
+		fx.Supply(factory),
+		fx.Provide(
+			func() encoding.CodecV2 { return encoding.GetCodecV2("proto") },
+			func() grpc.StreamHandler { return handler },
+		),
+		server.Module,
+		fx.NopLogger,
+	)
+
+	startCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, app.Start(startCtx))
+
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	callCtx, callCancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer callCancel()
+
+	err = conn.Invoke(
+		callCtx,
+		"/temporal.api.workflowservice.v1.WorkflowService/GetSystemInfo",
+		&grpc_health_v1.HealthCheckRequest{},
+		new(grpc_health_v1.HealthCheckResponse),
+		grpc.WaitForReady(true),
+	)
+	require.Error(t, err)
+	require.Equal(t, codes.Unimplemented, status.Code(err))
+
+	stopCtx, stopCancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stopCancel()
+	require.NoError(t, app.Stop(stopCtx))
+
+	// This test proves Module installs the interceptor, so one recorded series is
+	// enough; the exact labels are asserted by the reporter tests that own that
+	// check.
+	n, err := testutil.GatherAndCount(reg, "tmprl_proxy_server_requests_total")
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+}
+
 func newTestApp(t *testing.T, opts ...fx.Option) *fx.App {
 	t.Helper()
 
+	f, _ := newTestFactory(t)
 	base := []fx.Option{
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
+		fx.Supply(f),
 		// Stand-in transparent-forwarding dependencies; the router module
 		// provides the real ones in production.
 		fx.Provide(

@@ -95,6 +95,55 @@ app_starts_total 1
 	})
 }
 
+func TestFactoryNewHistogram(t *testing.T) {
+	t.Parallel()
+
+	t.Run("prefixes the bound namespace/subsystem and registers", func(t *testing.T) {
+		t.Parallel()
+
+		reg := goprom.NewRegistry()
+		m := metrics.New("myns", promauto.With(reg)).ForSubsystem("sub")
+
+		m.NewHistogram(goprom.HistogramOpts{
+			Name:    "wait_seconds",
+			Help:    "Waits.",
+			Buckets: []float64{0.5, 1},
+		}, []string{"kind"}).WithLabelValues("a").Observe(0.75)
+
+		require.NoError(t, testutil.GatherAndCompare(reg, strings.NewReader(`
+# HELP myns_sub_wait_seconds Waits.
+# TYPE myns_sub_wait_seconds histogram
+myns_sub_wait_seconds_bucket{kind="a",le="0.5"} 0
+myns_sub_wait_seconds_bucket{kind="a",le="1"} 1
+myns_sub_wait_seconds_bucket{kind="a",le="+Inf"} 1
+myns_sub_wait_seconds_sum{kind="a"} 0.75
+myns_sub_wait_seconds_count{kind="a"} 1
+`), "myns_sub_wait_seconds"))
+	})
+
+	t.Run("overrides a caller-set namespace", func(t *testing.T) {
+		t.Parallel()
+
+		reg := goprom.NewRegistry()
+		m := metrics.New("bound", promauto.With(reg))
+
+		m.NewHistogram(goprom.HistogramOpts{
+			Namespace: "ignored",
+			Name:      "d_seconds",
+			Help:      "D.",
+			Buckets:   []float64{1},
+		}, nil).WithLabelValues().Observe(0.5)
+
+		n, err := testutil.GatherAndCount(reg, "ignored_d_seconds")
+		require.NoError(t, err)
+		require.Zero(t, n, "caller-set namespace must not leak into the metric name")
+
+		n, err = testutil.GatherAndCount(reg, "bound_d_seconds")
+		require.NoError(t, err)
+		require.Equal(t, 1, n)
+	})
+}
+
 func TestModuleProvidesNamespacedMetrics(t *testing.T) {
 	t.Parallel()
 
