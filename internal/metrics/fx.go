@@ -15,22 +15,31 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
 
-// AddrTag annotates the host:port the metrics HTTP server listens on,
-// supplied to fx as the named value "metricsAddr".
-var AddrTag = fx.ResultTags(`name:"metricsAddr"`)
+var (
+	// AddrTag annotates the host:port the metrics HTTP server listens on,
+	// supplied to fx as the named value "metricsAddr".
+	AddrTag = fx.ResultTags(`name:"metricsAddr"`)
 
-// Module provides a promauto.Factory bound to the injected Prometheus
+	// NamespaceTag annotates the Prometheus namespace prefixed onto every
+	// collector, supplied to fx as the named value "metricsNamespace".
+	NamespaceTag = fx.ResultTags(`name:"metricsNamespace"`)
+)
+
+// Module provides a namespaced [Factory] bound to the injected Prometheus
 // registry and serves the registry at /metrics on the address named
-// "metricsAddr". Consumers inject the factory to declare their collectors,
-// which auto-register, and should pre-resolve labeled handles once at setup
-// rather than per request to keep the emit path lock-free and allocation-free.
+// "metricsAddr". Consumers inject the [Factory] to declare their collectors,
+// which auto-register under the configured namespace, and should pre-resolve
+// labeled handles once at setup rather than per request to keep the emit path
+// lock-free and allocation-free.
 //
 // The HTTP server is bound to the fx lifecycle: it starts in a background
 // goroutine on OnStart and shuts down gracefully on OnStop. If the server
 // stops for any reason other than a clean shutdown, the whole app is brought
 // down with a non-zero exit code.
 var Module = fx.Options(
-	fx.Provide(promauto.With),
+	fx.Provide(func(p MetricsParams) *Factory {
+		return New(p.Namespace, promauto.With(p.Registerer))
+	}),
 	fx.Invoke(func(p MetricsParams) error {
 		if p.Addr == "" {
 			return errors.New("metrics addr not set")
@@ -82,17 +91,19 @@ var Module = fx.Options(
 )
 
 // MetricsParams holds the fx-injected dependencies needed to run the metrics
-// HTTP server. Addr is the named "metricsAddr" listen address. Registerer is
-// where collectors register and Gatherer is what the /metrics handler scrapes;
-// supplying both lets callers (and tests) choose between the package-global
-// registry and an isolated one.
+// HTTP server and build the namespaced [Factory]. Addr is the named
+// "metricsAddr" listen address and Namespace is the named "metricsNamespace"
+// Prometheus prefix. Registerer is where collectors register and Gatherer is
+// what the /metrics handler scrapes; supplying both lets callers (and tests)
+// choose between the package-global registry and an isolated one.
 type MetricsParams struct {
 	fx.In
 	Lifecycle  fx.Lifecycle
 	Shutdowner fx.Shutdowner
 
-	Addr   string `name:"metricsAddr"`
-	Logger logger.Logger
+	Addr      string `name:"metricsAddr"`
+	Namespace string `name:"metricsNamespace"`
+	Logger    logger.Logger
 
 	Gatherer   prometheus.Gatherer
 	Registerer prometheus.Registerer

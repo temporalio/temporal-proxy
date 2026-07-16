@@ -12,14 +12,22 @@ import (
 )
 
 type (
-	// Director selects the upstream connection for a request. Resolve receives
-	// the full method, the namespace peeked from the first request message
-	// (empty when the client sent no message), and the incoming metadata, and
-	// returns the connection to forward the stream over. A non-nil error aborts
-	// the stream and is returned to the caller verbatim, so implementations
-	// should return a gRPC status error.
+	// Target is the routing result returned by Director.Resolve on success: the
+	// chosen upstream's name (always non-empty) and the connection to forward the
+	// stream over. On a non-nil error the Target is unused and callers must ignore
+	// its fields.
+	Target struct {
+		Upstream string
+		Conn     *grpc.ClientConn
+	}
+
+	// Director selects the upstream for a request. Resolve receives the full
+	// method, the namespace peeked from the first request message (empty when the
+	// client sent no message), and the incoming metadata, and returns the Target to
+	// forward over. A non-nil error aborts the stream and is returned to the caller
+	// verbatim, so implementations should return a gRPC status error.
 	Director interface {
-		Resolve(ctx context.Context, method, namespace string, md map[string][]string) (*grpc.ClientConn, error)
+		Resolve(ctx context.Context, method, namespace string, md map[string][]string) (Target, error)
 	}
 
 	// Reflector extracts the Temporal namespace from a request. Namespace
@@ -30,13 +38,14 @@ type (
 	}
 )
 
-// Handler returns a grpc.StreamHandler suitable for grpc.UnknownServiceHandler.
-// It buffers the first request frame so r can peek the request namespace, asks d
-// for the upstream connection, then transparently forwards the stream to that
-// upstream using the same full method name: it replays the buffered first frame,
-// pumps raw frames in both directions, and propagates header, trailer, and
-// status verbatim.
-func Handler(d Director, r Reflector) grpc.StreamHandler {
+// Handler returns a grpc.StreamHandler suitable for grpc.UnknownServiceHandler,
+// reporting a stream_setup forwarding error via rep when opening the upstream
+// stream fails. It buffers the first request frame so r can peek the request
+// namespace, asks d for the upstream connection, then transparently forwards
+// the stream to that upstream using the same full method name: it replays the
+// buffered first frame, pumps raw frames in both directions, and propagates
+// header, trailer, and status verbatim.
+func Handler(d Director, r Reflector, rep *Reporter) grpc.StreamHandler {
 	return func(_ any, serverStream grpc.ServerStream) error {
 		ctx := serverStream.Context()
 		sts := grpc.ServerTransportStreamFromContext(ctx)
@@ -67,18 +76,22 @@ func Handler(d Director, r Reflector) grpc.StreamHandler {
 			namespace = r.Namespace(method, first.payload)
 		}
 
-		cc, err := d.Resolve(ctx, method, namespace, maps.Clone(md))
+		target, err := d.Resolve(ctx, method, namespace, maps.Clone(md))
 		if err != nil {
 			return err
 		}
 
-		stream, err := cc.NewStream(
+		stream, err := target.Conn.NewStream(
 			outCtx,
 			&grpc.StreamDesc{ServerStreams: true, ClientStreams: true},
 			method,
 			grpc.ForceCodecV2(Codec()),
 		)
 		if err != nil {
+			if rep != nil {
+				rep.ForwardingError(target.Upstream, reasonStreamSetup)
+			}
+
 			return err
 		}
 
