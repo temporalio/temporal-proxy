@@ -19,10 +19,14 @@ const (
 )
 
 type (
-	// Authenticator authenticates an inbound request from its metadata. It returns
-	// nil to allow the request, or a gRPC status error to reject it.
+	// Authenticator authenticates an inbound request from its metadata. It
+	// returns nil to allow the request, or a gRPC status error to reject it.
+	// Header reports the metadata header the authenticator consumes, so the
+	// proxy can strip the caller's credential before forwarding upstream; it
+	// returns "" when the authenticator consumes no header.
 	Authenticator interface {
 		Authenticate(ctx context.Context, md metadata.MD) error
+		Header() string
 	}
 
 	// rejection is an authentication failure that reports a generic, client-safe
@@ -34,6 +38,13 @@ type (
 	}
 
 	defaultAuthenticator struct{}
+
+	// strippedStream overrides Context so a downstream handler sees metadata with a
+	// consumed credential header removed.
+	strippedStream struct {
+		grpc.ServerStream
+		ctx context.Context
+	}
 )
 
 // StreamServerInterceptor adapts an Authenticator to a gRPC stream server
@@ -59,6 +70,19 @@ func StreamServerInterceptor(a Authenticator, log logger.Logger) grpc.StreamServ
 			return err
 		}
 
+		// The proxy terminates inbound auth, so strip the header it consumed:
+		// the caller's credential must not be forwarded upstream, where it would
+		// otherwise collide with (or leak alongside) an outbound credential on
+		// the same header.
+		if header := a.Header(); header != "" {
+			stripped := md.Copy()
+			stripped.Delete(header)
+			ss = &strippedStream{
+				ServerStream: ss,
+				ctx:          metadata.NewIncomingContext(ss.Context(), stripped),
+			}
+		}
+
 		return handler(srv, ss)
 	}
 }
@@ -75,10 +99,30 @@ func (a *defaultAuthenticator) Authenticate(_ context.Context, _ metadata.MD) er
 	return nil
 }
 
+// Header reports that the admit-all default consumes no header, so
+// StreamServerInterceptor strips nothing and the transparent relay is
+// preserved.
+func (a *defaultAuthenticator) Header() string { return "" }
+
+// Context returns the context carrying the stripped incoming metadata.
+func (s *strippedStream) Context() context.Context { return s.ctx }
+
 // reject builds a rejection carrying a client-safe code+message and a
 // server-side detail for logging.
 func reject(code codes.Code, clientMsg, detail string) error {
 	return &rejection{st: status.New(code, clientMsg), detail: detail}
+}
+
+// canonicalHeader returns the metadata header to use for a credential: the
+// default when h is blank, otherwise h lowercased. gRPC canonicalizes metadata
+// keys to lowercase, so normalizing here keeps a mixed-case configured header
+// matching what md lookups, strips, and per-RPC credentials actually send.
+func canonicalHeader(h string) string {
+	if h == "" {
+		return defaultHeader
+	}
+
+	return strings.ToLower(h)
 }
 
 // extractToken returns the credential carried in md under header, stripping the

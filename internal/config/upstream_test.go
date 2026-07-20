@@ -1,13 +1,18 @@
 package config_test
 
 import (
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/pkg/testutil"
 	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
@@ -485,4 +490,39 @@ func TestUpstream_Validate(t *testing.T) {
 			require.ElementsMatch(t, tt.wantTuples, got)
 		})
 	}
+}
+
+func TestUpstreamCredentialsRequireTLS(t *testing.T) {
+	t.Parallel()
+
+	base := func() config.Upstream {
+		return config.Upstream{
+			Name:        "u",
+			Listen:      config.ListenConfig{HostPort: "host:7233"},
+			Credentials: &config.CredentialConfig{Static: &config.StaticCredentialConfig{APIKey: "k"}},
+		}
+	}
+
+	t.Run("credentials without tls is rejected", func(t *testing.T) {
+		t.Parallel()
+		u := base()
+		require.ErrorContains(t, u.Validate(), "requires TLS")
+	})
+
+	t.Run("credentials with tls is accepted", func(t *testing.T) {
+		t.Parallel()
+		u := base()
+		// RSA certs are required for TLS validation (ECDSA certs are incompatible
+		// with the RSA-only cipher suites). Generate an RSA cert and a key.
+		certPEM := testutil.RSACert(t, &x509.Certificate{
+			SerialNumber: big.NewInt(1),
+			Subject:      pkix.Name{CommonName: "test"},
+			NotBefore:    time.Now().Add(-time.Hour),
+			NotAfter:     time.Now().Add(time.Hour),
+		})
+		certFile := testutil.WriteFile(t, t.TempDir(), "cert.pem", certPEM)
+		_, keyFile := testutil.GenerateSelfSignedCert(t)
+		u.Listen.TLS = &config.TLSConfig{Cert: certFile, Key: keyFile}
+		require.NoError(t, u.Validate())
+	})
 }

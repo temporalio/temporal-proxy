@@ -13,7 +13,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/proxy"
+	"github.com/temporalio/temporal-proxy/internal/transport/creds"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
@@ -45,6 +47,21 @@ func TestNew(t *testing.T) {
 		require.ErrorContains(t, err, "outbound credentials")
 		require.ErrorContains(t, err, "boom")
 	})
+}
+
+func TestNewWithDialOptions(t *testing.T) {
+	t.Parallel()
+
+	cp, err := auth.NewStaticCredentialProvider("k", "", "")
+	require.NoError(t, err)
+
+	svr, err := proxy.New(
+		"127.0.0.1:7233",
+		proxy.WithCredentials(creds.NewClientTLS()),
+		proxy.WithDialOptions(auth.DialOptions(cp)...),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, svr)
 }
 
 func TestServerStartAndStop(t *testing.T) {

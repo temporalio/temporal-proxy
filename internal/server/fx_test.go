@@ -385,6 +385,7 @@ func TestServerEndToEndAuth(t *testing.T) {
 }
 
 func (stubAuthenticator) Authenticate(context.Context, metadata.MD) error { return nil }
+func (stubAuthenticator) Header() string                                  { return "" }
 
 func newTestApp(t *testing.T, opts ...fx.Option) *fx.App {
 	t.Helper()

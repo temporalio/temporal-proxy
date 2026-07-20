@@ -71,3 +71,29 @@ func TestAuthConfigValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestCredentialConfigValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cfg     config.CredentialConfig
+		wantErr string
+	}{
+		{"valid static", config.CredentialConfig{Static: &config.StaticCredentialConfig{APIKey: "k"}}, ""},
+		{"missing static", config.CredentialConfig{}, "static"},
+		{"static missing apiKey", config.CredentialConfig{Static: &config.StaticCredentialConfig{}}, "apiKey"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.cfg.Validate()
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}

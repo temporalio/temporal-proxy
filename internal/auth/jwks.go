@@ -93,9 +93,6 @@ func NewJWKSAuthenticator(rawURL string, audiences []string, issuer, header, sch
 }
 
 func newJWKSAuthenticator(keyfn jwt.Keyfunc, audiences []string, issuer, header, scheme string) *JWKSAuthenticator {
-	if header == "" {
-		header = defaultHeader
-	}
 	if scheme == "" {
 		scheme = defaultScheme
 	}
@@ -104,7 +101,7 @@ func newJWKSAuthenticator(keyfn jwt.Keyfunc, audiences []string, issuer, header,
 		keyfn:     keyfn,
 		audiences: audiences,
 		issuer:    issuer,
-		header:    header,
+		header:    canonicalHeader(header),
 		scheme:    scheme,
 	}
 }
@@ -141,6 +138,10 @@ func (a *JWKSAuthenticator) Authenticate(_ context.Context, md metadata.MD) erro
 
 	return nil
 }
+
+// Header reports the metadata header this authenticator consumes, so
+// StreamServerInterceptor can strip it before forwarding upstream.
+func (a *JWKSAuthenticator) Header() string { return a.header }
 
 // audienceMatches reports whether the token's aud claim intersects allowed.
 func audienceMatches(claims jwt.MapClaims, allowed []string) bool {
