@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/encoding"
 
+	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/transport/creds"
@@ -32,6 +33,7 @@ var Module = fx.Options(
 			WithCredentials(p.creds()),
 			WithServerCodec(p.Codec),
 			WithStreamInterceptor(p.Reporter.StreamInterceptor()),
+			WithStreamInterceptor(auth.StreamServerInterceptor(p.Authenticator, p.Logger)),
 			WithUnknownServiceHandler(p.Handler),
 		)
 
@@ -80,22 +82,26 @@ var Module = fx.Options(
 )
 
 // ServerParams collects the fx-provided dependencies needed to construct and
-// run a [Server]. Context, Config, Codec, Handler, and Reporter are required;
-// the Codec and Handler are the transparent-forwarding pieces supplied by the
-// router module, and the Reporter is provided by this module's own
-// [fx.Provide]. HealthCheck and Logger are optional and fall back to the
-// defaults used by [New] when not supplied.
+// run a [Server]. Context, Config, Codec, Handler, Reporter, and Authenticator
+// are required; the Codec and Handler are the transparent-forwarding pieces
+// supplied by the router module, the Reporter is provided by this module's
+// own [fx.Provide], and Authenticator is the configured inbound authenticator
+// (a default admit-all authenticator when auth is disabled), supplied by the
+// auth module; the server adapts it into a stream interceptor. HealthCheck and
+// Logger are optional and fall back to the defaults used by [New] when not
+// supplied.
 type ServerParams struct {
 	fx.In
 	Lifecycle  fx.Lifecycle
 	Shutdowner fx.Shutdowner
 
 	// Required values
-	Context  context.Context
-	Config   *config.Config
-	Codec    encoding.CodecV2
-	Handler  grpc.StreamHandler
-	Reporter *Reporter
+	Context       context.Context
+	Config        *config.Config
+	Codec         encoding.CodecV2
+	Handler       grpc.StreamHandler
+	Reporter      *Reporter
+	Authenticator auth.Authenticator
 
 	// Optional values
 	HealthCheck HealthCheck   `optional:"true"`

@@ -16,6 +16,7 @@ type (
 		Listen    ListenConfig `yaml:",inline"`
 		Routing   Routing      `yaml:"routing"`
 		Upstreams []Upstream   `yaml:"upstreams"`
+		Auth      *AuthConfig  `yaml:"auth"`
 	}
 )
 
@@ -67,6 +68,7 @@ func (c *Config) Validate() error {
 		}),
 		validation.Nested("", &c.Listen),
 		validation.Nested("routing", &c.Routing),
+		validation.WhenRules(func() bool { return c.Auth != nil }, validation.Nested("auth", c.Auth)),
 		validation.Children("upstreams", c.Upstreams, func(u *Upstream) error { return u.Validate() }),
 	}
 

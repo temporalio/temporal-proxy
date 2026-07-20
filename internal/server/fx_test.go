@@ -15,13 +15,20 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/server"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
+
+// stubAuthenticator is a local admit-all stand-in for tests in this package,
+// which (being package server_test) cannot see the unexported
+// defaultAuthenticator that auth.Module supplies in production.
+type stubAuthenticator struct{}
 
 func TestModule(t *testing.T) {
 	t.Parallel()
@@ -130,6 +137,26 @@ func TestModule(t *testing.T) {
 	})
 }
 
+func TestServerModuleWithAuth(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Listen:    config.ListenConfig{HostPort: "127.0.0.1:0"},
+		Upstreams: []config.Upstream{{Name: "u", Listen: config.ListenConfig{HostPort: "127.0.0.1:1234"}}},
+		Auth:      &config.AuthConfig{StaticToken: &config.StaticTokenConfig{Token: "secret"}},
+	}
+
+	var authenticator auth.Authenticator
+	app := fx.New(
+		fx.Supply(cfg),
+		auth.Module,
+		fx.Populate(&authenticator),
+		fx.NopLogger,
+	)
+	require.NoError(t, app.Err())
+	require.NotNil(t, authenticator)
+}
+
 func TestModuleWiresInjectedCodecAndHandler(t *testing.T) {
 	t.Parallel()
 
@@ -154,6 +181,7 @@ func TestModuleWiresInjectedCodecAndHandler(t *testing.T) {
 		fx.Provide(
 			func() encoding.CodecV2 { return rec },
 			func() grpc.StreamHandler { return handler },
+			func() auth.Authenticator { return stubAuthenticator{} },
 		),
 		server.Module,
 		fx.NopLogger,
@@ -218,6 +246,7 @@ func TestModuleWiresMetricsInterceptor(t *testing.T) {
 		fx.Provide(
 			func() encoding.CodecV2 { return encoding.GetCodecV2("proto") },
 			func() grpc.StreamHandler { return handler },
+			func() auth.Authenticator { return stubAuthenticator{} },
 		),
 		server.Module,
 		fx.NopLogger,
@@ -256,6 +285,107 @@ func TestModuleWiresMetricsInterceptor(t *testing.T) {
 	require.Equal(t, 1, n)
 }
 
+func TestServerEndToEndAuth(t *testing.T) {
+	t.Parallel()
+
+	// This wires the real auth.Module (not the nil-Authenticator stub used by the
+	// tests above) alongside server.Module over a real TCP listener, proving the
+	// two modules compose the way cmd/proxy/serve.go wires them.
+	//
+	// The target is an unregistered method routed to the injected
+	// grpc.StreamHandler, the same shape router.Handler is installed as in
+	// production (WithUnknownServiceHandler) and the pattern
+	// TestModuleWiresMetricsInterceptor already uses to reach the stream
+	// interceptor chain. The gRPC health service's Check method was tried first
+	// and rejected: it is a unary RPC served through a registered ServiceDesc,
+	// so grpc-go never routes it through the stream interceptor chain at all
+	// (confirmed experimentally -- both valid and invalid tokens returned OK).
+	// Only unary methods without a ServiceDesc -- i.e. the unknown-service path
+	// this proxy forwards every Temporal RPC through -- traverse
+	// WithStreamInterceptor, so the stub handler here doubles as a fake
+	// upstream: it sends a response and returns nil, giving the valid-token case
+	// a genuine OK rather than merely "reached the handler".
+	factory, _ := newTestFactory(t)
+	addr := freeTCPAddr(t)
+	app := fx.New(
+		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
+		fx.Supply(&config.Config{
+			Listen:    config.ListenConfig{HostPort: addr},
+			Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
+			Auth:      &config.AuthConfig{StaticToken: &config.StaticTokenConfig{Token: "secret"}},
+		}),
+		fx.Supply(factory),
+		fx.Provide(
+			func() encoding.CodecV2 { return encoding.GetCodecV2("proto") },
+			func() grpc.StreamHandler {
+				return func(_ any, ss grpc.ServerStream) error {
+					return ss.SendMsg(&grpc_health_v1.HealthCheckResponse{
+						Status: grpc_health_v1.HealthCheckResponse_SERVING,
+					})
+				}
+			},
+		),
+		auth.Module,
+		server.Module,
+		fx.NopLogger,
+	)
+
+	startCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, app.Start(startCtx))
+
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	invoke := func(ctx context.Context) (*grpc_health_v1.HealthCheckResponse, error) {
+		resp := new(grpc_health_v1.HealthCheckResponse)
+		err := conn.Invoke(
+			ctx,
+			"/temporal.api.workflowservice.v1.WorkflowService/GetSystemInfo",
+			&grpc_health_v1.HealthCheckRequest{},
+			resp,
+			grpc.WaitForReady(true),
+		)
+		return resp, err
+	}
+
+	tests := []struct {
+		name     string
+		header   string // "" omits the authorization header entirely
+		wantCode codes.Code
+	}{
+		{"correct static token succeeds", "Bearer secret", codes.OK},
+		{"wrong token is rejected", "Bearer wrong", codes.Unauthenticated},
+		{"missing token is rejected", "", codes.Unauthenticated},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := t.Context()
+			if tt.header != "" {
+				ctx = metadata.AppendToOutgoingContext(ctx, "authorization", tt.header)
+			}
+
+			callCtx, callCancel := context.WithTimeout(ctx, 5*time.Second)
+			defer callCancel()
+
+			resp, err := invoke(callCtx)
+			require.Equal(t, tt.wantCode, status.Code(err))
+			if tt.wantCode == codes.OK {
+				require.NoError(t, err)
+				require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.GetStatus())
+			}
+		})
+	}
+
+	stopCtx, stopCancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stopCancel()
+	require.NoError(t, app.Stop(stopCtx))
+}
+
+func (stubAuthenticator) Authenticate(context.Context, metadata.MD) error { return nil }
+
 func newTestApp(t *testing.T, opts ...fx.Option) *fx.App {
 	t.Helper()
 
@@ -263,8 +393,8 @@ func newTestApp(t *testing.T, opts ...fx.Option) *fx.App {
 	base := []fx.Option{
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(f),
-		// Stand-in transparent-forwarding dependencies; the router module
-		// provides the real ones in production.
+		// Stand-in transparent-forwarding and auth dependencies; the router
+		// and auth modules provide the real ones in production.
 		fx.Provide(
 			func() encoding.CodecV2 { return encoding.GetCodecV2("proto") },
 			func() grpc.StreamHandler {
@@ -272,6 +402,7 @@ func newTestApp(t *testing.T, opts ...fx.Option) *fx.App {
 					return status.Error(codes.Unimplemented, "stub handler")
 				}
 			},
+			func() auth.Authenticator { return stubAuthenticator{} },
 		),
 		server.Module,
 		fx.NopLogger,

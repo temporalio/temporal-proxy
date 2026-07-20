@@ -8,6 +8,7 @@ import (
 	"github.com/urfave/cli/v3"
 	"go.uber.org/fx"
 
+	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
@@ -66,6 +67,7 @@ func serve() *cli.Command {
 					func() prometheus.Gatherer { return prometheus.DefaultGatherer },
 					func() prometheus.Registerer { return prometheus.DefaultRegisterer },
 				),
+				auth.Module,
 				config.Module,
 				connect.Module,
 				metrics.Module,
