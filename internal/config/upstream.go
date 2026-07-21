@@ -156,6 +156,13 @@ func (r *NamespaceRules) Validate() error {
 	return validation.Validate("", rules...)
 }
 
+// Configured reports whether the rules translate anything. When false the
+// prefix, suffix, and overrides are all empty and Remote and Local are identity,
+// so callers can skip installing translation entirely.
+func (r *NamespaceRules) Configured() bool {
+	return r.Prefix != "" || r.Suffix != "" || len(r.Overrides) > 0
+}
+
 // Validate requires both the local and remote namespace names.
 func (m *NamespaceMapping) Validate() error {
 	return validation.Validate(

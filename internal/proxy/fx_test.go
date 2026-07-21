@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/protoutil"
 	"github.com/temporalio/temporal-proxy/internal/proxy"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 	"github.com/temporalio/temporal-proxy/pkg/testutil"
@@ -167,12 +168,50 @@ func TestModuleRejectsTemplatedUpstream(t *testing.T) {
 	require.ErrorContains(t, app.Err(), "templated")
 }
 
+func TestModuleInstallsNamespaceTranslation(t *testing.T) {
+	t.Parallel()
+
+	const upstream = "127.0.0.1:47241"
+
+	// An upstream that configures namespace rules wires translation from the
+	// injected Translator and must still build and serve.
+	app := newProxyApp(t, &config.Config{
+		Upstreams: []config.Upstream{{
+			Name:       "primary",
+			Listen:     config.ListenConfig{HostPort: upstream},
+			Namespaces: config.NamespaceConfig{Rules: config.NamespaceRules{Suffix: ".remote"}},
+		}},
+	})
+	require.NoError(t, app.Err())
+
+	startServeStop(t, app, upstream)
+}
+
+func TestModuleRequiresTranslator(t *testing.T) {
+	t.Parallel()
+
+	// proxy.Module requires a *protoutil.Translator. Without protoutil.Module
+	// (or another provider) the app must fail to build rather than run without
+	// one.
+	app := fx.New(
+		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
+		fx.Supply(&config.Config{
+			Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:47242"}}},
+		}),
+		proxy.Module,
+		fx.NopLogger,
+	)
+
+	require.Error(t, app.Err())
+}
+
 func newProxyApp(t *testing.T, cfg *config.Config, opts ...fx.Option) *fx.App {
 	t.Helper()
 
 	base := []fx.Option{
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(cfg),
+		protoutil.Module,
 		proxy.Module,
 		fx.NopLogger,
 	}

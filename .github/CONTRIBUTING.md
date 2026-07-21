@@ -53,17 +53,19 @@ mise run grpc GetSystemInfo
 
 A response with the upstream's capabilities means the call traversed the proxy and reached the frontend.
 
-To exercise a namespace-scoped call, use `DescribeNamespace`:
+To exercise a namespace-scoped call, use `DescribeNamespace`. Send the local
+alias; the proxy rewrites it to the upstream name before forwarding, per the matched upstream's
+`upstream.namespaces.rules` in `dev/config.yaml`:
 
 ```sh
-mise run grpc DescribeNamespace '{"namespace":"ns1.remote"}'
+mise run grpc DescribeNamespace '{"namespace":"ns1"}'
 ```
 
-> [!IMPORTANT]
+> [!NOTE]
 >
-> namespace names are currently forwarded verbatim - the `upstream.namespaces.rules` in `dev/config.yaml` are parsed and
-> validated but not yet applied. Until translation is wired up, you must send the real upstream name (`ns1.remote`), not
-> the local alias (`ns1`). Sending `ns1` returns `NotFound`.
+> The default upstream applies `suffix: .remote`, so the local alias `ns1` reaches the frontend as `ns1.remote`, and the
+> name in the response is translated back to `ns1`. The `ns3 -> ns2.remote` override maps the local alias `ns3` to
+> `ns2.remote` upstream. `cluster-3` configures no rules, so calls routed there are forwarded verbatim.
 
 ### Confirming per-request routing
 

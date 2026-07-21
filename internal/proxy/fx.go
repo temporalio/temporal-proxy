@@ -8,6 +8,7 @@ import (
 
 	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/protoutil"
 	"github.com/temporalio/temporal-proxy/internal/transport/creds"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
@@ -31,6 +32,11 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 		}
 
 		opts := []Option{WithCredentials(upstreamCreds(upstream))}
+
+		rules := &upstream.Namespaces.Rules
+		if rules.Configured() {
+			opts = append(opts, WithDialOptions(translationDialOptions(p.Translator, rules.Remote, rules.Local)...))
+		}
 
 		cp, err := auth.CredentialProviderFor(upstream.Credentials)
 		if err != nil {
@@ -70,16 +76,18 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 }))
 
 // ProxyParams collects the fx-provided dependencies needed to construct and run
-// the proxy [Server]. Context and Config are required; Logger is optional and
-// falls back to the default used by [New] when not supplied.
+// the proxy [Server]. Context, Config, and Translator are required; Logger is
+// optional and falls back to the default used by [New] when not supplied.
+// [protoutil.Module] provides the Translator in the assembled application.
 type ProxyParams struct {
 	fx.In
 	Lifecycle  fx.Lifecycle
 	Shutdowner fx.Shutdowner
 
 	// Required values
-	Context context.Context
-	Config  *config.Config
+	Context    context.Context
+	Config     *config.Config
+	Translator *protoutil.Translator
 
 	// Optional values
 	Logger logger.Logger `optional:"true"`

@@ -65,6 +65,7 @@ func New(hostPort string, opts ...Option) (*Server, error) {
 	}
 
 	dialOpts := append([]grpc.DialOption{upstreamCreds}, pops.dialOpts...)
+
 	conn, err := grpc.NewClient(hostPort, dialOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial: %s, %w", hostPort, err)
@@ -114,7 +115,8 @@ func WithLogger(log logger.Logger) Option {
 }
 
 // WithDialOptions appends gRPC dial options applied to the outbound connection
-// to the upstream frontend, in addition to the transport credentials.
+// to the upstream frontend, in addition to the transport credentials. Outbound
+// credentials and namespace translation are both wired this way.
 func WithDialOptions(opts ...grpc.DialOption) Option {
 	return Option(func(o *Options) { o.dialOpts = append(o.dialOpts, opts...) })
 }
