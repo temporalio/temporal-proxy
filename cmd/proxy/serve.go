@@ -7,6 +7,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/urfave/cli/v3"
 	"go.uber.org/fx"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
@@ -61,6 +62,9 @@ func serve() *cli.Command {
 					fx.Annotate(cmd.String("config"), config.ConfigFileTag),
 					fx.Annotate(cmd.String("metrics-addr"), metrics.AddrTag),
 					fx.Annotate(cmd.String("metrics-namespace"), metrics.NamespaceTag),
+					// Services whose request and response types have their namespace
+					// translation plans warmed at startup.
+					[]protoreflect.FullName{"temporal.api.workflowservice.v1.WorkflowService"},
 				),
 				fx.Provide(
 					func() logger.Logger { return log },

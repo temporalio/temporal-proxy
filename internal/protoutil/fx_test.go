@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.uber.org/fx"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
 )
@@ -43,5 +44,31 @@ func TestModule(t *testing.T) {
 		require.NoError(t, app.Err())
 		require.NotNil(t, ex)
 		require.Equal(t, "", ex.Namespace(startMethod, start))
+	})
+
+	t.Run("provides a translator warmed for the supplied services", func(t *testing.T) {
+		t.Parallel()
+
+		var tr *protoutil.Translator
+		app := fx.New(
+			fx.Supply([]protoreflect.FullName{wfService}),
+			protoutil.Module,
+			fx.Populate(&tr),
+			fx.NopLogger,
+		)
+		require.NoError(t, app.Err())
+		require.NotNil(t, tr)
+		require.True(t, tr.IsWarm("temporal.api.workflowservice.v1.StartWorkflowExecutionRequest"))
+	})
+
+	t.Run("warming an unknown service fails startup", func(t *testing.T) {
+		t.Parallel()
+
+		app := fx.New(
+			fx.Supply([]protoreflect.FullName{"does.not.Exist"}),
+			protoutil.Module,
+			fx.NopLogger,
+		)
+		require.Error(t, app.Err())
 	})
 }

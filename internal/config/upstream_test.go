@@ -526,3 +526,25 @@ func TestUpstreamCredentialsRequireTLS(t *testing.T) {
 		require.NoError(t, u.Validate())
 	})
 }
+
+func TestNamespaceRulesConfigured(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		rules config.NamespaceRules
+		want  bool
+	}{
+		{"empty", config.NamespaceRules{}, false},
+		{"prefix set", config.NamespaceRules{Prefix: "acme-"}, true},
+		{"suffix set", config.NamespaceRules{Suffix: "-prod"}, true},
+		{"override set", config.NamespaceRules{Overrides: []config.NamespaceMapping{{Local: "a", Remote: "b"}}}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, tt.rules.Configured())
+		})
+	}
+}
