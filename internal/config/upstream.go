@@ -13,9 +13,10 @@ type (
 	// identifies the upstream so routing rules can refer to it; it must be
 	// unique within the config.
 	Upstream struct {
-		Name       string          `yaml:"name"`
-		Listen     ListenConfig    `yaml:",inline"`
-		Namespaces NamespaceConfig `yaml:"namespaces"`
+		Name        string            `yaml:"name"`
+		Listen      ListenConfig      `yaml:",inline"`
+		Namespaces  NamespaceConfig   `yaml:"namespaces"`
+		Credentials *CredentialConfig `yaml:"credentials"`
 	}
 
 	// NamespaceConfig groups the namespace translation rules for an upstream.
@@ -65,6 +66,16 @@ func (u *Upstream) Validate() error {
 			validation.Nested("tls", u.Listen.TLS),
 		),
 		validation.Nested("namespaces", &u.Namespaces),
+		validation.WhenRules(
+			func() bool { return u.Credentials != nil },
+			validation.Nested("credentials", u.Credentials),
+		),
+		validation.WhenRules(
+			func() bool { return u.Credentials != nil && u.Listen.TLS == nil },
+			func() validation.Errors {
+				return validation.Errors{{Field: "credentials", Message: "requires TLS to the upstream"}}
+			},
+		),
 	)
 }
 

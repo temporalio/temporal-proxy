@@ -6,6 +6,7 @@ import (
 
 	"go.uber.org/fx"
 
+	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/transport/creds"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
@@ -30,6 +31,15 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 		}
 
 		opts := []Option{WithCredentials(upstreamCreds(upstream))}
+
+		cp, err := auth.CredentialProviderFor(upstream.Credentials)
+		if err != nil {
+			return fmt.Errorf("invalid credentials for upstream %q: %w", upstream.Name, err)
+		}
+		if cp != nil {
+			opts = append(opts, WithDialOptions(auth.DialOptions(cp)...))
+		}
+
 		if p.Logger != nil {
 			opts = append(opts, WithLogger(p.Logger))
 		}

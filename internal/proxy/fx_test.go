@@ -2,6 +2,9 @@ package proxy_test
 
 import (
 	"context"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"math/big"
 	"testing"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/proxy"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"github.com/temporalio/temporal-proxy/pkg/testutil"
 	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
@@ -115,6 +119,39 @@ func TestModuleMultipleUpstreams(t *testing.T) {
 		require.Error(t, err, "upstream %s should not serve after stop", upstream)
 		require.NoError(t, conn.Close())
 	}
+}
+
+// TestModuleWithUpstreamCredentials is construction-only: proxy.New dials
+// lazily, so this asserts the Module accepts a credentialed+TLS upstream without
+// erroring, not that the credential is actually attached. See
+// TestProxyAttachesUpstreamCredential (e2e/upstream_credential_socket_test.go)
+// for proof the key reaches the upstream.
+func TestModuleWithUpstreamCredentials(t *testing.T) {
+	t.Parallel()
+
+	const upstream = "127.0.0.1:47236"
+
+	// The upstream TLS validation path requires an RSA cert (it checks
+	// compatibility with the RSA-only cipher suites in creds.TLS); the key file
+	// only needs to be a validly formatted PEM key, since New never dials
+	// (construction, not a live handshake, is what this test exercises).
+	certPEM := testutil.RSACert(t, &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	})
+	certFile := testutil.WriteFile(t, t.TempDir(), "cert.pem", certPEM)
+	_, keyFile := testutil.GenerateSelfSignedCert(t)
+
+	app := newProxyApp(t, &config.Config{
+		Upstreams: []config.Upstream{{
+			Name:        "workers",
+			Listen:      config.ListenConfig{HostPort: upstream, TLS: &config.TLSConfig{Cert: certFile, Key: keyFile}},
+			Credentials: &config.CredentialConfig{Static: &config.StaticCredentialConfig{APIKey: "k3y"}},
+		}},
+	})
+	require.NoError(t, app.Err())
 }
 
 func TestModuleRejectsTemplatedUpstream(t *testing.T) {

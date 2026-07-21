@@ -1,3 +1,4 @@
 // Package auth provides application-layer authentication for the proxy:
-// inbound request authentication (Authenticator).
+// authenticating inbound requests (Authenticator) and presenting credentials on
+// outbound requests to upstreams (CredentialProvider).
 package auth

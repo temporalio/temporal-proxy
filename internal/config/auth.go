@@ -30,6 +30,20 @@ type (
 		Header    string   `yaml:"header"`
 		Scheme    string   `yaml:"scheme"`
 	}
+
+	// CredentialConfig configures the credential the proxy presents to an
+	// upstream. Static is the only variant today.
+	CredentialConfig struct {
+		Static *StaticCredentialConfig `yaml:"static"`
+	}
+
+	// StaticCredentialConfig injects a fixed API key as a bearer header on every
+	// outbound request to the upstream.
+	StaticCredentialConfig struct {
+		APIKey string `yaml:"apiKey"`
+		Header string `yaml:"header"`
+		Scheme string `yaml:"scheme"`
+	}
 )
 
 // Validate requires exactly one authenticator and checks the selected one.
@@ -79,5 +93,27 @@ func (c *JWKSConfig) Validate() error {
 
 			return nil
 		}),
+	)
+}
+
+// Validate requires the static credential and checks it.
+func (c *CredentialConfig) Validate() error {
+	return validation.Validate(
+		"",
+		func() validation.Errors {
+			if c.Static == nil {
+				return validation.Errors{{Field: "static", Message: "is required"}}
+			}
+			return nil
+		},
+		validation.WhenRules(func() bool { return c.Static != nil }, validation.Nested("static", c.Static)),
+	)
+}
+
+// Validate requires the API key.
+func (c *StaticCredentialConfig) Validate() error {
+	return validation.Validate(
+		"",
+		validation.Field("apiKey", c.APIKey, validation.Required[string]()),
 	)
 }

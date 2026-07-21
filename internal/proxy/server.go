@@ -37,8 +37,9 @@ type (
 
 	// Options configures a [Server] at construction time.
 	Options struct {
-		creds  Credentials
-		logger logger.Logger
+		creds    Credentials
+		logger   logger.Logger
+		dialOpts []grpc.DialOption
 	}
 
 	// Option configures a [Server] via [New].
@@ -63,7 +64,8 @@ func New(hostPort string, opts ...Option) (*Server, error) {
 		return nil, fmt.Errorf("failed to generate outbound credentials: %w", err)
 	}
 
-	conn, err := grpc.NewClient(hostPort, upstreamCreds)
+	dialOpts := append([]grpc.DialOption{upstreamCreds}, pops.dialOpts...)
+	conn, err := grpc.NewClient(hostPort, dialOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial: %s, %w", hostPort, err)
 	}
@@ -109,6 +111,12 @@ func WithCredentials(creds Credentials) Option {
 // WithLogger sets the logger used by the proxy.
 func WithLogger(log logger.Logger) Option {
 	return Option(func(o *Options) { o.logger = log })
+}
+
+// WithDialOptions appends gRPC dial options applied to the outbound connection
+// to the upstream frontend, in addition to the transport credentials.
+func WithDialOptions(opts ...grpc.DialOption) Option {
+	return Option(func(o *Options) { o.dialOpts = append(o.dialOpts, opts...) })
 }
 
 // Start binds the local unix socket and serves until the proxy is stopped or

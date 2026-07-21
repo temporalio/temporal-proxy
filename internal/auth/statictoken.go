@@ -25,15 +25,11 @@ func NewStaticTokenAuthenticator(token, header, scheme string) (*StaticTokenAuth
 		return nil, errors.New("auth: static token is required")
 	}
 
-	if header == "" {
-		header = defaultHeader
-	}
-
 	if scheme == "" {
 		scheme = defaultScheme
 	}
 
-	return &StaticTokenAuthenticator{token: token, header: header, scheme: scheme}, nil
+	return &StaticTokenAuthenticator{token: token, header: canonicalHeader(header), scheme: scheme}, nil
 }
 
 // Authenticate compares the extracted token against the configured value in
@@ -51,3 +47,7 @@ func (a *StaticTokenAuthenticator) Authenticate(_ context.Context, md metadata.M
 
 	return nil
 }
+
+// Header reports the metadata header this authenticator consumes, so
+// StreamServerInterceptor can strip it before forwarding upstream.
+func (a *StaticTokenAuthenticator) Header() string { return a.header }

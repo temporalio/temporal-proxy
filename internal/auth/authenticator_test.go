@@ -25,6 +25,7 @@ func (f *fakeStream) Context() context.Context { return f.ctx }
 type fakeAuthenticator struct{ err error }
 
 func (f fakeAuthenticator) Authenticate(context.Context, metadata.MD) error { return f.err }
+func (fakeAuthenticator) Header() string                                    { return "" }
 
 func TestStreamServerInterceptor(t *testing.T) {
 	t.Parallel()
@@ -53,6 +54,43 @@ func TestStreamServerInterceptor(t *testing.T) {
 		require.False(t, called)
 		require.Equal(t, codes.Unauthenticated, status.Code(err))
 	})
+}
+
+func TestStreamServerInterceptorStripsConsumedHeader(t *testing.T) {
+	t.Parallel()
+
+	a, err := auth.NewStaticTokenAuthenticator("s3cret", "", "") // header defaults to "authorization"
+	require.NoError(t, err)
+
+	inMD := metadata.Pairs("authorization", "Bearer s3cret", "x-keep", "v")
+	ctx := metadata.NewIncomingContext(t.Context(), inMD)
+
+	var seen metadata.MD
+	ic := auth.StreamServerInterceptor(a, nil)
+	err = ic(nil, &fakeStream{ctx: ctx}, &grpc.StreamServerInfo{FullMethod: "/pkg.Svc/M"}, func(_ any, ss grpc.ServerStream) error {
+		seen, _ = metadata.FromIncomingContext(ss.Context())
+		return nil
+	})
+	require.NoError(t, err)
+
+	require.Empty(t, seen.Get("authorization"), "the consumed credential header must be stripped before forwarding")
+	require.Equal(t, []string{"v"}, seen.Get("x-keep"), "other headers must be forwarded unchanged")
+}
+
+func TestStreamServerInterceptorKeepsHeaderWhenNoneConsumed(t *testing.T) {
+	t.Parallel()
+
+	inMD := metadata.Pairs("authorization", "Bearer whatever")
+	ctx := metadata.NewIncomingContext(t.Context(), inMD)
+
+	var seen metadata.MD
+	ic := auth.StreamServerInterceptor(fakeAuthenticator{}, nil) // Header() == "" -> strips nothing
+	err := ic(nil, &fakeStream{ctx: ctx}, &grpc.StreamServerInfo{}, func(_ any, ss grpc.ServerStream) error {
+		seen, _ = metadata.FromIncomingContext(ss.Context())
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"Bearer whatever"}, seen.Get("authorization"))
 }
 
 func TestStreamServerInterceptorLogsReason(t *testing.T) {
