@@ -6,29 +6,18 @@ lockfile = true
 [tools]
 "github:mattn/goreman" = "latest"
 "github:temporalio/cli" = "latest"
-buf = "1.69.0"
+buf = "1.69"
 go = "1.26"
-mkcert = "1.4.4"
-goreleaser = "2.16.0"
-markdownlint-cli2 = "0.23.0"
+golangci-lint = "2.12"
+goreleaser = "2.17"
+markdownlint-cli2 = "0.23"
+mkcert = "1.4"
 svu = "3.4"
 
 ################################################################################
 # Dependencies
 ################################################################################
-
 [deps.go]
-
-[deps.tools]
-dir = "dev"
-sources = ["mise.toml"]
-outputs = ["dev/tools.sum"]
-description = "Sync dev tools"
-run = """
-  go get -tool -modfile=tools.mod github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8
-  go get -tool -modfile=tools.mod go.uber.org/mock/mockgen@v0.6.0
-  go mod tidy -modfile=tools.mod 2>/dev/null || true
-"""
 
 ################################################################################
 # Local Servers & Processes
@@ -87,7 +76,7 @@ run = [{ task = "lint:go" }, { task = "lint:md" }]
 
 [tasks."lint:go"]
 description = "Lint Go files"
-run = ["go tool -modfile=dev/tools.mod golangci-lint run"]
+run = ["golangci-lint run ./..."]
 
 [tasks."lint:md"]
 description = "Lint markdown files"
@@ -99,7 +88,7 @@ run = [{ task = "format:go" }, { task = "format:md" }]
 
 [tasks."format:go"]
 description = "Format Go files"
-run = ["go fix ./...", "go tool -modfile=dev/tools.mod golangci-lint fmt"]
+run = ["go fix ./...", "golangci-lint fmt"]
 
 [tasks."format:md"]
 description = "Format markdown files"
