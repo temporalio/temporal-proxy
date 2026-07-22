@@ -16,6 +16,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
 	"github.com/temporalio/temporal-proxy/internal/proxy"
+	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 	"github.com/temporalio/temporal-proxy/pkg/testutil"
 	"github.com/temporalio/temporal-proxy/pkg/validation"
@@ -155,7 +156,7 @@ func TestModuleWithUpstreamCredentials(t *testing.T) {
 	require.NoError(t, app.Err())
 }
 
-func TestModuleRejectsTemplatedUpstream(t *testing.T) {
+func TestModuleAcceptsTemplatedUpstream(t *testing.T) {
 	t.Parallel()
 
 	app := newProxyApp(t, &config.Config{
@@ -164,8 +165,19 @@ func TestModuleRejectsTemplatedUpstream(t *testing.T) {
 		},
 	})
 
-	require.Error(t, app.Err())
-	require.ErrorContains(t, app.Err(), "templated")
+	// Previously this failed with "templated upstreams are not yet supported".
+	// A templated hostPort is now resolved per-request via a templatedPlan, so
+	// construction (and the full start/stop lifecycle) succeeds without ever
+	// dialing the upstream.
+	require.NoError(t, app.Err())
+
+	startCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, app.Start(startCtx))
+
+	stopCtx, stopCancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stopCancel()
+	require.NoError(t, app.Stop(stopCtx))
 }
 
 func TestModuleInstallsNamespaceTranslation(t *testing.T) {
@@ -190,14 +202,12 @@ func TestModuleInstallsNamespaceTranslation(t *testing.T) {
 func TestModuleRequiresTranslator(t *testing.T) {
 	t.Parallel()
 
-	// proxy.Module requires a *protoutil.Translator. Without protoutil.Module
-	// (or another provider) the app must fail to build rather than run without
-	// one.
 	app := fx.New(
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(&config.Config{
 			Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:47242"}}},
 		}),
+		connect.Module,
 		proxy.Module,
 		fx.NopLogger,
 	)
@@ -211,6 +221,7 @@ func newProxyApp(t *testing.T, cfg *config.Config, opts ...fx.Option) *fx.App {
 	base := []fx.Option{
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(cfg),
+		connect.Module,
 		protoutil.Module,
 		proxy.Module,
 		fx.NopLogger,

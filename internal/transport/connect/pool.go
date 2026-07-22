@@ -9,17 +9,21 @@ import (
 )
 
 var (
-	// ErrDuplicateHost is returned by Pool.Set when a connection is already
-	// registered for the given host.
-	ErrDuplicateHost = errors.New("host already defined")
+	// ErrDuplicateKey is returned by Pool.Set when a connection is already
+	// registered for the given key.
+	ErrDuplicateKey = errors.New("key already defined")
 
-	// ErrHostNotFound is returned by Pool.Conn when no connection is registered
-	// for the given host.
-	ErrHostNotFound = errors.New("no connection for host")
+	// ErrKeyNotFound is returned by Pool.Conn when no connection is registered
+	// for the given key.
+	ErrKeyNotFound = errors.New("no connection for key")
 )
 
 type (
-	// Pool is a concurrency-safe set of gRPC client connections keyed by host.
+	// Pool is a concurrency-safe set of gRPC client connections keyed by a
+	// caller-supplied logical key, which is distinct from the dial target.
+	// Callers that need two connections to the same dial target (e.g. the same
+	// host:port with different TLS server names) must use different keys, or
+	// they will collapse onto whichever connection was dialed first.
 	// The zero value is not usable; create one with NewPool.
 	Pool struct {
 		mu        sync.RWMutex
@@ -36,38 +40,41 @@ func NewPool() *Pool {
 	}
 }
 
-// Conn returns the connection registered for host. It returns ErrHostNotFound
-// if no connection is registered for that host.
-func (p *Pool) Conn(host string) (*grpc.ClientConn, error) {
+// Conn returns the connection registered for key. It returns ErrKeyNotFound
+// if no connection is registered for that key.
+func (p *Pool) Conn(key string) (*grpc.ClientConn, error) {
 	p.mu.RLock()
-	cn, ok := p.conns[host]
+	cn, ok := p.conns[key]
 	p.mu.RUnlock()
 
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrHostNotFound, host)
+		return nil, fmt.Errorf("%w: %s", ErrKeyNotFound, key)
 	}
 
 	return cn, nil
 }
 
-// GetOrSet returns the connection registered for host, creating and registering
-// one with grpc.NewClient(host, opts...) when none exists yet. If callers race to
-// create the same host, each dials but only one connection is kept; the losers are
-// closed and every caller receives the same *grpc.ClientConn.
-func (p *Pool) GetOrSet(host string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
-	if conn, _ := p.Conn(host); conn != nil {
+// ConnOrCreate returns the connection registered for key, creating and registering
+// one with grpc.NewClient(target, opts...) when none exists yet. key is the
+// logical cache key and target is the dial address; callers that need distinct
+// connections to the same target (e.g. identical host:port with different TLS
+// server names) must pass distinct keys. If callers race to create the same
+// key, each constructs a client but only one connection is kept; the losers are closed and
+// every caller receives the same *grpc.ClientConn.
+func (p *Pool) ConnOrCreate(key, target string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	if conn, _ := p.Conn(key); conn != nil {
 		return conn, nil
 	}
 
-	conn, err := grpc.NewClient(host, opts...)
+	conn, err := grpc.NewClient(target, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to %s, %w", host, err)
+		return nil, fmt.Errorf("failed to connect to %s, %w", target, err)
 	}
 
-	if err := p.Set(host, conn); err != nil {
-		if errors.Is(err, ErrDuplicateHost) {
-			_ = conn.Close()    // lost the race; don't leak our dial
-			return p.Conn(host) // return the connection that won
+	if err := p.Set(key, conn); err != nil {
+		if errors.Is(err, ErrDuplicateKey) {
+			_ = conn.Close()   // lost the race; don't leak our dial
+			return p.Conn(key) // return the connection that won
 		}
 
 		return nil, err
@@ -76,17 +83,17 @@ func (p *Pool) GetOrSet(host string, opts ...grpc.DialOption) (*grpc.ClientConn,
 	return conn, nil
 }
 
-// Set registers conn for host. It returns ErrDuplicateHost if a connection is
-// already registered for that host, leaving the existing connection untouched.
-func (p *Pool) Set(host string, conn *grpc.ClientConn) error {
+// Set registers conn for key. It returns ErrDuplicateKey if a connection is
+// already registered for that key, leaving the existing connection untouched.
+func (p *Pool) Set(key string, conn *grpc.ClientConn) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if _, ok := p.conns[host]; ok {
-		return fmt.Errorf("%w: %s", ErrDuplicateHost, host)
+	if _, ok := p.conns[key]; ok {
+		return fmt.Errorf("%w: %s", ErrDuplicateKey, key)
 	}
 
-	p.conns[host] = conn
+	p.conns[key] = conn
 	return nil
 }
 

@@ -24,56 +24,35 @@ type (
 		DialOption() (grpc.DialOption, error)
 	}
 
-	// Server proxies the Temporal WorkflowService. It dials an upstream frontend
-	// and re-serves it on a local unix socket, letting local workers connect
-	// without TLS while the upstream hop stays secured.
+	// Server proxies the Temporal WorkflowService. It re-serves an upstream
+	// frontend on a local unix socket, letting local workers connect without TLS
+	// while the upstream hop stays secured. The upstream connection(s) it
+	// forwards to are owned by the shared [connect.Pool], not by this Server.
 	Server struct {
 		svr  *server.Server
-		conn *grpc.ClientConn
-
-		host string // upstream hostPort
 		path string // path to unix socket
 	}
 
 	// Options configures a [Server] at construction time.
 	Options struct {
-		creds    Credentials
-		logger   logger.Logger
-		dialOpts []grpc.DialOption
+		logger logger.Logger
 	}
 
 	// Option configures a [Server] via [New].
 	Option func(*Options)
 )
 
-// New constructs a [Server] that forwards WorkflowService traffic to the
-// upstream frontend at hostPort. The local listener is a unix socket whose path
-// is derived from hostPort (see [Server.Start]). With no options it dials the
-// upstream with insecure credentials and logs via a CLI logger.
-func New(hostPort string, opts ...Option) (*Server, error) {
-	pops := &Options{
-		creds:  creds.NewInsecure(),
-		logger: logger.Default(),
-	}
+// New constructs a Server that forwards WorkflowService traffic to the
+// upstream reachable through cc. The local listener is a unix socket whose
+// path is derived from hostPort. cc is typically a resolvingConn; the
+// connection(s) it uses are owned by the shared pool, not by this Server.
+func New(hostPort string, cc grpc.ClientConnInterface, opts ...Option) (*Server, error) {
+	pops := &Options{logger: logger.Default()}
 	for _, opt := range opts {
 		opt(pops)
 	}
 
-	upstreamCreds, err := pops.creds.DialOption()
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate outbound credentials: %w", err)
-	}
-
-	dialOpts := append([]grpc.DialOption{upstreamCreds}, pops.dialOpts...)
-
-	conn, err := grpc.NewClient(hostPort, dialOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to dial: %s, %w", hostPort, err)
-	}
-
-	wfs, err := proxy.NewWorkflowServiceProxyServer(proxy.WorkflowServiceProxyOptions{
-		Client: workflowservice.NewWorkflowServiceClient(conn),
-	})
+	wfs, err := proxy.NewWorkflowServiceProxyServer(workflowProxyOptions(cc))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create workflowservice proxy: %w", err)
 	}
@@ -95,18 +74,7 @@ func New(hostPort string, opts ...Option) (*Server, error) {
 		return nil, fmt.Errorf("failed to resolve socket path: %w", err)
 	}
 
-	return &Server{
-		svr:  svr,
-		conn: conn,
-		host: hostPort,
-		path: path,
-	}, nil
-}
-
-// WithCredentials sets the transport credentials used to dial the upstream
-// frontend.
-func WithCredentials(creds Credentials) Option {
-	return Option(func(o *Options) { o.creds = creds })
+	return &Server{svr: svr, path: path}, nil
 }
 
 // WithLogger sets the logger used by the proxy.
@@ -114,28 +82,30 @@ func WithLogger(log logger.Logger) Option {
 	return Option(func(o *Options) { o.logger = log })
 }
 
-// WithDialOptions appends gRPC dial options applied to the outbound connection
-// to the upstream frontend, in addition to the transport credentials. Outbound
-// credentials and namespace translation are both wired this way.
-func WithDialOptions(opts ...grpc.DialOption) Option {
-	return Option(func(o *Options) { o.dialOpts = append(o.dialOpts, opts...) })
-}
-
-// Start binds the local unix socket and serves until the proxy is stopped or
-// ctx is cancelled. It first removes any socket left behind by a prior run. It
-// blocks, so callers typically run it in its own goroutine.
-func (s *Server) Start(ctx context.Context) error {
+// Listen removes any socket left behind by a prior run and binds the proxy's
+// local unix socket, returning the listener. Binding is separate from Start so
+// callers can bind synchronously during startup (the socket is then listening,
+// and the OS backlogs connections) before serving in the background, ensuring
+// no request is routed to an unbound socket.
+func (s *Server) Listen(ctx context.Context) (net.Listener, error) {
 	// Remove any socket left behind by a prior run; otherwise the bind fails
 	// with "address already in use".
 	if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("failed to remove stale socket: unix://%s, %w", s.path, err)
+		return nil, fmt.Errorf("failed to remove stale socket: unix://%s, %w", s.path, err)
 	}
 
 	lis, err := (&net.ListenConfig{}).Listen(ctx, "unix", s.path)
 	if err != nil {
-		return fmt.Errorf("failed to bind to socket: unix://%s, %w", s.path, err)
+		return nil, fmt.Errorf("failed to bind to socket: unix://%s, %w", s.path, err)
 	}
 
+	return lis, nil
+}
+
+// Start serves on lis until the proxy is stopped or ctx is cancelled. It
+// blocks, so callers typically run it in its own goroutine after binding the
+// listener with Listen.
+func (s *Server) Start(ctx context.Context, lis net.Listener) error {
 	return s.svr.Start(ctx, lis)
 }
 
@@ -145,5 +115,14 @@ func (s *Server) Stop(ctx context.Context) error {
 		return fmt.Errorf("failed to stop GRPC server: %w", err)
 	}
 
-	return s.conn.Close()
+	return nil
+}
+
+// workflowProxyOptions builds the options for the WorkflowService proxy
+// server backed by cc. DisableHeaderForwarding is intentionally left false:
+// the upstream proxy must forward incoming metadata (including the
+// router-stamped namespace) onto the outbound call, since templated upstream
+// resolution and namespace translation both depend on it.
+func workflowProxyOptions(cc grpc.ClientConnInterface) proxy.WorkflowServiceProxyOptions {
+	return proxy.WorkflowServiceProxyOptions{Client: workflowservice.NewWorkflowServiceClient(cc)}
 }

@@ -9,6 +9,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+
+	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 )
 
 type (
@@ -75,6 +77,11 @@ func Handler(d Director, r Reflector, rep *Reporter) grpc.StreamHandler {
 		if !eof {
 			namespace = r.Namespace(method, first.payload)
 		}
+
+		// Carry the extracted namespace to the upstream proxy so it can resolve a
+		// templated address without re-parsing the payload. Set (not append) so a
+		// client-supplied value cannot influence routing.
+		outCtx = meta.WithNamespace(outCtx, namespace)
 
 		target, err := d.Resolve(ctx, method, namespace, maps.Clone(md))
 		if err != nil {

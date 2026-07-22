@@ -79,10 +79,15 @@ func (u *Upstream) Validate() error {
 	)
 }
 
-// IsTemplated reports whether the upstream's hostPort contains a text/template
-// action and so must be resolved per request.
+// IsTemplated reports whether the upstream must be resolved per request because
+// its hostPort, or its TLS server name when one is configured, contains a
+// text/template action.
 func (u *Upstream) IsTemplated() bool {
-	return isTemplated(u.Listen.HostPort)
+	if isTemplated(u.Listen.HostPort) {
+		return true
+	}
+
+	return u.Listen.TLS != nil && isTemplated(u.Listen.TLS.ServerName)
 }
 
 // Validate checks the namespace translation rules.

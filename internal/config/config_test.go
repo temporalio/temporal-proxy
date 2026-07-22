@@ -359,6 +359,18 @@ func TestUpstream_IsTemplated(t *testing.T) {
 
 	require.True(t, (&config.Upstream{Listen: config.ListenConfig{HostPort: "{{ .LocalNamespace }}.acme.cloud:7233"}}).IsTemplated())
 	require.False(t, (&config.Upstream{Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}).IsTemplated())
+
+	// A templated TLS server name makes the upstream templated even when the
+	// hostPort is static.
+	require.True(t, (&config.Upstream{Listen: config.ListenConfig{
+		HostPort: "127.0.0.1:7233",
+		TLS:      &config.TLSConfig{ServerName: "{{ .RemoteNamespace }}.acme.cloud"},
+	}}).IsTemplated())
+
+	require.False(t, (&config.Upstream{Listen: config.ListenConfig{
+		HostPort: "127.0.0.1:7233",
+		TLS:      &config.TLSConfig{ServerName: "static.acme.cloud"},
+	}}).IsTemplated())
 }
 
 func (e *errReader) Read(_ []byte) (int, error) { return 0, e.err }

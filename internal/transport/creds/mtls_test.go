@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -248,4 +249,54 @@ func TestMTLS_Validate(t *testing.T) {
 func TestMTLS_Encrypted(t *testing.T) {
 	t.Parallel()
 	require.True(t, creds.NewMTLS("", "", "", creds.MTLSOptions{}).Encrypted())
+}
+
+func TestCertLoader(t *testing.T) {
+	t.Parallel()
+
+	t.Run("shared loader reads material once", func(t *testing.T) {
+		t.Parallel()
+
+		caFile, certFile, keyFile := testutil.GenerateMTLSCerts(t)
+		loader := creds.NewCertLoader(caFile, certFile, keyFile)
+
+		// Simulate two per-request credentials for the same upstream sharing the
+		// loader; only ServerName differs.
+		opt, err := creds.NewMTLS(caFile, certFile, keyFile, creds.MTLSOptions{
+			ServerName: "first.example.com",
+			Loader:     loader,
+		}).DialOption()
+		require.NoError(t, err)
+		require.NotNil(t, opt)
+
+		// Remove the CA file. A re-read would fail at the CA step, so a successful
+		// second DialOption proves the loader cached the parsed material.
+		require.NoError(t, os.Remove(caFile))
+
+		opt, err = creds.NewMTLS(caFile, certFile, keyFile, creds.MTLSOptions{
+			ServerName: "second.example.com",
+			Loader:     loader,
+		}).DialOption()
+		require.NoError(t, err)
+		require.NotNil(t, opt)
+	})
+
+	t.Run("load error is cached", func(t *testing.T) {
+		t.Parallel()
+
+		_, certFile, keyFile := testutil.GenerateMTLSCerts(t)
+		missingCA := filepath.Join(t.TempDir(), "missing.pem")
+		loader := creds.NewCertLoader(missingCA, certFile, keyFile)
+
+		m := creds.NewMTLS(missingCA, certFile, keyFile, creds.MTLSOptions{Loader: loader})
+
+		opt, err := m.DialOption()
+		require.ErrorContains(t, err, "failed to load CA certificate")
+		require.Nil(t, opt)
+
+		// The cached error is returned again without another disk read.
+		opt, err = m.DialOption()
+		require.ErrorContains(t, err, "failed to load CA certificate")
+		require.Nil(t, opt)
+	})
 }

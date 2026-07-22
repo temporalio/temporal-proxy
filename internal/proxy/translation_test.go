@@ -37,6 +37,15 @@ type (
 	}
 )
 
+func TestWorkflowProxyOptionsForwardsHeaders(t *testing.T) {
+	t.Parallel()
+
+	// Guard: New must not disable header forwarding, or the upstream proxy would
+	// drop the router-stamped namespace header and templated resolution would
+	// break.
+	require.False(t, workflowProxyOptions(nil).DisableHeaderForwarding)
+}
+
 func TestUnaryClientInterceptorTranslatesBothDirections(t *testing.T) {
 	t.Parallel()
 
@@ -132,20 +141,29 @@ func TestOutboundNamespaceTranslation(t *testing.T) {
 	go func() { _ = upstream.Serve(lis) }()
 	t.Cleanup(upstream.Stop)
 
-	// Proxy dials the fake upstream, wrapping "local" -> "remote-local".
+	// Dial the fake upstream directly, wrapping "local" -> "remote-local"; this
+	// mirrors how fx folds translationDialOptions into a plan's dial options
+	// before the pool dials them.
 	translator := protoutil.NewTranslator(protoregistry.GlobalFiles)
-	svr, err := New(
-		lis.Addr().String(),
-		WithDialOptions(translationDialOptions(
+	dialOpts := append(
+		[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
+		translationDialOptions(
 			translator,
 			func(s string) string { return "remote-" + s },
 			func(s string) string { return "local-" + s },
-		)...),
+		)...,
 	)
+	cc, err := grpc.NewClient(lis.Addr().String(), dialOpts...)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cc.Close() })
+
+	svr, err := New(lis.Addr().String(), cc)
 	require.NoError(t, err)
 
 	ctx := t.Context()
-	go func() { _ = svr.Start(ctx) }()
+	srvLis, err := svr.Listen(ctx)
+	require.NoError(t, err)
+	go func() { _ = svr.Start(ctx, srvLis) }()
 	t.Cleanup(func() { _ = svr.Stop(context.Background()) })
 
 	conn := dialUnixSocket(t, lis.Addr().String())

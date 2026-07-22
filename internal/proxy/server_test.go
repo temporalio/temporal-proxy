@@ -2,7 +2,6 @@ package proxy_test
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,16 +12,10 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
-	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/proxy"
-	"github.com/temporalio/temporal-proxy/internal/transport/creds"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
-
-type failingCredentials struct {
-	err error
-}
 
 func TestNew(t *testing.T) {
 	t.Parallel()
@@ -30,38 +23,10 @@ func TestNew(t *testing.T) {
 	t.Run("returns a server with default options", func(t *testing.T) {
 		t.Parallel()
 
-		svr, err := proxy.New("127.0.0.1:7233")
+		svr, err := proxy.New("127.0.0.1:7233", upstreamConn(t, "127.0.0.1:7233"))
 		require.NoError(t, err)
 		require.NotNil(t, svr)
 	})
-
-	t.Run("propagates credential errors", func(t *testing.T) {
-		t.Parallel()
-
-		svr, err := proxy.New(
-			"127.0.0.1:7233",
-			proxy.WithCredentials(failingCredentials{err: errors.New("boom")}),
-		)
-		require.Error(t, err)
-		require.Nil(t, svr)
-		require.ErrorContains(t, err, "outbound credentials")
-		require.ErrorContains(t, err, "boom")
-	})
-}
-
-func TestNewWithDialOptions(t *testing.T) {
-	t.Parallel()
-
-	cp, err := auth.NewStaticCredentialProvider("k", "", "")
-	require.NoError(t, err)
-
-	svr, err := proxy.New(
-		"127.0.0.1:7233",
-		proxy.WithCredentials(creds.NewClientTLS()),
-		proxy.WithDialOptions(auth.DialOptions(cp)...),
-	)
-	require.NoError(t, err)
-	require.NotNil(t, svr)
 }
 
 func TestServerStartAndStop(t *testing.T) {
@@ -73,14 +38,17 @@ func TestServerStartAndStop(t *testing.T) {
 	const upstream = "127.0.0.1:17233"
 
 	log := logger.NewTestLogger()
-	svr, err := proxy.New(upstream, proxy.WithLogger(log))
+	svr, err := proxy.New(upstream, upstreamConn(t, upstream), proxy.WithLogger(log))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
+	lis, err := svr.Listen(ctx)
+	require.NoError(t, err)
+
 	errCh := make(chan error, 1)
-	go func() { errCh <- svr.Start(ctx) }()
+	go func() { errCh <- svr.Start(ctx, lis) }()
 
 	conn := dialUnix(t, upstream)
 	defer func() { _ = conn.Close() }()
@@ -119,14 +87,17 @@ func TestStartRemovesStaleSocket(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("stale"), 0o600))
 	t.Cleanup(func() { _ = os.Remove(path) })
 
-	svr, err := proxy.New(upstream)
+	svr, err := proxy.New(upstream, upstreamConn(t, upstream))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
+	lis, err := svr.Listen(ctx)
+	require.NoError(t, err)
+
 	errCh := make(chan error, 1)
-	go func() { errCh <- svr.Start(ctx) }()
+	go func() { errCh <- svr.Start(ctx, lis) }()
 
 	conn := dialUnix(t, upstream)
 	defer func() { _ = conn.Close() }()
@@ -142,7 +113,7 @@ func TestStartRemovesStaleSocket(t *testing.T) {
 	require.NoError(t, <-errCh)
 }
 
-func TestStartReturnsErrorWhenStaleSocketCannotBeRemoved(t *testing.T) {
+func TestListenReturnsErrorWhenStaleSocketCannotBeRemoved(t *testing.T) {
 	t.Parallel()
 
 	const upstream = "127.0.0.1:37233"
@@ -150,26 +121,37 @@ func TestStartReturnsErrorWhenStaleSocketCannotBeRemoved(t *testing.T) {
 	path, err := socket.UnixPath(upstream)
 	require.NoError(t, err)
 
-	// A non-empty directory at the socket path makes os.Remove fail, so Start
+	// A non-empty directory at the socket path makes os.Remove fail, so Listen
 	// returns before it ever binds.
 	require.NoError(t, os.Mkdir(path, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(path, "child"), nil, 0o600))
 	t.Cleanup(func() { _ = os.RemoveAll(path) })
 
-	svr, err := proxy.New(upstream)
+	svr, err := proxy.New(upstream, upstreamConn(t, upstream))
 	require.NoError(t, err)
 
-	err = svr.Start(t.Context())
+	_, err = svr.Listen(t.Context())
 	require.Error(t, err)
 	require.ErrorContains(t, err, "failed to remove stale socket")
 }
 
-func (f failingCredentials) DialOption() (grpc.DialOption, error) {
-	return nil, f.err
+// upstreamConn returns a grpc.ClientConnInterface for New's cc argument. gRPC
+// dials lazily, so this never opens a socket to upstream; the tests in this
+// file never make an outbound RPC through it (they only exercise the local
+// unix listener), so a plain client conn stands in for the pool-backed
+// resolvingConn used in production.
+func upstreamConn(t *testing.T, upstream string) grpc.ClientConnInterface {
+	t.Helper()
+
+	conn, err := grpc.NewClient(upstream, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	return conn
 }
 
 // dialUnix returns a client connection to the proxy's unix socket for the given
-// upstream host. The socket path matches what proxy.Start binds.
+// upstream host. The socket path matches what proxy.Listen binds.
 func dialUnix(t *testing.T, upstream string) *grpc.ClientConn {
 	t.Helper()
 

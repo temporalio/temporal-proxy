@@ -17,10 +17,22 @@ import (
 func TestTLS_DialOption(t *testing.T) {
 	t.Parallel()
 
-	// DialOption does not load any files; file paths are irrelevant.
-	opt, err := creds.NewClientTLS().DialOption()
-	require.NoError(t, err)
-	require.NotNil(t, opt)
+	t.Run("without a server name", func(t *testing.T) {
+		t.Parallel()
+
+		// DialOption does not load any files; file paths are irrelevant.
+		opt, err := creds.NewClientTLS("").DialOption()
+		require.NoError(t, err)
+		require.NotNil(t, opt)
+	})
+
+	t.Run("with a server name", func(t *testing.T) {
+		t.Parallel()
+
+		opt, err := creds.NewClientTLS("example.com").DialOption()
+		require.NoError(t, err)
+		require.NotNil(t, opt)
+	})
 }
 
 func TestTLS_ServerOption(t *testing.T) {
@@ -136,7 +148,7 @@ func TestTLS_Validate(t *testing.T) {
 		// NewClientTLS leaves certFile empty; Validate is documented as
 		// server-mode-only, but we still want to confirm it surfaces a clear
 		// IO error rather than panicking.
-		err := creds.NewClientTLS().Validate()
+		err := creds.NewClientTLS("").Validate()
 		require.ErrorContains(t, err, "failed to read PEM file")
 	})
 }
@@ -145,6 +157,6 @@ func TestTLS_Encrypted(t *testing.T) {
 	t.Parallel()
 
 	// TLS encrypts the transport in both client and server modes.
-	require.True(t, creds.NewClientTLS().Encrypted())
+	require.True(t, creds.NewClientTLS("").Encrypted())
 	require.True(t, creds.NewServerTLS("", "").Encrypted())
 }

@@ -115,17 +115,19 @@ func newFullApp(t *testing.T, cfg *config.Config) *fx.App {
 }
 
 // newProxyApp is a minimal fx app for the socket-level test in this package: it
-// wires proxy.Module plus protoutil.Module (which provides the Translator
-// proxy.Module requires). internal/proxy/fx_test.go has its own copy (with
-// support for extra fx.Options) that its unit tests still depend on; this is a
-// deliberate small duplication rather than an exported helper, so the two
-// packages stay decoupled.
+// wires proxy.Module plus protoutil.Module (which provides the Translator) and
+// connect.Module (which provides the Pool), both required by proxy.Module.
+// internal/proxy/fx_test.go has its own copy (with support for extra
+// fx.Options) that its unit tests still depend on; this is a deliberate small
+// duplication rather than an exported helper, so the two packages stay
+// decoupled.
 func newProxyApp(t *testing.T, cfg *config.Config) *fx.App {
 	t.Helper()
 
 	return fx.New(
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(cfg),
+		connect.Module,
 		protoutil.Module,
 		proxy.Module,
 		fx.NopLogger,
@@ -191,7 +193,7 @@ func dialInbound(t *testing.T, addr string) *grpc.ClientConn {
 }
 
 // dialUnix returns a client connection to the proxy's unix socket for the
-// given upstream host. The socket path matches what proxy.Start binds.
+// given upstream host. The socket path matches what proxy.Listen binds.
 // internal/proxy/server_test.go has its own copy that its unit tests still
 // depend on; this is a deliberate small duplication for the socket-level test
 // in this package.

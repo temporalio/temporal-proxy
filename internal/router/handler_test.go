@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -27,6 +28,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/router"
 	"github.com/temporalio/temporal-proxy/internal/server"
+	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 )
 
 type (
@@ -448,6 +450,34 @@ tmprl_proxy_router_forwarding_errors_total{reason="stream_setup",upstream="prima
 `), "tmprl_proxy_router_forwarding_errors_total"))
 }
 
+func TestHandlerStampsNamespace(t *testing.T) {
+	t.Parallel()
+
+	upstream, got := capturingUpstream(t)
+
+	m, _ := newTestReporter(t)
+	relayLis := bufconn.Listen(1024 * 1024)
+	relay := grpc.NewServer(
+		grpc.ForceServerCodecV2(router.Codec()),
+		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "u", cc: upstream}, &recordingReflector{ns: "orders"}, m)),
+	)
+	serve(t, relay, relayLis)
+
+	client := dialBufconn(t, relayLis)
+
+	// The client sends a spoofed namespace header; the router must overwrite it
+	// with the value it extracted via the Reflector before forwarding.
+	ctx := metadata.NewOutgoingContext(t.Context(), metadata.Pairs(meta.NamespaceHeader, "spoofed"))
+	_ = client.Invoke(ctx, "/test.v1.Echo/Ping", &grpc_health_v1.HealthCheckRequest{}, new(grpc_health_v1.HealthCheckResponse))
+
+	select {
+	case ns := <-got:
+		require.Equal(t, "orders", ns)
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream never received a request")
+	}
+}
+
 func TestStatusError(t *testing.T) {
 	t.Parallel()
 
@@ -512,6 +542,28 @@ func (d *recordingDirector) snapshot() (calls int, method, namespace string, md 
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.calls, d.method, d.namespace, d.md
+}
+
+// capturingUpstream is an in-process gRPC server that records the namespace
+// header from the first stream it receives.
+func capturingUpstream(t *testing.T) (*grpc.ClientConn, <-chan string) {
+	t.Helper()
+
+	got := make(chan string, 1)
+	lis := bufconn.Listen(1024 * 1024)
+	srv := grpc.NewServer(grpc.UnknownServiceHandler(func(_ any, ss grpc.ServerStream) error {
+		md, _ := metadata.FromIncomingContext(ss.Context())
+		vals := md.Get(meta.NamespaceHeader)
+		if len(vals) == 0 {
+			got <- ""
+		} else {
+			got <- vals[len(vals)-1]
+		}
+		return nil
+	}))
+	serve(t, srv, lis)
+
+	return dialBufconn(t, lis), got
 }
 
 func dialBufconn(t *testing.T, lis *bufconn.Listener) *grpc.ClientConn {

@@ -37,10 +37,8 @@ var Module = fx.Options(fx.Provide(
 				return nil, fmt.Errorf("failed to resolve proxy socket path[%q]: %w", upstream.Name, err)
 			}
 
-			conn, err := p.Pool.GetOrSet(
-				"unix://"+sockPath,
-				grpc.WithTransportCredentials(insecure.NewCredentials()),
-			)
+			sock := "unix://" + sockPath
+			conn, err := p.Pool.ConnOrCreate(sock, sock, grpc.WithTransportCredentials(insecure.NewCredentials()))
 			if err != nil {
 				return nil, fmt.Errorf("failed to create upstream client[%q]: %w", upstream.Name, err)
 			}
