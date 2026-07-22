@@ -13,7 +13,7 @@ require (
 	github.com/urfave/cli/v3 v3.10.1
 	go.temporal.io/api v1.63.3
 	go.uber.org/fx v1.24.0
-	google.golang.org/grpc v1.82.0
+	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
 )
 
