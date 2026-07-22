@@ -53,9 +53,8 @@ mise run grpc GetSystemInfo
 
 A response with the upstream's capabilities means the call traversed the proxy and reached the frontend.
 
-To exercise a namespace-scoped call, use `DescribeNamespace`. Send the local
-alias; the proxy rewrites it to the upstream name before forwarding, per the matched upstream's
-`upstream.namespaces.rules` in `dev/config.yaml`:
+To exercise a namespace-scoped call, use `DescribeNamespace`. Send the local alias; the proxy rewrites it to the
+upstream name before forwarding, per the matched upstream's `upstream.namespaces.rules` in `dev/config.yaml`:
 
 ```sh
 mise run grpc DescribeNamespace '{"namespace":"ns1"}'
@@ -115,12 +114,16 @@ buf curl --protocol grpc --http2-prior-knowledge \
 
 ## Releases
 
-To trigger a release you'll require push access. Running the tag task will handle the details for you.
+Releases are cut from the [release workflow](workflows/release.yaml) via manual dispatch; you'll need write access to
+the repository. The workflow computes the version, creates and pushes the tag, then runs goreleaser to publish the
+binaries, container image, and GitHub release.
 
-```bash
-mise run tag <patch|minor|major> [--suffix <suffix>]
+To cut a release, open **Actions -> release -> Run workflow** in the GitHub UI, select `main` as the branch, and choose
+either:
 
-# Examples
-mise run tag patch
-mise run tag minor --suffix -alpha.<yyyyMMdd>
-```
+- a **bump** (`patch`, `minor`, or `major`); the next version is computed from the latest tag with `svu`, or
+- an explicit **version** (with or without a leading `v`, e.g. `1.4.0` or `v0.2.0-alpha.20260722`), which overrides the
+  bump.
+
+The run fails fast, without creating a tag, if it is dispatched from a branch other than `main`, if an explicit version
+is not valid semver, or if the resolved tag already exists.

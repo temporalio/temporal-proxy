@@ -11,6 +11,7 @@ go = "1.26"
 mkcert = "1.4.4"
 goreleaser = "2.16.0"
 markdownlint-cli2 = "0.23.0"
+svu = "3.4"
 
 ################################################################################
 # Dependencies
@@ -20,7 +21,7 @@ markdownlint-cli2 = "0.23.0"
 
 [deps.tools]
 dir = "dev"
-sources = [".mise/config.toml"]
+sources = ["mise.toml"]
 outputs = ["dev/tools.sum"]
 description = "Sync dev tools"
 run = """
@@ -90,7 +91,7 @@ run = ["go tool -modfile=dev/tools.mod golangci-lint run"]
 
 [tasks."lint:md"]
 description = "Lint markdown files"
-run = ["markdownlint-cli2 '**/*.md' --config .mise/markdownlint.yaml"]
+run = ["markdownlint-cli2 '**/*.md' --config markdownlint.yaml"]
 
 [tasks.format]
 description = "Format files"
@@ -102,7 +103,7 @@ run = ["go fix ./...", "go tool -modfile=dev/tools.mod golangci-lint fmt"]
 
 [tasks."format:md"]
 description = "Format markdown files"
-run = ["markdownlint-cli2 '**/*.md' --config .mise/markdownlint.yaml --fix"]
+run = ["markdownlint-cli2 '**/*.md' --config markdownlint.yaml --fix"]
 
 [tasks.test]
 description = "Run unit tests"
