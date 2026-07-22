@@ -61,15 +61,17 @@ changelog:
       - "^ci:"
       - "^build:"
       - "^chore:"
+      - "^\\[docs\\]:"
+      - "^\\[test\\]:"
+      - "^\\[ci\\]:"
+      - "^\\[build\\]:"
+      - "^\\[chore\\]:"
   groups:
-    - title: Features
-      regexp: "^.*feat[(\\w)]*:+.*$"
+    - title: Changes
       order: 0
-    - title: Bug Fixes
-      regexp: "^.*fix[(\\w)]*:+.*$"
+    - title: Dependencies
+      regexp: "^Bump "
       order: 1
-    - title: Others
-      order: 999
 
 release:
   github:
@@ -79,12 +81,38 @@ release:
   prerelease: auto
   name_template: "{{ .Version }} Release"
   header: |
-    ## Temporal Proxy {{.Version}}
+    ## Temporal Proxy {{ .Version }}
+
+    A gRPC proxy that sits between Temporal SDK clients, workers, and the UI on one side and one or more
+    upstream Temporal clusters (a local dev cluster, a self-hosted deployment, or Temporal Cloud) on the
+    other. It handles namespace translation and TLS termination so applications target a single local
+    endpoint while the proxy routes each request to the right upstream.
 
     ### Installation
 
-    Download the appropriate binary for your platform from the assets below. You can also use the container
-    image found at <https://hub.docker.com/r/temporalio/temporal-proxy>.
+    **Go**
+
+    ```bash
+    go install github.com/temporalio/{{ .ProjectName }}/cmd/proxy@{{ .Tag }}
+    ```
+
+    **Container image**
+
+    ```bash
+    docker pull temporalio/{{ .ProjectName }}:v{{ .Version }}
+    ```
+
+    **Helm**
+
+    ```bash
+    helm install {{ .ProjectName }} {{ .ProjectName }} \
+      --repo https://go.temporal.io/helm-charts \
+      --version {{ .Version }}
+    ```
+
+    Prebuilt binaries for each platform are attached as assets below. See the
+    [README](https://github.com/temporalio/{{ .ProjectName }}#installation) for full installation and
+    configuration details.
 
   footer: |
     **Full Changelog**: https://github.com/temporalio/{{ .ProjectName }}/compare/{{ .PreviousTag }}...{{ .Tag }}
