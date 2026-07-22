@@ -7,12 +7,14 @@ require (
 	github.com/MicahParks/keyfunc/v3 v3.8.0
 	github.com/goccy/go-yaml v1.19.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/prometheus/client_golang v1.24.0
 	github.com/rs/zerolog v1.35.1
 	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli/v3 v3.10.1
 	go.temporal.io/api v1.63.3
 	go.uber.org/fx v1.24.0
+	golang.org/x/sync v0.21.0
 	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
 )
