@@ -15,24 +15,24 @@ import (
 func TestPoolConn(t *testing.T) {
 	t.Parallel()
 
-	t.Run("returns ErrHostNotFound when host is absent", func(t *testing.T) {
+	t.Run("returns ErrKeyNotFound when key is absent", func(t *testing.T) {
 		t.Parallel()
 
 		p := connect.NewPool()
 		cn, err := p.Conn("missing")
 		require.Nil(t, cn)
-		require.ErrorIs(t, err, connect.ErrHostNotFound)
+		require.ErrorIs(t, err, connect.ErrKeyNotFound)
 		require.Contains(t, err.Error(), "missing")
 	})
 
-	t.Run("returns the connection when host is present", func(t *testing.T) {
+	t.Run("returns the connection when key is present", func(t *testing.T) {
 		t.Parallel()
 
 		p := connect.NewPool()
 		conn := newConn(t)
-		require.NoError(t, p.Set("host", conn))
+		require.NoError(t, p.Set("key", conn))
 
-		cn, err := p.Conn("host")
+		cn, err := p.Conn("key")
 		require.NoError(t, err)
 		require.Same(t, conn, cn)
 	})
@@ -45,18 +45,18 @@ func TestPoolSet(t *testing.T) {
 		t.Parallel()
 
 		p := connect.NewPool()
-		require.NoError(t, p.Set("host", newConn(t)))
+		require.NoError(t, p.Set("key", newConn(t)))
 	})
 
-	t.Run("rejects a duplicate host", func(t *testing.T) {
+	t.Run("rejects a duplicate key", func(t *testing.T) {
 		t.Parallel()
 
 		p := connect.NewPool()
-		require.NoError(t, p.Set("host", newConn(t)))
+		require.NoError(t, p.Set("key", newConn(t)))
 
-		err := p.Set("host", newConn(t))
-		require.ErrorIs(t, err, connect.ErrDuplicateHost)
-		require.Contains(t, err.Error(), "host")
+		err := p.Set("key", newConn(t))
+		require.ErrorIs(t, err, connect.ErrDuplicateKey)
+		require.Contains(t, err.Error(), "key")
 	})
 
 	t.Run("keeps the original connection after a duplicate is rejected", func(t *testing.T) {
@@ -64,10 +64,10 @@ func TestPoolSet(t *testing.T) {
 
 		p := connect.NewPool()
 		original := newConn(t)
-		require.NoError(t, p.Set("host", original))
-		require.Error(t, p.Set("host", newConn(t)))
+		require.NoError(t, p.Set("key", original))
+		require.Error(t, p.Set("key", newConn(t)))
 
-		cn, err := p.Conn("host")
+		cn, err := p.Conn("key")
 		require.NoError(t, err)
 		require.Same(t, original, cn)
 	})
@@ -97,7 +97,7 @@ func TestPoolClose(t *testing.T) {
 
 		p := connect.NewPool()
 		conn := newConn(t)
-		require.NoError(t, p.Set("host", conn))
+		require.NoError(t, p.Set("key", conn))
 
 		// First close shuts the underlying connection down. A second close on
 		// the conn itself would error, so this proves Close short-circuits via
@@ -111,7 +111,7 @@ func TestPoolClose(t *testing.T) {
 
 		p := connect.NewPool()
 		conn := newConn(t)
-		require.NoError(t, p.Set("host", conn))
+		require.NoError(t, p.Set("key", conn))
 
 		// Close the connection out from under the pool so the pool's own
 		// Close observes an "already closed" error and surfaces it.
@@ -132,7 +132,7 @@ func TestPoolConcurrent(t *testing.T) {
 
 	const (
 		workers = 50
-		hosts   = 8
+		keys    = 8
 	)
 
 	var wg sync.WaitGroup
@@ -143,23 +143,23 @@ func TestPoolConcurrent(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 
-			host := fmt.Sprintf("host-%d", i%hosts)
+			key := fmt.Sprintf("key-%d", i%keys)
 			conn := newConn(t)
 
 			<-start // line every goroutine up so the operations actually overlap
 
-			// Multiple goroutines fight over each host: one wins, the rest get
-			// ErrDuplicateHost. Close the connection we couldn't hand off so it
+			// Multiple goroutines fight over each key: one wins, the rest get
+			// ErrDuplicateKey. Close the connection we couldn't hand off so it
 			// doesn't leak.
-			if err := p.Set(host, conn); err != nil {
-				require.ErrorIs(t, err, connect.ErrDuplicateHost)
+			if err := p.Set(key, conn); err != nil {
+				require.ErrorIs(t, err, connect.ErrDuplicateKey)
 				require.NoError(t, conn.Close())
 			}
 
-			// Conn may or may not find the host yet depending on scheduling;
+			// Conn may or may not find the key yet depending on scheduling;
 			// both outcomes are valid, we only care that the read is race-free.
-			if _, err := p.Conn(host); err != nil {
-				require.ErrorIs(t, err, connect.ErrHostNotFound)
+			if _, err := p.Conn(key); err != nil {
+				require.ErrorIs(t, err, connect.ErrKeyNotFound)
 			}
 
 			// Close racing against Set/Conn must also be safe. closeOnce means
@@ -172,37 +172,37 @@ func TestPoolConcurrent(t *testing.T) {
 	wg.Wait()
 }
 
-func TestPoolGetOrSet(t *testing.T) {
+func TestPoolConnOrCreate(t *testing.T) {
 	t.Parallel()
 
 	insecureOpt := grpc.WithTransportCredentials(insecure.NewCredentials())
 
-	t.Run("creates and registers a connection when host is absent", func(t *testing.T) {
+	t.Run("creates and registers a connection when key is absent", func(t *testing.T) {
 		t.Parallel()
 
 		p := connect.NewPool()
 		t.Cleanup(func() { require.NoError(t, p.Close()) })
 
-		conn, err := p.GetOrSet("host", insecureOpt)
+		conn, err := p.ConnOrCreate("key", "target", insecureOpt)
 		require.NoError(t, err)
 		require.NotNil(t, conn)
 
 		// The connection is registered, so a subsequent read returns the same one.
-		cn, err := p.Conn("host")
+		cn, err := p.Conn("key")
 		require.NoError(t, err)
 		require.Same(t, conn, cn)
 	})
 
-	t.Run("returns the existing connection when host is present", func(t *testing.T) {
+	t.Run("returns the existing connection when key is present", func(t *testing.T) {
 		t.Parallel()
 
 		p := connect.NewPool()
 		t.Cleanup(func() { require.NoError(t, p.Close()) })
 
 		existing := newConn(t)
-		require.NoError(t, p.Set("host", existing))
+		require.NoError(t, p.Set("key", existing))
 
-		conn, err := p.GetOrSet("host", insecureOpt)
+		conn, err := p.ConnOrCreate("key", "target", insecureOpt)
 		require.NoError(t, err)
 		require.Same(t, existing, conn)
 	})
@@ -214,15 +214,49 @@ func TestPoolGetOrSet(t *testing.T) {
 		t.Cleanup(func() { require.NoError(t, p.Close()) })
 
 		// No transport credentials option, so grpc.NewClient fails synchronously.
-		conn, err := p.GetOrSet("host")
+		conn, err := p.ConnOrCreate("key", "target")
 		require.Nil(t, conn)
 		require.ErrorContains(t, err, "failed to connect")
+	})
+
+	t.Run("same target with different keys yields distinct connections", func(t *testing.T) {
+		t.Parallel()
+
+		// A templated serverName can vary independently of the dial address.
+		// Two logical keys sharing a target must not collapse onto the same
+		// pooled connection, or one caller's TLS identity would silently leak
+		// onto another's channel.
+		p := connect.NewPool()
+		t.Cleanup(func() { require.NoError(t, p.Close()) })
+
+		connA, err := p.ConnOrCreate("key-a", "shared-target", insecureOpt)
+		require.NoError(t, err)
+
+		connB, err := p.ConnOrCreate("key-b", "shared-target", insecureOpt)
+		require.NoError(t, err)
+
+		require.NotSame(t, connA, connB)
+	})
+
+	t.Run("same key returns the same connection regardless of target", func(t *testing.T) {
+		t.Parallel()
+
+		p := connect.NewPool()
+		t.Cleanup(func() { require.NoError(t, p.Close()) })
+
+		connA, err := p.ConnOrCreate("key", "target-a", insecureOpt)
+		require.NoError(t, err)
+
+		connB, err := p.ConnOrCreate("key", "target-b", insecureOpt)
+		require.NoError(t, err)
+
+		require.Same(t, connA, connB)
 	})
 
 	t.Run("hands every concurrent caller the same connection", func(t *testing.T) {
 		t.Parallel()
 
-		// Many goroutines race to create the same host. Only one dial can be
+		// Many goroutines race to create the same key. Only one dial can be
 		// retained; the losers must be closed and every caller must receive the
 		// winner. This only proves something under `go test -race`.
 		p := connect.NewPool()
@@ -238,7 +272,7 @@ func TestPoolGetOrSet(t *testing.T) {
 			wg.Go(func() {
 				<-start // line every goroutine up so the calls actually overlap
 
-				conn, err := p.GetOrSet("host", insecureOpt)
+				conn, err := p.ConnOrCreate("key", "target", insecureOpt)
 				require.NoError(t, err)
 				conns[i] = conn
 			})

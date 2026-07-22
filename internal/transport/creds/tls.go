@@ -28,16 +28,18 @@ var preferredCipherSuites = []uint16{
 // presents a certificate to the client; the client is not required to present
 // one. Minimum TLS version is 1.2.
 type TLS struct {
-	certFile string
-	keyFile  string
+	certFile   string
+	keyFile    string
+	serverName string
 }
 
 // NewClientTLS returns a [TLS] credential suitable for outbound (client-side)
 // connections. The server's certificate is verified against the system root CA
 // pool; no client certificate is presented. Use [NewMTLS] when mutual
-// authentication is required.
-func NewClientTLS() *TLS {
-	return NewServerTLS("", "")
+// authentication is required. serverName overrides the name used for SNI and
+// certificate verification; when empty it defaults to the dial target's host.
+func NewClientTLS(serverName string) *TLS {
+	return &TLS{serverName: serverName}
 }
 
 // NewServerTLS returns a [TLS] credential that loads the server certificate and
@@ -51,10 +53,11 @@ func NewServerTLS(certFile, keyFile string) *TLS {
 
 // DialOption returns a [grpc.DialOption] that configures the outbound
 // connection with TLS, verifying the server's certificate against the system
-// root CA pool. No client certificate is presented; use [MTLS] when mutual
-// authentication is required.
+// root CA pool. The configured server name (when non-empty) is used for SNI and
+// verification; otherwise the dial target's host is used. No client certificate
+// is presented; use [MTLS] when mutual authentication is required.
 func (c *TLS) DialOption() (grpc.DialOption, error) {
-	return grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(nil, "")), nil
+	return grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(nil, c.serverName)), nil
 }
 
 // ServerOption returns a [grpc.ServerOption] that configures the server with
