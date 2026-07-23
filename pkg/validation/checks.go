@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net"
@@ -32,6 +33,44 @@ func IsHostPort() Check[string] {
 		p, err := strconv.Atoi(port)
 		if err != nil || p < 0 || p > 65535 {
 			return errInvalidHostPort
+		}
+
+		return nil
+	}
+}
+
+// GT rejects any value not strictly greater than mark; a value equal to mark
+// fails. It works for any cmp.Ordered type (numbers, strings), comparing with
+// the language's < operator, so for floats a NaN bound or input never
+// satisfies the check.
+func GT[V cmp.Ordered](mark V) Check[V] {
+	return func(v V) error {
+		if v <= mark {
+			return fmt.Errorf("not greater than %v", mark)
+		}
+
+		return nil
+	}
+}
+
+// GTE rejects any value less than mark; a value equal to mark passes. It is the
+// inclusive counterpart to GT and shares its cmp.Ordered and NaN semantics.
+func GTE[V cmp.Ordered](mark V) Check[V] {
+	return func(v V) error {
+		if v < mark {
+			return fmt.Errorf("not greater than or equal to %v", mark)
+		}
+
+		return nil
+	}
+}
+
+// LT rejects any value not strictly less than mark; a value equal to mark
+// fails. It is the mirror of GT and shares its cmp.Ordered and NaN semantics.
+func LT[V cmp.Ordered](mark V) Check[V] {
+	return func(v V) error {
+		if v >= mark {
+			return fmt.Errorf("not less than %v", mark)
 		}
 
 		return nil

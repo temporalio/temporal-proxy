@@ -190,6 +190,64 @@ func TestWhenRules_IntegratesWithValidate(t *testing.T) {
 	require.Equal(t, "inner", errs[0].Field)
 }
 
+func TestWhenNested(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		pred      bool
+		subject   string
+		err       error
+		wantCalls int
+		want      validation.Errors
+	}{
+		{
+			name:      "predicate false does not invoke validator",
+			pred:      false,
+			subject:   "tls",
+			err:       errors.New("should not run"),
+			wantCalls: 0,
+			want:      nil,
+		},
+		{
+			name:      "predicate true, child nil, returns nil",
+			pred:      true,
+			subject:   "tls",
+			err:       nil,
+			wantCalls: 1,
+			want:      nil,
+		},
+		{
+			name:      "predicate true stamps empty subjects",
+			pred:      true,
+			subject:   "tls",
+			err:       validation.Errors{{Field: "certFile", Message: "is required"}},
+			wantCalls: 1,
+			want:      validation.Errors{{Subject: "tls", Field: "certFile", Message: "is required"}},
+		},
+		{
+			name:      "predicate true prefixes child subjects into a path",
+			pred:      true,
+			subject:   "outer",
+			err:       validation.Errors{{Subject: "explicit", Field: "x", Message: "boom"}},
+			wantCalls: 1,
+			want:      validation.Errors{{Subject: "outer.explicit", Field: "x", Message: "boom"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			v := &recordingValidator{err: tt.err}
+			out := validation.WhenNested(func() bool { return tt.pred }, tt.subject, v)()
+
+			require.Equal(t, tt.want, out)
+			require.Equal(t, tt.wantCalls, v.calls)
+		})
+	}
+}
+
 func TestNested_NilError_NoEntries(t *testing.T) {
 	t.Parallel()
 

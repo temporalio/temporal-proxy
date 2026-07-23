@@ -2,10 +2,12 @@ package config_test
 
 import (
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -55,6 +57,45 @@ func TestLoad(t *testing.T) {
 			require.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func TestLoad_EncryptionURLs(t *testing.T) {
+	t.Parallel()
+
+	const doc = `
+hostPort: :8080
+encryption:
+  enabled: true
+  default:
+    uri: awskms://alias/primary
+    decryptURIs:
+      - gcpkms://projects/p
+      - "testing://y"
+    duration: 1h
+    renewBefore: 10m
+`
+
+	got, err := config.Load(strings.NewReader(doc))
+	require.NoError(t, err)
+
+	def := got.Encryption.Default
+	require.NotNil(t, def)
+	require.Equal(t, "awskms://alias/primary", def.URI.String())
+	require.Equal(t, []string{"gcpkms://projects/p", "testing://y"}, urlStrings(def.DecryptURIs))
+	require.Equal(t, time.Hour, def.Duration)
+	require.Equal(t, 10*time.Minute, def.RenewBefore)
+}
+
+func TestLoad_InvalidEncryptionURL(t *testing.T) {
+	t.Parallel()
+
+	// %zz is an invalid percent-escape, so url.Parse rejects it. Asserting on the
+	// wrapper prefix proves the failure came through the URL unmarshaler, not
+	// goccy's generic "string where mapping expected" decode error.
+	const doc = "encryption:\n  default:\n    uri: \"%zz\"\n"
+
+	_, err := config.Load(strings.NewReader(doc))
+	require.ErrorContains(t, err, "invalid url")
 }
 
 // TestLoad_EnvVarExpansion is not parallel because t.Setenv cannot be used in parallel tests.
@@ -137,6 +178,11 @@ func TestConfig_Validate(t *testing.T) {
 		Name:   "primary",
 		Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
 	}}
+
+	// A default key policy that is valid except for renewBefore, so the failure
+	// surfaces from deep inside Encryption and proves the subject path composes.
+	badPolicy := validKeyPolicy(t)
+	badPolicy.RenewBefore = 2 * badPolicy.Duration
 
 	tests := []struct {
 		name       string
@@ -224,6 +270,24 @@ func TestConfig_Validate(t *testing.T) {
 				},
 			},
 			wantTuples: [][2]string{{"", "upstreams[name]"}},
+		},
+		{
+			name: "enabled encryption without default surfaces with encryption subject",
+			cfg: &config.Config{
+				Listen:     config.ListenConfig{HostPort: ":8080"},
+				Encryption: config.Encryption{Enabled: true},
+				Upstreams:  validUpstreams,
+			},
+			wantTuples: [][2]string{{"encryption", "default"}},
+		},
+		{
+			name: "invalid default policy surfaces with composed encryption.default subject",
+			cfg: &config.Config{
+				Listen:     config.ListenConfig{HostPort: ":8080"},
+				Encryption: config.Encryption{Default: &badPolicy},
+				Upstreams:  validUpstreams,
+			},
+			wantTuples: [][2]string{{"encryption.default", "renewBefore"}},
 		},
 		{
 			name: "templated upstream hostPort is accepted",
@@ -374,3 +438,12 @@ func TestUpstream_IsTemplated(t *testing.T) {
 }
 
 func (e *errReader) Read(_ []byte) (int, error) { return 0, e.err }
+
+func urlStrings(us []url.URL) []string {
+	out := make([]string, len(us))
+	for i := range us {
+		out[i] = us[i].String()
+	}
+
+	return out
+}

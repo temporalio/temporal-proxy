@@ -59,6 +59,15 @@ func WhenRules(pred func() bool, rules ...Rule) Rule {
 	}
 }
 
+// WhenNested guards a Nested validation behind a value-free predicate: it runs
+// Nested(subject, v) only when pred returns true, yielding no entries
+// otherwise. Because the guard short-circuits before Nested runs, v.Validate is
+// never called when pred is false - so the predicate is the place to nil-check
+// the optional value (for example, func() bool { return cfg.TLS != nil }).
+func WhenNested(pred func() bool, subject string, v Validator) Rule {
+	return WhenRules(pred, Nested(subject, v))
+}
+
 // Nested embeds the result of v.Validate as a Rule, prefixing subject onto
 // each entry to build a dotted path. An entry the child left unattributed gets
 // Subject set to subject; an entry the child already attributed gets its

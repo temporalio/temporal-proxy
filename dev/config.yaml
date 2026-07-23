@@ -42,3 +42,14 @@ routing:
       match:
         metadata:
           x-cluster: "3"
+
+encryption:
+  enabled: true
+  cacheSize: 200
+
+  default:
+    uri: testing://-ynIaZzFbAjp9VPgu0Ohk9YeQSLS9ta0m9mtnOnGZqo=
+    decryptURIs:
+      - testing://vRQL-YpK_U44lLNwgAsufmOI-2_lCbQV1LDSdFmcHZ8=
+    duration: 1h
+    renewBefore: 15m

@@ -107,6 +107,130 @@ func TestUnique_InferredFromField(t *testing.T) {
 	require.Len(t, errs, 1)
 }
 
+func TestGT(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		mark    int
+		in      int
+		wantErr bool
+	}{
+		{name: "greater", mark: 0, in: 1},
+		{name: "much greater", mark: 10, in: 1000},
+		{name: "negative bound", mark: -5, in: -1},
+		{name: "equal is rejected", mark: 0, in: 0, wantErr: true},
+		{name: "less is rejected", mark: 0, in: -1, wantErr: true},
+	}
+
+	check := validation.GT(0)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validation.GT(tt.mark)(tt.in)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
+
+	// Sanity: the check instantiated once above still rejects its bound.
+	require.Error(t, check(0))
+}
+
+func TestGT_OrderedTypes(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, validation.GT(1.5)(1.6))
+	require.Error(t, validation.GT(1.5)(1.5))
+	require.NoError(t, validation.GT("abc")("abd"))
+	require.Error(t, validation.GT("abc")("abc"))
+}
+
+func TestGTE(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		mark    int
+		in      int
+		wantErr bool
+	}{
+		{name: "greater", mark: 0, in: 1},
+		{name: "equal is accepted", mark: 0, in: 0},
+		{name: "negative bound equal", mark: -5, in: -5},
+		{name: "less is rejected", mark: 0, in: -1, wantErr: true},
+		{name: "just below is rejected", mark: 10, in: 9, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validation.GTE(tt.mark)(tt.in)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestGTE_OrderedTypes(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, validation.GTE(1.5)(1.5))
+	require.Error(t, validation.GTE(1.5)(1.4))
+	require.NoError(t, validation.GTE("abc")("abc"))
+	require.Error(t, validation.GTE("abc")("abb"))
+}
+
+func TestLT(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		mark    int
+		in      int
+		wantErr bool
+	}{
+		{name: "less", mark: 0, in: -1},
+		{name: "much less", mark: 1000, in: 10},
+		{name: "negative bound", mark: -5, in: -10},
+		{name: "equal is rejected", mark: 0, in: 0, wantErr: true},
+		{name: "greater is rejected", mark: 0, in: 1, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validation.LT(tt.mark)(tt.in)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestLT_OrderedTypes(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, validation.LT(1.5)(1.4))
+	require.Error(t, validation.LT(1.5)(1.5))
+	require.NoError(t, validation.LT("abc")("abb"))
+	require.Error(t, validation.LT("abc")("abc"))
+}
+
 func TestIsHostPort(t *testing.T) {
 	t.Parallel()
 
