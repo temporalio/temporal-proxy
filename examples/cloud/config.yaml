@@ -1,0 +1,48 @@
+# Proxy configuration for connecting workers to Temporal Cloud with an API key.
+#
+# Namespaced requests are routed to the "cloud" upstream, whose endpoint is
+# derived per request from the (translated) namespace - so this scales to any
+# number of namespaces without config changes. The few namespace-less calls the
+# SDK makes (e.g. GetSystemInfo on connect) can't derive a per-namespace host,
+# so they go to the fixed "system" upstream.
+#
+# Driven entirely by environment variables:
+#   TEMPORAL_NAMESPACE  a namespace's short name (e.g. "quickstart"); the worker
+#                       uses it, and the system upstream targets its endpoint.
+#   TEMPORAL_ACCOUNT    the Cloud account id (the part after the dot in the
+#                       fully-qualified namespace, e.g. "a1b2c")
+#   TEMPORAL_API_KEY    a Temporal Cloud API key
+#
+# Workers connect to the local front door in plaintext with no credentials; the
+# proxy adds TLS, the API key, and the namespace rewrite on the way to Cloud.
+hostPort: 127.0.0.1:7233
+
+routing:
+  default: cloud # namespaced requests -> per-namespace endpoint
+  system: system # namespace-less requests (e.g. GetSystemInfo)
+
+upstreams:
+  # Namespaced traffic. The endpoint is derived from the request's namespace,
+  # e.g. quickstart -> quickstart.<account> -> quickstart.<account>.tmprl.cloud,
+  # so the same config serves any number of namespaces.
+  - name: cloud
+    hostPort: "{{ .RemoteNamespace }}.tmprl.cloud:7233"
+    tls: {}
+    namespaces:
+      rules:
+        # Rewrite the short local name to the Cloud fully-qualified name,
+        # e.g. quickstart -> quickstart.<account>.
+        suffix: .$TEMPORAL_ACCOUNT
+    credentials:
+      static:
+        apiKey: $TEMPORAL_API_KEY
+
+  # Namespace-less system calls have no namespace to derive a host from, so they
+  # use a fixed namespace endpoint. Any namespace in the account serves them;
+  # here we reuse TEMPORAL_NAMESPACE's endpoint.
+  - name: system
+    hostPort: ${TEMPORAL_NAMESPACE}.${TEMPORAL_ACCOUNT}.tmprl.cloud:7233
+    tls: {}
+    credentials:
+      static:
+        apiKey: ${TEMPORAL_API_KEY}

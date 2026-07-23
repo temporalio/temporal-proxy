@@ -4,12 +4,19 @@ import (
 	"context"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
 )
+
+// temporalNamespaceHeader is the gRPC metadata key the Temporal SDK sets to the
+// target namespace of a request (for routing and authorization). The proxy
+// rewrites it local-to-remote alongside the message-body namespace so upstreams
+// that key off the header (for example Temporal Cloud) see the translated name.
+const temporalNamespaceHeader = "temporal-namespace"
 
 // translatingClientStream wraps a ClientStream to translate sent messages local
 // to remote and received messages remote to local.
@@ -72,6 +79,8 @@ func unaryClientInterceptor(t *protoutil.Translator, out, in func(string) string
 			t.Translate(m, out)
 		}
 
+		ctx = rewriteNamespaceHeader(ctx, out)
+
 		if err := invoker(ctx, method, req, reply, cc, opts...); err != nil {
 			return translateStatusError(t, err, in)
 		}
@@ -96,6 +105,8 @@ func streamClientInterceptor(t *protoutil.Translator, out, in func(string) strin
 		streamer grpc.Streamer,
 		opts ...grpc.CallOption,
 	) (grpc.ClientStream, error) {
+		ctx = rewriteNamespaceHeader(ctx, out)
+
 		cs, err := streamer(ctx, desc, cc, method, opts...)
 		if err != nil {
 			return nil, translateStatusError(t, err, in)
@@ -103,6 +114,30 @@ func streamClientInterceptor(t *protoutil.Translator, out, in func(string) strin
 
 		return &translatingClientStream{ClientStream: cs, translator: t, out: out, in: in}, nil
 	}
+}
+
+// rewriteNamespaceHeader returns ctx with any outgoing temporalNamespaceHeader
+// values mapped through fn (local to remote). It is a no-op when the header is
+// absent, so upstreams the SDK never stamps it on are unaffected.
+func rewriteNamespaceHeader(ctx context.Context, fn func(string) string) context.Context {
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if !ok {
+		return ctx
+	}
+
+	vals := md.Get(temporalNamespaceHeader)
+	if len(vals) == 0 {
+		return ctx
+	}
+
+	md = md.Copy()
+	mapped := make([]string, len(vals))
+	for i, v := range vals {
+		mapped[i] = fn(v)
+	}
+	md.Set(temporalNamespaceHeader, mapped...)
+
+	return metadata.NewOutgoingContext(ctx, md)
 }
 
 // translateStatusError rewrites namespace names carried in the typed status
