@@ -20,5 +20,7 @@
 // an entire block of Rules. Nested struct validation is expressed with
 // [Nested], which embeds a child's [Validator] (anything with
 // Validate() error) as a Rule and stamps a subject onto entries the child
-// left unattributed.
+// left unattributed; [WhenNested] guards a Nested on a value-free predicate,
+// so the child is validated only when present (for example, an optional
+// pointer field the predicate nil-checks).
 package validation

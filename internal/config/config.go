@@ -2,7 +2,9 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"io"
+	"net/url"
 	"os"
 
 	"github.com/goccy/go-yaml"
@@ -13,10 +15,11 @@ import (
 type (
 	// Config is the top-level proxy configuration.
 	Config struct {
-		Listen    ListenConfig `yaml:",inline"`
-		Routing   Routing      `yaml:"routing"`
-		Upstreams []Upstream   `yaml:"upstreams"`
-		Auth      *AuthConfig  `yaml:"auth"`
+		Listen     ListenConfig `yaml:",inline"`
+		Encryption Encryption   `yaml:"encryption"`
+		Routing    Routing      `yaml:"routing"`
+		Upstreams  []Upstream   `yaml:"upstreams"`
+		Auth       *AuthConfig  `yaml:"auth"`
 	}
 )
 
@@ -31,7 +34,7 @@ func Load(r io.Reader) (*Config, error) {
 	expanded := os.Expand(string(data), os.Getenv)
 
 	var cfg Config
-	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
+	if err := yaml.UnmarshalWithOptions([]byte(expanded), &cfg, yaml.CustomUnmarshaler(unmarshalURL)); err != nil {
 		return nil, err
 	}
 
@@ -67,6 +70,7 @@ func (c *Config) Validate() error {
 			return nil
 		}),
 		validation.Nested("", &c.Listen),
+		validation.Nested("encryption", &c.Encryption),
 		validation.Nested("routing", &c.Routing),
 		validation.WhenRules(func() bool { return c.Auth != nil }, validation.Nested("auth", c.Auth)),
 		validation.Children("upstreams", c.Upstreams, func(u *Upstream) error { return u.Validate() }),
@@ -85,4 +89,24 @@ func (c *Config) Validate() error {
 	rules = append(rules, validation.Field("upstreams[hostPort]", hostPorts, validation.Unique[string]()))
 	rules = append(rules, c.Routing.referentialRules(known)...)
 	return validation.Validate("", rules...)
+}
+
+// unmarshalURL decodes a YAML scalar into a url.URL by parsing its string form.
+// It is registered as a goccy CustomUnmarshaler so config fields typed url.URL
+// (and []url.URL) can be written as plain YAML strings. goccy passes the raw
+// node bytes (quotes and trailing newline included), so the value is decoded as
+// a string before it is parsed.
+func unmarshalURL(u *url.URL, b []byte) error {
+	var s string
+	if err := yaml.Unmarshal(b, &s); err != nil {
+		return err
+	}
+
+	parsed, err := url.Parse(s)
+	if err != nil {
+		return fmt.Errorf("invalid url %q: %w", s, err)
+	}
+
+	*u = *parsed
+	return nil
 }

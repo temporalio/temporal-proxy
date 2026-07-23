@@ -11,6 +11,7 @@ import (
 
 	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/kms"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
 	"github.com/temporalio/temporal-proxy/internal/proxy"
@@ -74,6 +75,7 @@ func serve() *cli.Command {
 				auth.Module,
 				config.Module,
 				connect.Module,
+				kms.Module,
 				metrics.Module,
 				protoutil.Module,
 				proxy.Module,
