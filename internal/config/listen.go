@@ -24,6 +24,14 @@ type (
 		Key        string `yaml:"key"`        // PEM-encoded private key
 		ServerName string `yaml:"serverName"` // Optional SNI override
 	}
+
+	// caTrustAnchor validates a certificate used as an outbound trust anchor
+	// (client-side TLS with no client certificate presented). The anchor may be
+	// either a CA or a pinned self-signed leaf. It is checked for expiry, a secure
+	// signature algorithm, and sufficient key size.
+	caTrustAnchor struct {
+		caFile string
+	}
 )
 
 // Validate checks the host:port and, when present, the TLS configuration.
@@ -45,15 +53,57 @@ func (t *TLSConfig) Validate() error {
 		"",
 		validation.WhenRules(
 			func() bool { return t.CA != "" },
-			validation.Nested(
-				"", creds.NewMTLS(t.CA, t.Cert, t.Key, creds.MTLSOptions{
-					ServerName: t.ServerName,
-				}),
-			),
+			validation.Nested("", t.mtlsCreds()),
 		),
 		validation.WhenRules(
 			func() bool { return t.CA == "" },
 			validation.Nested("", creds.NewServerTLS(t.Cert, t.Key)),
 		),
+	)
+}
+
+// mtlsCreds builds the mutual-TLS credential described by the config: the CA
+// verifies the peer and the client key pair is the presented certificate. It is
+// shared by the inbound listener validation and the outbound upstream validation
+// so the construction lives in one place.
+func (t *TLSConfig) mtlsCreds() *creds.MTLS {
+	return creds.NewMTLS(t.CA, t.Cert, t.Key, creds.MTLSOptions{ServerName: t.ServerName})
+}
+
+// validateOutbound validates the config as client-side TLS used to dial an
+// upstream. A client certificate (cert+key) selects mutual TLS and requires a
+// CA; a CA alone verifies the upstream against a private trust anchor while
+// presenting no client certificate; neither means client TLS against the system
+// root pool. Callers must invoke this only when the receiver is non-nil.
+func (t *TLSConfig) validateOutbound() validation.Errors {
+	hasCert := t.Cert != "" || t.Key != ""
+
+	switch {
+	case (t.Cert == "") != (t.Key == ""):
+		return validation.Errors{{Subject: "tls", Message: "cert and key must be set together"}}
+	case hasCert && t.CA == "":
+		return validation.Errors{{Subject: "tls", Field: "ca", Message: "is required when a client certificate is set"}}
+	case hasCert:
+		return validation.Nested("tls", t.mtlsCreds())()
+	case t.CA != "":
+		return validation.Nested("tls", caTrustAnchor{caFile: t.CA})()
+	default:
+		return nil
+	}
+}
+
+// Validate checks that the trust anchor is not expired and is signed with a
+// strong algorithm and a sufficiently large key.
+func (c caTrustAnchor) Validate() error {
+	return validation.Validate(
+		"",
+		validation.Field("ca", c.caFile, func(path string) error {
+			return creds.ValidatePEMFile(
+				path,
+				creds.CertificateNotExpired(),
+				creds.UsesSecureCertificateAlgorithm(),
+				creds.HasSufficientKeySize(),
+			)
+		}),
 	)
 }

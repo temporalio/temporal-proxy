@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -153,10 +154,85 @@ func TestTLS_Validate(t *testing.T) {
 	})
 }
 
+func TestTLS_DialOption_WithCA(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid CA builds a dial option", func(t *testing.T) {
+		t.Parallel()
+
+		caFile, _, _ := testutil.GenerateMTLSCerts(t)
+
+		opt, err := creds.NewClientTLSWithCA(caFile, "localhost", nil).DialOption()
+		require.NoError(t, err)
+		require.NotNil(t, opt)
+	})
+
+	t.Run("missing CA file is an error", func(t *testing.T) {
+		t.Parallel()
+
+		missing := filepath.Join(t.TempDir(), "nope.pem")
+
+		_, err := creds.NewClientTLSWithCA(missing, "localhost", nil).DialOption()
+		require.ErrorContains(t, err, "failed to load CA certificate")
+	})
+
+	t.Run("unparseable CA file is an error", func(t *testing.T) {
+		t.Parallel()
+
+		bad := testutil.WriteFile(t, t.TempDir(), "ca.pem", []byte("not a pem"))
+
+		_, err := creds.NewClientTLSWithCA(bad, "localhost", nil).DialOption()
+		require.ErrorContains(t, err, "failed to parse CA file")
+	})
+}
+
 func TestTLS_Encrypted(t *testing.T) {
 	t.Parallel()
 
 	// TLS encrypts the transport in both client and server modes.
 	require.True(t, creds.NewClientTLS("").Encrypted())
 	require.True(t, creds.NewServerTLS("", "").Encrypted())
+}
+
+func TestCAPoolLoader(t *testing.T) {
+	t.Parallel()
+
+	t.Run("shared loader reads the CA once", func(t *testing.T) {
+		t.Parallel()
+
+		caFile, _, _ := testutil.GenerateMTLSCerts(t)
+		loader := creds.NewCAPoolLoader(caFile)
+
+		// Simulate two per-request credentials for the same templated upstream
+		// sharing the loader; only ServerName differs.
+		opt, err := creds.NewClientTLSWithCA(caFile, "first.example.com", loader).DialOption()
+		require.NoError(t, err)
+		require.NotNil(t, opt)
+
+		// Remove the CA file. A re-read would fail, so a successful second
+		// DialOption proves the loader cached the parsed pool.
+		require.NoError(t, os.Remove(caFile))
+
+		opt, err = creds.NewClientTLSWithCA(caFile, "second.example.com", loader).DialOption()
+		require.NoError(t, err)
+		require.NotNil(t, opt)
+	})
+
+	t.Run("load error is cached", func(t *testing.T) {
+		t.Parallel()
+
+		missing := filepath.Join(t.TempDir(), "missing.pem")
+		loader := creds.NewCAPoolLoader(missing)
+
+		c := creds.NewClientTLSWithCA(missing, "localhost", loader)
+
+		opt, err := c.DialOption()
+		require.ErrorContains(t, err, "failed to load CA certificate")
+		require.Nil(t, opt)
+
+		// The cached error is returned again without another disk read.
+		opt, err = c.DialOption()
+		require.ErrorContains(t, err, "failed to load CA certificate")
+		require.Nil(t, opt)
+	})
 }
