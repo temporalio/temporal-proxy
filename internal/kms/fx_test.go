@@ -127,14 +127,14 @@ func TestKeyPolicyRegistryOpts(t *testing.T) {
 
 	log := logger.NewNoopLogger()
 
-	// The default namespace registers a default key, so the registry builds.
-	// A non-default namespace registers only a namespace key, which is not
-	// sufficient on its own (NewKEKRegistry requires a default), proving the
-	// branch chose WithKeyForNamespace over WithDefaultKey.
-	t.Run("default namespace yields a usable default key", func(t *testing.T) {
+	// asDefault selects WithDefaultKey vs WithKeyForNamespace. A default key lets
+	// NewKEKRegistry build; a namespace key alone does not (a default is
+	// required), so the registry's success or failure reveals which option was
+	// chosen.
+	t.Run("asDefault registers a usable default key", func(t *testing.T) {
 		t.Parallel()
 
-		opts, err := keyPolicyRegistryOpts(t.Context(), &config.KeyPolicy{URI: distinctKeyURL(t, 1)}, log, defaultNamespace)
+		opts, err := keyPolicyRegistryOpts(t.Context(), &config.KeyPolicy{URI: distinctKeyURL(t, 1)}, log, defaultNamespace, true)
 		require.NoError(t, err)
 
 		reg, err := crypto.NewKEKRegistry(opts...)
@@ -142,10 +142,23 @@ func TestKeyPolicyRegistryOpts(t *testing.T) {
 		require.NoError(t, reg.Close())
 	})
 
-	t.Run("non-default namespace has no default key", func(t *testing.T) {
+	t.Run("non-default registers only a namespace key", func(t *testing.T) {
 		t.Parallel()
 
-		opts, err := keyPolicyRegistryOpts(t.Context(), &config.KeyPolicy{URI: distinctKeyURL(t, 2)}, log, "other")
+		opts, err := keyPolicyRegistryOpts(t.Context(), &config.KeyPolicy{URI: distinctKeyURL(t, 2)}, log, "other", false)
+		require.NoError(t, err)
+
+		_, err = crypto.NewKEKRegistry(opts...)
+		require.Error(t, err)
+	})
+
+	// The decision is driven by asDefault, not by the namespace string: an
+	// override for the literal "default" namespace must register a namespace key,
+	// not silently overwrite the configured default key.
+	t.Run("default namespace with asDefault false is a namespace key", func(t *testing.T) {
+		t.Parallel()
+
+		opts, err := keyPolicyRegistryOpts(t.Context(), &config.KeyPolicy{URI: distinctKeyURL(t, 3)}, log, defaultNamespace, false)
 		require.NoError(t, err)
 
 		_, err = crypto.NewKEKRegistry(opts...)
@@ -187,6 +200,31 @@ func TestCreateVault(t *testing.T) {
 	}
 }
 
+func TestCreateVault_AppliesOverrideKeyConfig(t *testing.T) {
+	t.Parallel()
+
+	dk, err := newKEK(t.Context(), "testing://")
+	require.NoError(t, err)
+	reg, err := crypto.NewKEKRegistry(crypto.WithDefaultKey(dk))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reg.Close() })
+
+	// An override with an invalid KeyConfig (RenewBefore >= Duration) must make
+	// createVault fail. Config validation would normally reject this, but calling
+	// createVault directly bypasses it, so the error proves the override's config
+	// reaches WithKeyConfig instead of being dropped.
+	cfg := &config.Config{Encryption: config.Encryption{
+		CacheSize: 10,
+		Default:   &config.KeyPolicy{Duration: time.Hour, RenewBefore: time.Minute},
+		Overrides: map[string]config.KeyPolicy{
+			"payments": {Duration: time.Hour, RenewBefore: time.Hour},
+		},
+	}}
+
+	_, err = createVault(cfg, reg)
+	require.Error(t, err)
+}
+
 func TestCreateKEKRegistry(t *testing.T) {
 	t.Parallel()
 
@@ -200,6 +238,41 @@ func TestCreateKEKRegistry(t *testing.T) {
 	// The registered OnStop hook closes the registry without error.
 	lc.RequireStart()
 	lc.RequireStop()
+}
+
+func TestCreateKEKRegistry_OverrideKeySelectedByNamespace(t *testing.T) {
+	t.Parallel()
+
+	lc := fxtest.NewLifecycle(t)
+	defaultURL := distinctKeyURL(t, 1)
+	overrideURL := distinctKeyURL(t, 2)
+
+	cfg := &config.Config{Encryption: config.Encryption{
+		Enabled:   true,
+		CacheSize: 10,
+		Default:   &config.KeyPolicy{URI: defaultURL, Duration: time.Hour, RenewBefore: time.Minute},
+		Overrides: map[string]config.KeyPolicy{
+			"payments": {URI: overrideURL, Duration: time.Hour, RenewBefore: time.Minute},
+		},
+	}}
+
+	reg, err := createKEKRegistry(t.Context(), lc, cfg, logger.NewNoopLogger())
+	require.NoError(t, err)
+	lc.RequireStart()
+	t.Cleanup(func() { lc.RequireStop() })
+
+	vault, err := createVault(cfg, reg)
+	require.NoError(t, err)
+
+	// The override namespace seals under its own KEK.
+	msg, err := vault.Seal(t.Context(), "payments", []byte("secret"))
+	require.NoError(t, err)
+	require.Equal(t, "base64key://"+overrideURL.Host, msg.KeyMaterial.KEKID)
+
+	// Any namespace without an override falls back to the default KEK.
+	msg, err = vault.Seal(t.Context(), "other", []byte("secret"))
+	require.NoError(t, err)
+	require.Equal(t, "base64key://"+defaultURL.Host, msg.KeyMaterial.KEKID)
 }
 
 func TestModule_NoKeys_ProvidesNilVault(t *testing.T) {

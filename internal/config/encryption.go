@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"net/url"
 	"slices"
 	"strings"
@@ -20,11 +21,15 @@ var validKeySchemes = []string{
 type (
 	// Encryption configures envelope encryption of payloads. When Enabled, a
 	// Default key policy is required and governs how DEKs are provisioned and
-	// rotated. CacheSize bounds the in-memory DEK cache.
+	// rotated. CacheSize bounds the in-memory DEK cache. Overrides maps a
+	// namespace to a key policy that supersedes Default for that namespace; the
+	// keys are pre-translation (local) namespace names, matching the namespace
+	// the vault seals under at request time.
 	Encryption struct {
-		Enabled   bool       `yaml:"enabled"`
-		CacheSize int        `yaml:"cacheSize"`
-		Default   *KeyPolicy `yaml:"default"`
+		Enabled   bool                 `yaml:"enabled"`
+		CacheSize int                  `yaml:"cacheSize"`
+		Default   *KeyPolicy           `yaml:"default"`
+		Overrides map[string]KeyPolicy `yaml:"overrides"`
 	}
 
 	// KeyPolicy describes the KMS key backing a DEK and its rotation schedule.
@@ -44,15 +49,26 @@ type (
 // encryption is Enabled, and (when a Default is present at all) that the policy
 // itself is valid.
 func (e *Encryption) Validate() error {
-	return validation.Validate(
-		"",
+	rules := []validation.Rule{
 		validation.Field("cacheSize", e.CacheSize, validation.GTE(0)),
 		validation.WhenRules(
 			func() bool { return e.Enabled },
 			validation.Field("default", e.Default, validation.Required[*KeyPolicy]()),
 		),
 		validation.WhenNested(func() bool { return e.Default != nil }, "default", e.Default),
-	)
+	}
+
+	// Sort the namespace keys so error ordering is deterministic across runs.
+	for _, ns := range slices.Sorted(maps.Keys(e.Overrides)) {
+		policy := e.Overrides[ns]
+		subject := fmt.Sprintf("overrides[%s]", ns)
+		rules = append(rules,
+			validation.Field(subject, ns, validation.Required[string]()),
+			validation.Nested(subject, &policy),
+		)
+	}
+
+	return validation.Validate("", rules...)
 }
 
 // Validate requires a valid primary and decrypt key URIs, a positive Duration,

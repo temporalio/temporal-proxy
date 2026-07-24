@@ -3,7 +3,9 @@ package kms
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/url"
+	"slices"
 	"time"
 
 	"go.uber.org/fx"
@@ -125,13 +127,23 @@ func runRotation(ctx context.Context, v vaultRefresher, interval time.Duration, 
 // size and, when a default key policy is set, its DEK duration and renewal lead
 // time.
 func createVault(c *config.Config, r *crypto.KEKRegistry) (*crypto.Vault, error) {
-	opts := make([]crypto.VaultOption, 0, 2)
+	opts := make([]crypto.VaultOption, 0, 2+len(c.Encryption.Overrides))
 	opts = append(opts, crypto.WithCacheSize(c.Encryption.CacheSize))
 
 	if dp := c.Encryption.Default; dp != nil {
 		opts = append(opts, crypto.WithDefaultKeyConfig(crypto.KeyConfig{
 			Duration:    dp.Duration,
 			RenewBefore: dp.RenewBefore,
+		}))
+	}
+
+	// Each override carries its own DEK lifetime; register it so the override
+	// namespace rotates on its own schedule rather than inheriting the default.
+	for _, ns := range slices.Sorted(maps.Keys(c.Encryption.Overrides)) {
+		policy := c.Encryption.Overrides[ns]
+		opts = append(opts, crypto.WithKeyConfig(ns, crypto.KeyConfig{
+			Duration:    policy.Duration,
+			RenewBefore: policy.RenewBefore,
 		}))
 	}
 
@@ -149,7 +161,19 @@ func createVault(c *config.Config, r *crypto.KEKRegistry) (*crypto.Vault, error)
 func createKEKRegistry(ctx context.Context, lc fx.Lifecycle, c *config.Config, logger logger.Logger) (*crypto.KEKRegistry, error) {
 	opts := []crypto.KEKRegistryOption{}
 	if dp := c.Encryption.Default; dp != nil {
-		res, err := keyPolicyRegistryOpts(ctx, dp, logger, defaultNamespace)
+		res, err := keyPolicyRegistryOpts(ctx, dp, logger, defaultNamespace, true)
+		if err != nil {
+			return nil, err
+		}
+
+		opts = append(opts, res...)
+	}
+
+	// Sort the namespace keys so keys open in a deterministic order (steadier
+	// logs and, on a partial failure, a repeatable point of failure).
+	for _, ns := range slices.Sorted(maps.Keys(c.Encryption.Overrides)) {
+		policy := c.Encryption.Overrides[ns]
+		res, err := keyPolicyRegistryOpts(ctx, &policy, logger, ns, false)
 		if err != nil {
 			return nil, err
 		}
@@ -171,14 +195,18 @@ func createKEKRegistry(ctx context.Context, lc fx.Lifecycle, c *config.Config, l
 }
 
 // keyPolicyRegistryOpts turns a single key policy into registry options for the
-// given namespace: the policy's primary URI becomes the namespace's encryption
-// key (the default key when ns is the default namespace), and every DecryptURIs
-// entry is registered decrypt-only.
+// given namespace: the policy's primary URI becomes an encryption key and every
+// DecryptURIs entry is registered decrypt-only. When asDefault is true the
+// primary is registered as the registry's fallback default key; otherwise it is
+// bound to ns. asDefault is passed explicitly rather than inferred from ns so an
+// override for the literal "default" namespace registers a namespace key instead
+// of clobbering the configured default.
 func keyPolicyRegistryOpts(
 	ctx context.Context,
 	p *config.KeyPolicy,
 	log logger.Logger,
 	ns string,
+	asDefault bool,
 ) ([]crypto.KEKRegistryOption, error) {
 	opts := []crypto.KEKRegistryOption{}
 	keys, err := createKEKs(ctx, p, log, ns)
@@ -187,7 +215,7 @@ func keyPolicyRegistryOpts(
 	}
 
 	// NB: KeyConfig.URI is required and therefore this will never be out of bounds.
-	if ns == defaultNamespace {
+	if asDefault {
 		opts = append(opts, crypto.WithDefaultKey(keys[0]))
 	} else {
 		opts = append(opts, crypto.WithKeyForNamespace(ns, keys[0]))
