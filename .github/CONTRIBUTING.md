@@ -98,9 +98,9 @@ mise run grpc DescribeNamespace '{"namespace":"test2"}'
 The differing results confirm the metadata rule selected the upstream. Metadata keys are matched case-insensitively
 (gRPC lowercases them).
 
-### Checking the front door (not proxied)
+### Checking the gateway (not proxied)
 
-The health service is answered locally by the inbound server, so it verifies the front door is up but does not prove
+The health service is answered locally by the inbound server, so it verifies the gateway is up but does not prove
 forwarding. It uses a different schema, so call `buf curl` directly:
 
 ```sh

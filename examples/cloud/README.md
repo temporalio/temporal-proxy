@@ -7,7 +7,7 @@ rewrite on the way to Cloud.
 ```mermaid
 flowchart LR
     client["worker / starter<br/>plaintext gRPC<br/>no TLS, no creds"]
-    proxy["proxy (local)<br/>front door :7233"]
+    proxy["proxy (local)<br/>gateway :7233"]
     cloud["Temporal Cloud<br/>quickstart.&lt;account&gt;.tmprl.cloud:7233"]
 
     client -->|"namespace: quickstart"| proxy
@@ -44,7 +44,7 @@ command changes to the repo root and runs it from source:
 cd ../../ && go run ./cmd/proxy serve -c examples/cloud/config.yaml
 ```
 
-The proxy logs `Running with insecure credentials` for the local front door and its internal sockets. That is expected:
+The proxy logs `Running with insecure credentials` for the local gateway and its internal sockets. That is expected:
 those are local hops. The connection to Temporal Cloud is TLS.
 
 Start the worker:

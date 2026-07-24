@@ -13,7 +13,7 @@
 #                       fully-qualified namespace, e.g. "a1b2c")
 #   TEMPORAL_API_KEY    a Temporal Cloud API key
 #
-# Workers connect to the local front door in plaintext with no credentials; the
+# Workers connect to the local gateway in plaintext with no credentials; the
 # proxy adds TLS, the API key, and the namespace rewrite on the way to Cloud.
 hostPort: 127.0.0.1:7233
 
