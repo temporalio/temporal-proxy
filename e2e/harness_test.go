@@ -25,6 +25,7 @@ import (
 
 	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/kms"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
 	"github.com/temporalio/temporal-proxy/internal/proxy"
@@ -32,6 +33,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/server"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
+	"github.com/temporalio/temporal-proxy/pkg/crypto"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 	"github.com/temporalio/temporal-proxy/pkg/testutil"
 )
@@ -105,6 +107,7 @@ func newFullApp(t *testing.T, cfg *config.Config) *fx.App {
 		),
 		auth.Module,
 		connect.Module,
+		kms.Module,
 		metrics.Module,
 		protoutil.Module,
 		proxy.Module,
@@ -127,6 +130,7 @@ func newProxyApp(t *testing.T, cfg *config.Config) *fx.App {
 	return fx.New(
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(cfg),
+		fx.Provide(func() *crypto.Vault { return nil }),
 		connect.Module,
 		protoutil.Module,
 		proxy.Module,
