@@ -19,14 +19,17 @@ const (
 	rotationInterval = 10 * time.Second
 )
 
-// Module provides a *crypto.Vault built from the proxy's encryption
-// configuration and, when encryption is enabled, runs background key rotation
-// for the lifetime of the fx application. When encryption is disabled the
-// provided vault is nil and no rotation goroutine is started.
+// Module provides a *crypto.Vault whenever encryption keys are configured (a
+// Default key policy is present) and, only while encryption is Enabled, runs
+// background key rotation for the lifetime of the fx application. Building the
+// vault from key presence rather than the Enabled flag lets encryption be
+// turned off for new traffic while the vault stays available to open payloads
+// sealed earlier: the proxy interceptor gates sealing on Enabled but always
+// decrypts. With no key policy the vault is nil and no rotation runs.
 var Module = fx.Options(
 	fx.Provide(
 		func(p KMSParams) (*crypto.Vault, error) {
-			if !p.Config.Encryption.Enabled {
+			if p.Config.Encryption.Default == nil {
 				return nil, nil
 			}
 

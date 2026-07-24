@@ -14,6 +14,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
 	"github.com/temporalio/temporal-proxy/internal/proxy"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
+	"github.com/temporalio/temporal-proxy/pkg/crypto"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 	"github.com/temporalio/temporal-proxy/pkg/testutil"
 	"github.com/temporalio/temporal-proxy/pkg/validation"
@@ -208,6 +209,21 @@ func TestModuleInstallsNamespaceTranslation(t *testing.T) {
 	startServeStop(t, app, upstream)
 }
 
+func TestModuleFailsFastWhenEncryptionEnabledWithoutVault(t *testing.T) {
+	t.Parallel()
+
+	// Encryption is a security control. If it is enabled but the vault is nil
+	// (a wiring fault), the proxy must refuse to start rather than silently
+	// forward cleartext upstream. newProxyApp supplies a nil vault.
+	app := newProxyApp(t, &config.Config{
+		Encryption: config.Encryption{Enabled: true},
+		Upstreams:  []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:47243"}}},
+	})
+
+	require.Error(t, app.Err())
+	require.ErrorContains(t, app.Err(), "encryption is enabled but no vault")
+}
+
 func TestModuleRequiresTranslator(t *testing.T) {
 	t.Parallel()
 
@@ -216,6 +232,7 @@ func TestModuleRequiresTranslator(t *testing.T) {
 		fx.Supply(&config.Config{
 			Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:47242"}}},
 		}),
+		fx.Provide(func() *crypto.Vault { return nil }),
 		connect.Module,
 		proxy.Module,
 		fx.NopLogger,
@@ -230,6 +247,10 @@ func newProxyApp(t *testing.T, cfg *config.Config, opts ...fx.Option) *fx.App {
 	base := []fx.Option{
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(cfg),
+		// No encryption keys configured: kms.Module provides a nil vault in that
+		// case, and the proxy skips the encryption interceptor. Tests that
+		// exercise encryption override this with a real vault.
+		fx.Provide(func() *crypto.Vault { return nil }),
 		connect.Module,
 		protoutil.Module,
 		proxy.Module,

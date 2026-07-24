@@ -202,9 +202,11 @@ func TestCreateKEKRegistry(t *testing.T) {
 	lc.RequireStop()
 }
 
-func TestModule_Disabled_ProvidesNilVault(t *testing.T) {
+func TestModule_NoKeys_ProvidesNilVault(t *testing.T) {
 	t.Parallel()
 
+	// No key policy configured (and encryption disabled): there is nothing to
+	// seal or open, so the vault is nil.
 	var v *crypto.Vault
 	app := fx.New(
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
@@ -217,6 +219,33 @@ func TestModule_Disabled_ProvidesNilVault(t *testing.T) {
 
 	require.NoError(t, app.Err())
 	require.Nil(t, v)
+}
+
+func TestModule_DisabledWithKeys_ProvidesVault(t *testing.T) {
+	t.Parallel()
+
+	// Encryption is off for new traffic but keys remain configured, so the vault
+	// is still built to open payloads sealed earlier. The rotation goroutine is
+	// gated on Enabled, so a clean start/stop confirms none was scheduled.
+	var v *crypto.Vault
+	cfg := &config.Config{Encryption: config.Encryption{
+		Enabled:   false,
+		CacheSize: 10,
+		Default:   &config.KeyPolicy{URI: distinctKeyURL(t, 1), Duration: time.Hour, RenewBefore: time.Minute},
+	}}
+
+	app := fxtest.New(
+		t,
+		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
+		fx.Supply(cfg),
+		fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
+		Module,
+		fx.Populate(&v),
+	)
+
+	app.RequireStart()
+	require.NotNil(t, v)
+	app.RequireStop()
 }
 
 func TestModule_Enabled_ProvidesVaultAndRunsCleanly(t *testing.T) {

@@ -13,12 +13,20 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/internal/transport/creds"
+	"github.com/temporalio/temporal-proxy/pkg/crypto"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
 
 // Module is the fx module that constructs the proxy [Server] from [ProxyParams]
 // and binds its lifecycle to the application.
 var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
+	// Encryption is a security control: if it is enabled but no vault reached
+	// the proxy (a wiring fault, since kms.Module builds one whenever keys are
+	// configured), fail fast rather than silently forwarding cleartext upstream.
+	if p.Config.Encryption.Enabled && p.Vault == nil {
+		return fmt.Errorf("encryption is enabled but no vault was provided")
+	}
+
 	for i := range p.Config.Upstreams {
 		up := &p.Config.Upstreams[i]
 		if err := up.Validate(); err != nil {
@@ -39,6 +47,23 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 		}
 		if cp != nil {
 			dialOpts = append(dialOpts, auth.DialOptions(cp)...)
+		}
+
+		// Payload encryption. A vault is present whenever encryption keys are
+		// configured (see kms.Module), which may be true even when encryption is
+		// disabled; install the interceptor whenever one is present and pass
+		// Enabled so sealing is gated while inbound decryption always runs. This
+		// keeps payloads sealed earlier openable after encryption is turned off
+		// for new traffic. Added after translation so it is the innermost unary
+		// interceptor, sealing outbound payloads last and opening inbound
+		// payloads first.
+		if p.Vault != nil {
+			enc, err := EncryptionInterceptor(p.Config.Encryption.Enabled, p.Vault)
+			if err != nil {
+				return fmt.Errorf("failed to build encryption interceptor for upstream %q: %w", up.Name, err)
+			}
+
+			dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(enc))
 		}
 
 		res, err := upstreamResolver(up, dialOpts)
@@ -106,6 +131,7 @@ type ProxyParams struct {
 	Config     *config.Config
 	Translator *protoutil.Translator
 	Pool       *connect.Pool
+	Vault      *crypto.Vault
 
 	// Optional values
 	Logger logger.Logger `optional:"true"`
