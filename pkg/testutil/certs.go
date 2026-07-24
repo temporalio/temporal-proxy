@@ -83,11 +83,14 @@ func GenerateSelfSignedCert(t *testing.T) (certFile, keyFile string) {
 	return certFile, keyFile
 }
 
-// GenerateMTLSCerts writes a self-signed ECDSA P-256 CA certificate plus a
-// leaf certificate signed by that CA (with its matching key) to a fresh
-// [testing.T.TempDir] and returns the three paths. The leaf advertises CN
-// "localhost" with DNSNames=["localhost"]; both certificates are valid for
-// one hour. Use this when a test needs the leaf to verify against the CA.
+// GenerateMTLSCerts writes a self-signed ECDSA P-256 CA certificate plus an
+// RSA-2048 leaf certificate signed by that CA (with its matching key) to a
+// fresh [testing.T.TempDir] and returns the three paths. The leaf is RSA
+// because creds.MTLS.Validate checks the leaf's key type against an RSA-only
+// cipher suite allowlist; an ECDSA leaf fails that check even though it
+// verifies fine against the CA. The leaf advertises CN "localhost" with
+// DNSNames=["localhost"]; both certificates are valid for one hour. Use this
+// when a test needs the leaf to verify against the CA.
 func GenerateMTLSCerts(t *testing.T) (caFile, certFile, keyFile string) {
 	t.Helper()
 
@@ -115,7 +118,7 @@ func GenerateMTLSCerts(t *testing.T) (caFile, certFile, keyFile string) {
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
 	caFile = WriteFile(t, dir, "ca.pem", caPEM)
 
-	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	leafKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
 	leafTmpl := &x509.Certificate{
@@ -134,10 +137,9 @@ func GenerateMTLSCerts(t *testing.T) (caFile, certFile, keyFile string) {
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})
 	certFile = WriteFile(t, dir, "cert.pem", certPEM)
 
-	leafKeyDER, err := x509.MarshalECPrivateKey(leafKey)
-	require.NoError(t, err)
+	leafKeyDER := x509.MarshalPKCS1PrivateKey(leafKey)
 
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: leafKeyDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: leafKeyDER})
 	keyFile = WriteFile(t, dir, "key.pem", keyPEM)
 
 	return caFile, certFile, keyFile

@@ -1,13 +1,9 @@
 package config_test
 
 import (
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"errors"
-	"math/big"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -512,19 +508,91 @@ func TestUpstreamCredentialsRequireTLS(t *testing.T) {
 	t.Run("credentials with tls is accepted", func(t *testing.T) {
 		t.Parallel()
 		u := base()
-		// RSA certs are required for TLS validation (ECDSA certs are incompatible
-		// with the RSA-only cipher suites). Generate an RSA cert and a key.
-		certPEM := testutil.RSACert(t, &x509.Certificate{
-			SerialNumber: big.NewInt(1),
-			Subject:      pkix.Name{CommonName: "test"},
-			NotBefore:    time.Now().Add(-time.Hour),
-			NotAfter:     time.Now().Add(time.Hour),
-		})
-		certFile := testutil.WriteFile(t, t.TempDir(), "cert.pem", certPEM)
-		_, keyFile := testutil.GenerateSelfSignedCert(t)
-		u.Listen.TLS = &config.TLSConfig{Cert: certFile, Key: keyFile}
+		u.Listen.TLS = &config.TLSConfig{ServerName: "my-ns.acct.tmprl.cloud"}
 		require.NoError(t, u.Validate())
 	})
+}
+
+func TestUpstreamOutboundTLS(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		tls     func(t *testing.T) *config.TLSConfig
+		wantErr string
+	}{
+		{
+			name: "server name only is valid (cloud + api key)",
+			tls: func(*testing.T) *config.TLSConfig {
+				return &config.TLSConfig{ServerName: "my-ns.acct.tmprl.cloud"}
+			},
+		},
+		{
+			name: "CA only is valid (self-signed + api key)",
+			tls: func(t *testing.T) *config.TLSConfig {
+				caFile, _, _ := testutil.GenerateMTLSCerts(t)
+				return &config.TLSConfig{CA: caFile, ServerName: "localhost"}
+			},
+		},
+		{
+			name: "CA plus client key pair is valid (mutual TLS)",
+			tls: func(t *testing.T) *config.TLSConfig {
+				caFile, certFile, keyFile := testutil.GenerateMTLSCerts(t)
+				return &config.TLSConfig{CA: caFile, Cert: certFile, Key: keyFile, ServerName: "localhost"}
+			},
+		},
+		{
+			name: "self-signed leaf cert is accepted as a trust anchor (pinning)",
+			// A peer proxy may present a plain self-signed leaf (IsCA=false).
+			// Pinning it as the trust anchor is valid TLS, so it must validate.
+			tls: func(t *testing.T) *config.TLSConfig {
+				leafCert, _ := testutil.GenerateSelfSignedCert(t)
+				return &config.TLSConfig{CA: leafCert, ServerName: "localhost"}
+			},
+		},
+		{
+			name: "cert without key is rejected",
+			tls: func(t *testing.T) *config.TLSConfig {
+				_, certFile, _ := testutil.GenerateMTLSCerts(t)
+				return &config.TLSConfig{Cert: certFile}
+			},
+			wantErr: "cert and key must be set together",
+		},
+		{
+			name: "key without cert is rejected",
+			tls: func(t *testing.T) *config.TLSConfig {
+				_, _, keyFile := testutil.GenerateMTLSCerts(t)
+				return &config.TLSConfig{Key: keyFile}
+			},
+			wantErr: "cert and key must be set together",
+		},
+		{
+			name: "client cert without CA is rejected",
+			tls: func(t *testing.T) *config.TLSConfig {
+				_, certFile, keyFile := testutil.GenerateMTLSCerts(t)
+				return &config.TLSConfig{Cert: certFile, Key: keyFile}
+			},
+			wantErr: "required when a client certificate is set",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			u := config.Upstream{
+				Name:   "u",
+				Listen: config.ListenConfig{HostPort: "host:7233", TLS: tt.tls(t)},
+			}
+
+			err := u.Validate()
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
 }
 
 func TestNamespaceRulesConfigured(t *testing.T) {

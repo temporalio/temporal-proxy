@@ -125,20 +125,30 @@ func upstreamResolver(upstream *config.Upstream, opts []grpc.DialOption) (connec
 			translator = upstream.Namespaces.Rules.Remote
 		}
 
-		// Share one loader across the per-request credentials so templated mTLS
-		// routing reads and parses the certificate and CA files once rather than
-		// on every request. Only ServerName varies per request. nil for non-mTLS
-		// upstreams, which have no files to load.
-		var loader *creds.CertLoader
-		if tls := upstream.Listen.TLS; tls != nil && tls.CA != "" {
-			loader = creds.NewCertLoader(tls.CA, tls.Cert, tls.Key)
+		// Share one loader across the per-request credentials so a templated
+		// upstream reads and parses its TLS material once rather than on every
+		// request. Mutual TLS (a configured client certificate) uses a CertLoader
+		// for the client key pair and CA; CA-only client TLS uses a CAPoolLoader
+		// for the trust anchor. The system-root client-TLS and insecure paths have
+		// no files to load, so both loaders stay nil.
+		var (
+			loader   *creds.CertLoader
+			caLoader *creds.CAPoolLoader
+		)
+		if tls := upstream.Listen.TLS; tls != nil {
+			switch {
+			case tls.Cert != "" || tls.Key != "":
+				loader = creds.NewCertLoader(tls.CA, tls.Cert, tls.Key)
+			case tls.CA != "":
+				caLoader = creds.NewCAPoolLoader(tls.CA)
+			}
 		}
 
 		return NewDynamicResolver(
 			upstream,
 			WithRemoteNamespacer(translator),
 			WithOptionsFactory(func(data RouteData) ([]grpc.DialOption, error) {
-				creds, err := upstreamCreds(upstream, data.ResolvedServerName, loader).DialOption()
+				creds, err := upstreamCreds(upstream, data.ResolvedServerName, loader, caLoader).DialOption()
 				if err != nil {
 					return nil, err
 				}
@@ -153,7 +163,7 @@ func upstreamResolver(upstream *config.Upstream, opts []grpc.DialOption) (connec
 		serverName = upstream.Listen.TLS.ServerName
 	}
 
-	creds, err := upstreamCreds(upstream, serverName, nil).DialOption()
+	creds, err := upstreamCreds(upstream, serverName, nil, nil).DialOption()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build credentials for upstream %q: %w", upstream.Name, err)
 	}
@@ -162,25 +172,33 @@ func upstreamResolver(upstream *config.Upstream, opts []grpc.DialOption) (connec
 }
 
 // upstreamCreds derives the credentials used to dial the upstream frontend from
-// the upstream TLS configuration: mutual TLS when a CA is set, server-verified
-// client TLS when TLS is configured without one, and insecure otherwise.
-// serverName overrides the SNI/certificate-verification name; it is the
-// upstream's static configured ServerName, or a per-request value rendered
-// from a templated ServerName. loader, when non-nil, supplies the mTLS
-// certificate material so it is loaded once and reused across the per-request
-// credentials of a templated upstream; pass nil for a fixed-address upstream,
-// whose credentials are built once.
-func upstreamCreds(upstream *config.Upstream, serverName string, loader *creds.CertLoader) Credentials {
+// the upstream TLS configuration. A configured client certificate (cert+key)
+// selects mutual TLS, which verifies the upstream against the configured CA.
+// Without a client certificate the proxy uses client-side TLS: a custom root
+// pool when a CA is set, otherwise the system root pool. No TLS at all is
+// insecure. serverName overrides the SNI/certificate-verification name; it is
+// the upstream's static configured ServerName, or a per-request value rendered
+// from a templated ServerName. loader and caLoader, when non-nil, supply the
+// pre-parsed TLS material (mutual-TLS key pair plus CA, and CA-only trust
+// anchor respectively) so it is loaded once and reused across the per-request
+// credentials of a templated upstream; pass nil for both on a fixed-address
+// upstream. At most one is used, selected by the same TLS mode as the returned
+// credential.
+func upstreamCreds(upstream *config.Upstream, serverName string, loader *creds.CertLoader, caLoader *creds.CAPoolLoader) Credentials {
 	tls := upstream.Listen.TLS
 	if tls == nil {
 		return creds.NewInsecure()
 	}
 
-	if tls.CA != "" {
+	if tls.Cert != "" || tls.Key != "" {
 		return creds.NewMTLS(tls.CA, tls.Cert, tls.Key, creds.MTLSOptions{
 			ServerName: serverName,
 			Loader:     loader,
 		})
+	}
+
+	if tls.CA != "" {
+		return creds.NewClientTLSWithCA(tls.CA, serverName, caLoader)
 	}
 
 	return creds.NewClientTLS(serverName)

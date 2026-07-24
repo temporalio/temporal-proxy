@@ -63,7 +63,7 @@ func (u *Upstream) Validate() error {
 		),
 		validation.WhenRules(
 			func() bool { return u.Listen.TLS != nil },
-			validation.Nested("tls", u.Listen.TLS),
+			func() validation.Errors { return u.Listen.TLS.validateOutbound() },
 		),
 		validation.Nested("namespaces", &u.Namespaces),
 		validation.WhenRules(

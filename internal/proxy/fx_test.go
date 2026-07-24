@@ -2,9 +2,6 @@ package proxy_test
 
 import (
 	"context"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"math/big"
 	"testing"
 	"time"
 
@@ -123,33 +120,45 @@ func TestModuleMultipleUpstreams(t *testing.T) {
 	}
 }
 
-// TestModuleWithUpstreamCredentials is construction-only: proxy.New dials
-// lazily, so this asserts the Module accepts a credentialed+TLS upstream without
-// erroring, not that the credential is actually attached. See
-// TestProxyAttachesUpstreamCredential (e2e/upstream_credential_socket_test.go)
-// for proof the key reaches the upstream.
 func TestModuleWithUpstreamCredentials(t *testing.T) {
 	t.Parallel()
 
 	const upstream = "127.0.0.1:47236"
 
-	// The upstream TLS validation path requires an RSA cert (it checks
-	// compatibility with the RSA-only cipher suites in creds.TLS); the key file
-	// only needs to be a validly formatted PEM key, since New never dials
-	// (construction, not a live handshake, is what this test exercises).
-	certPEM := testutil.RSACert(t, &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "test"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-	})
-	certFile := testutil.WriteFile(t, t.TempDir(), "cert.pem", certPEM)
-	_, keyFile := testutil.GenerateSelfSignedCert(t)
+	// A client certificate selects mutual TLS, which verifies the upstream
+	// against the configured CA. Construction (not a live handshake) is what
+	// this test exercises.
+	caFile, certFile, keyFile := testutil.GenerateMTLSCerts(t)
 
 	app := newProxyApp(t, &config.Config{
 		Upstreams: []config.Upstream{{
-			Name:        "workers",
-			Listen:      config.ListenConfig{HostPort: upstream, TLS: &config.TLSConfig{Cert: certFile, Key: keyFile}},
+			Name: "workers",
+			Listen: config.ListenConfig{
+				HostPort: upstream,
+				TLS:      &config.TLSConfig{CA: caFile, Cert: certFile, Key: keyFile, ServerName: "localhost"},
+			},
+			Credentials: &config.CredentialConfig{Static: &config.StaticCredentialConfig{APIKey: "k3y"}},
+		}},
+	})
+	require.NoError(t, app.Err())
+}
+
+func TestModuleWithCAOnlyClientTLS(t *testing.T) {
+	t.Parallel()
+
+	const upstream = "127.0.0.1:47237"
+
+	// A CA with no client certificate is client-side TLS: verify the upstream
+	// against the CA, present no client cert. Construction must succeed.
+	caFile, _, _ := testutil.GenerateMTLSCerts(t)
+
+	app := newProxyApp(t, &config.Config{
+		Upstreams: []config.Upstream{{
+			Name: "workers",
+			Listen: config.ListenConfig{
+				HostPort: upstream,
+				TLS:      &config.TLSConfig{CA: caFile, ServerName: "localhost"},
+			},
 			Credentials: &config.CredentialConfig{Static: &config.StaticCredentialConfig{APIKey: "k3y"}},
 		}},
 	})

@@ -110,14 +110,9 @@ func (c *MTLS) ServerOption() (grpc.ServerOption, error) {
 		return nil, fmt.Errorf("failed to load server key pair: %w", err)
 	}
 
-	ca := x509.NewCertPool()
-	caBytes, err := os.ReadFile(c.caFile)
+	ca, err := loadCAPool(c.caFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load CA certificate: %w", err)
-	}
-
-	if ok := ca.AppendCertsFromPEM(caBytes); !ok {
-		return nil, fmt.Errorf("failed to parse CA file: %s", c.caFile)
+		return nil, err
 	}
 
 	return grpc.Creds(credentials.NewTLS(&tls.Config{
@@ -167,6 +162,22 @@ func (c *MTLS) Encrypted() bool {
 	return true
 }
 
+// loadCAPool reads a PEM-encoded CA certificate file and returns a cert pool
+// containing it.
+func loadCAPool(path string) (*x509.CertPool, error) {
+	caBytes, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load CA certificate: %w", err)
+	}
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caBytes) {
+		return nil, fmt.Errorf("failed to parse CA file: %s", path)
+	}
+
+	return pool, nil
+}
+
 // load reads and parses the client certificate/key pair and CA pool on the first
 // call, caching the result (or the error) for every subsequent call. The
 // returned certificate and CA pool are immutable and safe to share across dial
@@ -179,15 +190,9 @@ func (l *CertLoader) load() (tls.Certificate, *x509.CertPool, error) {
 			return
 		}
 
-		ca := x509.NewCertPool()
-		caBytes, err := os.ReadFile(l.caFile)
+		ca, err := loadCAPool(l.caFile)
 		if err != nil {
-			l.err = fmt.Errorf("failed to load CA certificate: %w", err)
-			return
-		}
-
-		if ok := ca.AppendCertsFromPEM(caBytes); !ok {
-			l.err = fmt.Errorf("failed to parse CA file: %s", l.caFile)
+			l.err = err
 			return
 		}
 
