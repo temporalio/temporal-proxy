@@ -46,3 +46,22 @@ upstreams:
     credentials:
       static:
         apiKey: ${TEMPORAL_API_KEY}
+
+# Optional: encrypt payloads on the hop to Cloud. Uncomment to seal workflow and
+# activity payloads before they leave the proxy and open them on the way back;
+# the worker and starter keep exchanging cleartext, and Cloud only ever stores
+# ciphertext (workflow inputs and results show as encrypted bytes in the  Cloud
+# UI). Restart the proxy after changing this.
+#
+# The key below is a throwaway local test key: the "testing://" scheme holds the
+# key material in the config itself with no cloud KMS, which is fine for a toy but
+# never for real data. In production, point uri at a KMS key instead (awskms://,
+# azurekeyvault://, or gcpkms://).
+#
+# encryption:
+#   enabled: true
+#   cacheSize: 200
+#   default:
+#     uri: testing://KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=
+#     duration: 1h
+#     renewBefore: 15m

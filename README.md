@@ -6,9 +6,9 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A gRPC proxy that sits between Temporal SDK Clients, Workers, and the Temporal UI on one side and one or more upstream
-Temporal Services on the other. It handles Namespace translation and TLS termination so applications can target a single
-local endpoint while the proxy fans requests out to the right upstream (a local dev Temporal Service, a self-hosted
-deployment, Temporal Cloud, or some mix).
+Temporal Services on the other. It handles Namespace translation, TLS termination, and payload encryption so
+applications can target a single local endpoint while the proxy fans requests out to the right upstream (a local dev
+Temporal Service, a self-hosted deployment, Temporal Cloud, or some mix).
 
 > [!NOTE]
 >
@@ -61,6 +61,9 @@ flowchart LR
   overrides) in both requests and responses.
 - **TLS termination and outbound credentials.** Terminate inbound TLS/mTLS and attach the upstream's own TLS and
   credentials (API key or mTLS), so client code carries none of it.
+- **Payload encryption.** Optionally seal payloads with envelope encryption on the hop to an upstream and open them on
+  responses, so the upstream only ever sees ciphertext while local Workers keep exchanging cleartext. DEKs are wrapped
+  by a KMS key (AWS KMS, Azure Key Vault, or GCP KMS), rotate automatically, and can be overridden per Namespace.
 - **Inbound authentication.** Optional static-token or JWKS validation on the gateway; off by default.
 - **Codec-transparent.** The gateway never parses payloads. It peeks the Namespace, picks an upstream, and relays raw
   frames in both directions.
