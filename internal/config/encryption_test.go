@@ -46,6 +46,34 @@ func TestEncryptionValidate(t *testing.T) {
 			},
 			wantErr: "renewBefore",
 		},
+		{
+			name: "valid overrides",
+			cfg: config.Encryption{
+				Enabled:   true,
+				Default:   &valid,
+				Overrides: map[string]config.KeyPolicy{"payments": valid},
+			},
+		},
+		{
+			name: "override with invalid policy",
+			cfg: config.Encryption{
+				Enabled: true,
+				Default: &valid,
+				Overrides: map[string]config.KeyPolicy{
+					"payments": {URI: mustURL(t, "https://example.com/key"), Duration: time.Hour},
+				},
+			},
+			wantErr: "overrides[payments]",
+		},
+		{
+			name: "empty override namespace key",
+			cfg: config.Encryption{
+				Enabled:   true,
+				Default:   &valid,
+				Overrides: map[string]config.KeyPolicy{"": valid},
+			},
+			wantErr: "overrides",
+		},
 	}
 
 	for _, tt := range tests {
