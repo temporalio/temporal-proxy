@@ -93,7 +93,6 @@ func TestTLS_Validate(t *testing.T) {
 	t.Run("valid RSA cert passes", func(t *testing.T) {
 		t.Parallel()
 
-		// preferredCipherSuites are RSA-only, so the leaf must use an RSA key.
 		// Validate only checks that the key file exists and is PEM; it does
 		// not verify cert/key matching (LoadX509KeyPair does that at runtime).
 		certFile := writePEMFile(t, testutil.RSACert(t, validTemplate()))
@@ -122,12 +121,13 @@ func TestTLS_Validate(t *testing.T) {
 		require.ErrorContains(t, err, "expired")
 	})
 
-	t.Run("ECDSA cert rejected by RSA-only cipher suites", func(t *testing.T) {
+	t.Run("ECDSA cert accepted", func(t *testing.T) {
 		t.Parallel()
 
+		// preferredCipherSuites includes ECDHE_ECDSA suites so
+		// ECDSA identity material validates successfully.
 		certFile := writePEMFile(t, testutil.ECDSACert(t, validTemplate()))
-		err := creds.NewServerTLS(certFile, "").Validate()
-		require.ErrorContains(t, err, "key type")
+		require.NoError(t, creds.NewServerTLS(certFile, validKey(t)).Validate())
 	})
 
 	t.Run("client TLS has no certFile and fails to read", func(t *testing.T) {
