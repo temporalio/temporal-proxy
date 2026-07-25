@@ -65,7 +65,7 @@ type (
 // logger.
 func New(sopts ...Option) (*Server, error) {
 	opts := &options{
-		creds:       creds.NewInsecure(),
+		creds:       creds.NewListener(creds.Insecure()),
 		healthCheck: defaultHealthCheck(),
 		logger:      logger.Default(),
 	}

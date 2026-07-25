@@ -12,7 +12,6 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
-	"github.com/temporalio/temporal-proxy/internal/transport/creds"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
 
@@ -109,21 +108,5 @@ type ServerParams struct {
 }
 
 func (p *ServerParams) creds() Credentials {
-	tls := p.Config.Listen.TLS
-	if tls == nil {
-		return creds.NewInsecure()
-	}
-
-	if tls.CA != "" {
-		return creds.NewMTLS(
-			tls.CA,
-			tls.Cert,
-			tls.Key,
-			creds.MTLSOptions{
-				ServerName: tls.ServerName,
-			},
-		)
-	}
-
-	return creds.NewServerTLS(tls.Cert, tls.Key)
+	return p.Config.Listen.TLS.Listener()
 }

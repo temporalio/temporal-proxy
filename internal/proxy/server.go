@@ -18,12 +18,6 @@ import (
 )
 
 type (
-	// Credentials produces the [grpc.DialOption] used to secure the outbound
-	// connection to the upstream Temporal frontend.
-	Credentials interface {
-		DialOption() (grpc.DialOption, error)
-	}
-
 	// Server proxies the Temporal WorkflowService. It re-serves an upstream
 	// frontend on a local unix socket, letting local workers connect without TLS
 	// while the upstream hop stays secured. The upstream connection(s) it
@@ -59,7 +53,7 @@ func New(hostPort string, cc grpc.ClientConnInterface, opts ...Option) (*Server,
 
 	svr, err := server.New(
 		// NB: Hosting on local unix port, no need for TLS here.
-		server.WithCredentials(creds.NewInsecure()),
+		server.WithCredentials(creds.NewListener(creds.Insecure())),
 		server.WithLogger(pops.logger),
 		server.WithService(func(sr grpc.ServiceRegistrar) {
 			workflowservice.RegisterWorkflowServiceServer(sr, wfs)
