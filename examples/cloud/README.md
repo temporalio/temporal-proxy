@@ -90,3 +90,14 @@ namespace name `quickstart`. For each request the proxy:
 > [!NOTE]
 >
 > With a single namespace both upstreams resolve to the same host; the split is what lets the same config scale to many.
+
+## Optional: encrypt payloads to Cloud
+
+`config.yaml` ends with a commented-out `encryption:` block. Uncomment it and restart the proxy to encrypt workflow and
+activity payloads on the hop to Cloud: the worker and starter keep exchanging cleartext, the proxy seals payloads before
+they leave and opens them on the way back, and Cloud only ever stores ciphertext (workflow inputs and results show as
+encrypted bytes in the Cloud UI).
+
+The block uses a `testing://` key, which holds its key material in the config itself with no cloud KMS. That is fine for
+this toy but never for real data; in production point the key at `awskms://`, `azurekeyvault://`, or `gcpkms://`
+instead.
