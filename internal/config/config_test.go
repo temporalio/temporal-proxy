@@ -209,13 +209,12 @@ func TestConfig_Validate(t *testing.T) {
 			cfg: &config.Config{
 				Listen: config.ListenConfig{
 					HostPort: ":8080",
-					TLS:      &config.TLSConfig{}, // empty -> creds.TLS PEM read failures
+					TLS:      &config.TLSConfig{}, // empty -> "a server certificate is required"
 				},
 				Upstreams: validUpstreams,
 			},
 			wantTuples: [][2]string{
 				{"tls", "cert"},
-				{"tls", "key"},
 			},
 		},
 		{
@@ -230,7 +229,6 @@ func TestConfig_Validate(t *testing.T) {
 			wantTuples: [][2]string{
 				{"", "hostPort"},
 				{"tls", "cert"},
-				{"tls", "key"},
 			},
 		},
 		{

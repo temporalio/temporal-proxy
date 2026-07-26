@@ -75,6 +75,29 @@ func TestGenerateSelfSignedCert(t *testing.T) {
 	require.WithinDuration(t, time.Now(), cert.NotAfter, 2*time.Hour)
 }
 
+func TestGenerateRSACert(t *testing.T) {
+	t.Parallel()
+
+	certFile, keyFile := testutil.GenerateRSACert(t)
+
+	// Both files should load as a tls.Certificate pair, verifying the key
+	// matches the cert and is usable as a real TLS identity.
+	pair, err := tls.LoadX509KeyPair(certFile, keyFile)
+	require.NoError(t, err)
+	require.NotEmpty(t, pair.Certificate)
+
+	certPEM, err := os.ReadFile(certFile)
+	require.NoError(t, err)
+
+	cert := parseSingleCert(t, certPEM)
+	require.IsType(t, &rsa.PublicKey{}, cert.PublicKey)
+	require.Equal(t, 2048, cert.PublicKey.(*rsa.PublicKey).Size()*8)
+
+	// Usable as either a server or a client identity.
+	require.Contains(t, cert.ExtKeyUsage, x509.ExtKeyUsageServerAuth)
+	require.Contains(t, cert.ExtKeyUsage, x509.ExtKeyUsageClientAuth)
+}
+
 func TestGenerateMTLSCerts(t *testing.T) {
 	t.Parallel()
 

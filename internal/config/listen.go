@@ -24,14 +24,6 @@ type (
 		Key        string `yaml:"key"`        // PEM-encoded private key
 		ServerName string `yaml:"serverName"` // Optional SNI override
 	}
-
-	// caTrustAnchor validates a certificate used as an outbound trust anchor
-	// (client-side TLS with no client certificate presented). The anchor may be
-	// either a CA or a pinned self-signed leaf. It is checked for expiry, a secure
-	// signature algorithm, and sufficient key size.
-	caTrustAnchor struct {
-		caFile string
-	}
 )
 
 // Validate checks the host:port and, when present, the TLS configuration.
@@ -46,64 +38,50 @@ func (l *ListenConfig) Validate() error {
 	)
 }
 
-// Validate checks the configured certificate material: mutual TLS when a CA is
-// set, otherwise server-only TLS.
-func (t *TLSConfig) Validate() error {
-	return validation.Validate(
-		"",
-		validation.WhenRules(
-			func() bool { return t.CA != "" },
-			validation.Nested("", t.mtlsCreds()),
-		),
-		validation.WhenRules(
-			func() bool { return t.CA == "" },
-			validation.Nested("", creds.NewServerTLS(t.Cert, t.Key)),
-		),
-	)
+// Listener resolves the inbound (server) credential for this TLS block. A nil
+// receiver yields an insecure listener.
+func (t *TLSConfig) Listener() *creds.Listener {
+	return creds.NewListener(t.credsOptions()...)
 }
 
-// mtlsCreds builds the mutual-TLS credential described by the config: the CA
-// verifies the peer and the client key pair is the presented certificate. It is
-// shared by the inbound listener validation and the outbound upstream validation
-// so the construction lives in one place.
-func (t *TLSConfig) mtlsCreds() *creds.MTLS {
-	return creds.NewMTLS(t.CA, t.Cert, t.Key, creds.MTLSOptions{ServerName: t.ServerName})
+// Dialer resolves the outbound (client) credential for this TLS block. A nil
+// receiver yields an insecure dialer.
+func (t *TLSConfig) Dialer() *creds.Dialer {
+	return creds.NewDialer(t.credsOptions()...)
+}
+
+// Validate checks the inbound (listener) TLS material. It delegates to the
+// resolved server credential, which owns the mode decision (server TLS vs mutual
+// TLS) and the certificate file checks.
+func (t *TLSConfig) Validate() error {
+	return t.Listener().Validate()
 }
 
 // validateOutbound validates the config as client-side TLS used to dial an
-// upstream. A client certificate (cert+key) selects mutual TLS and requires a
-// CA; a CA alone verifies the upstream against a private trust anchor while
-// presenting no client certificate; neither means client TLS against the system
-// root pool. Callers must invoke this only when the receiver is non-nil.
+// upstream. It delegates to the resolved client credential, which owns the mode
+// decision (system-root, custom-CA, or mutual TLS) and the legality and file
+// checks. Callers must invoke this only when the receiver is non-nil.
 func (t *TLSConfig) validateOutbound() validation.Errors {
-	hasCert := t.Cert != "" || t.Key != ""
-
-	switch {
-	case (t.Cert == "") != (t.Key == ""):
-		return validation.Errors{{Subject: "tls", Message: "cert and key must be set together"}}
-	case hasCert && t.CA == "":
-		return validation.Errors{{Subject: "tls", Field: "ca", Message: "is required when a client certificate is set"}}
-	case hasCert:
-		return validation.Nested("tls", t.mtlsCreds())()
-	case t.CA != "":
-		return validation.Nested("tls", caTrustAnchor{caFile: t.CA})()
-	default:
-		return nil
-	}
+	return validation.Nested("tls", t.Dialer())()
 }
 
-// Validate checks that the trust anchor is not expired and is signed with a
-// strong algorithm and a sufficiently large key.
-func (c caTrustAnchor) Validate() error {
-	return validation.Validate(
-		"",
-		validation.Field("ca", c.caFile, func(path string) error {
-			return creds.ValidatePEMFile(
-				path,
-				creds.CertificateNotExpired(),
-				creds.UsesSecureCertificateAlgorithm(),
-				creds.HasSufficientKeySize(),
-			)
-		}),
-	)
+// credsOptions maps the TLS block onto a set of creds options shared by both
+// roles; the caller picks the role via creds.NewListener or creds.NewDialer. A
+// nil block is plaintext. A present block with no CA and no client certificate
+// resolves to system-root TLS for a client.
+func (t *TLSConfig) credsOptions() []creds.Option {
+	if t == nil {
+		return []creds.Option{creds.Insecure()}
+	}
+
+	var opts []creds.Option
+	if t.CA != "" {
+		opts = append(opts, creds.WithCA(t.CA))
+	}
+
+	if t.Cert != "" || t.Key != "" {
+		opts = append(opts, creds.WithCertificate(t.Cert, t.Key))
+	}
+
+	return opts
 }

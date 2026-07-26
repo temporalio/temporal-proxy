@@ -2,17 +2,10 @@ package e2e
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"math/big"
 	"net"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
@@ -158,7 +151,7 @@ func newFakeTLSUpstream(t *testing.T) fakeTLSUpstream {
 	go func() { _ = fakeUpstream.Serve(lis) }()
 	t.Cleanup(fakeUpstream.Stop)
 
-	clientCertFile, clientKeyFile := generateMatchingRSAKeyPair(t)
+	clientCertFile, clientKeyFile := testutil.GenerateRSACert(t)
 
 	return fakeTLSUpstream{
 		svc:            svc,
@@ -213,36 +206,4 @@ func dialUnix(t *testing.T, upstream string) *grpc.ClientConn {
 	)
 	require.NoError(t, err)
 	return conn
-}
-
-// generateMatchingRSAKeyPair writes a self-signed RSA-2048 certificate and its
-// matching private key to a fresh [testing.T.TempDir] and returns the paths.
-// Unlike [testutil.RSACert], the private key is retained and written out, so
-// the pair loads via [tls.LoadX509KeyPair] for use as a real TLS client
-// identity.
-func generateMatchingRSAKeyPair(t *testing.T) (certFile, keyFile string) {
-	t.Helper()
-
-	dir := t.TempDir()
-
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "proxy-client"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	require.NoError(t, err)
-
-	certFile = testutil.WriteFile(t, dir, "client-cert.pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-	keyFile = testutil.WriteFile(t, dir, "client-key.pem",
-		pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
-
-	return certFile, keyFile
 }

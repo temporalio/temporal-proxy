@@ -1,4 +1,4 @@
-package creds_test
+package certs_test
 
 import (
 	"crypto/ecdsa"
@@ -17,17 +17,17 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/transport/creds"
 	"github.com/temporalio/temporal-proxy/pkg/testutil"
 	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"github.com/temporalio/temporal-proxy/pkg/validation/certs"
 )
 
-func TestValidatePEM_NoValidators(t *testing.T) {
+func TestValidatePEM_NoChecks(t *testing.T) {
 	t.Parallel()
 
-	// Invalid PEM: no validators means the function should return nil without
-	// even attempting to parse the data.
-	require.NoError(t, creds.ValidatePEM([]byte("not-pem-at-all")))
+	// Invalid PEM: no checks means the function should return nil without even
+	// attempting to parse the data.
+	require.NoError(t, certs.ValidatePEM([]byte("not-pem-at-all")))
 }
 
 func TestValidatePEMFile(t *testing.T) {
@@ -36,20 +36,20 @@ func TestValidatePEMFile(t *testing.T) {
 	t.Run("missing file", func(t *testing.T) {
 		t.Parallel()
 
-		err := creds.ValidatePEMFile(
+		err := certs.ValidatePEMFile(
 			"/tmp/definitely-not-a-real-cert.pem",
-			creds.CertificateNotExpired(),
+			certs.NotExpired(),
 		)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "failed to read PEM file")
 	})
 
-	t.Run("missing file with no validators still errors", func(t *testing.T) {
+	t.Run("missing file with no checks still errors", func(t *testing.T) {
 		t.Parallel()
 
-		// The IO read happens before the no-validators short-circuit, so a
-		// missing file should surface even without anything to validate.
-		err := creds.ValidatePEMFile("/tmp/definitely-not-a-real-cert.pem")
+		// The IO read happens before the no-checks short-circuit, so a missing
+		// file should surface even without anything to validate.
+		err := certs.ValidatePEMFile("/tmp/definitely-not-a-real-cert.pem")
 		require.Error(t, err)
 		require.ErrorContains(t, err, "failed to read PEM file")
 	})
@@ -58,13 +58,13 @@ func TestValidatePEMFile(t *testing.T) {
 		t.Parallel()
 
 		path := writePEMFile(t, testutil.RSACert(t, validTemplate()))
-		require.NoError(t, creds.ValidatePEMFile(
+		require.NoError(t, certs.ValidatePEMFile(
 			path,
-			creds.CertificateNotExpired(),
+			certs.NotExpired(),
 		))
 	})
 
-	t.Run("validator failure is propagated", func(t *testing.T) {
+	t.Run("check failure is propagated", func(t *testing.T) {
 		t.Parallel()
 
 		expired := testutil.RSACert(t, &x509.Certificate{
@@ -75,16 +75,16 @@ func TestValidatePEMFile(t *testing.T) {
 		})
 		path := writePEMFile(t, expired)
 
-		err := creds.ValidatePEMFile(path, creds.CertificateNotExpired())
+		err := certs.ValidatePEMFile(path, certs.NotExpired())
 		require.Error(t, err)
 		require.ErrorContains(t, err, "expired")
 	})
 
-	t.Run("non-PEM contents are rejected when validators run", func(t *testing.T) {
+	t.Run("non-PEM contents are rejected when checks run", func(t *testing.T) {
 		t.Parallel()
 
 		path := writePEMFile(t, []byte("this is not a PEM block"))
-		err := creds.ValidatePEMFile(path, creds.CertificateNotExpired())
+		err := certs.ValidatePEMFile(path, certs.NotExpired())
 		require.Error(t, err)
 		require.ErrorContains(t, err, "no certificates found")
 	})
@@ -93,7 +93,7 @@ func TestValidatePEMFile(t *testing.T) {
 func TestValidatePEM_InvalidPEM(t *testing.T) {
 	t.Parallel()
 
-	require.Error(t, creds.ValidatePEM([]byte("not-pem"), creds.CertificateNotExpired()))
+	require.Error(t, certs.ValidatePEM([]byte("not-pem"), certs.NotExpired()))
 }
 
 func TestValidatePEM_MultipleCerts(t *testing.T) {
@@ -108,7 +108,7 @@ func TestValidatePEM_MultipleCerts(t *testing.T) {
 	})
 
 	combined := append(valid, expired...)
-	err := creds.ValidatePEM(combined, creds.CertificateNotExpired())
+	err := certs.ValidatePEM(combined, certs.NotExpired())
 	require.Error(t, err)
 
 	var verr validation.Errors
@@ -117,7 +117,7 @@ func TestValidatePEM_MultipleCerts(t *testing.T) {
 	require.Equal(t, "expired", verr[0].Subject)
 }
 
-func TestCertificateNotExpired(t *testing.T) {
+func TestNotExpired(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -164,7 +164,7 @@ func TestCertificateNotExpired(t *testing.T) {
 			t.Parallel()
 
 			certPEM := testutil.RSACert(t, tt.tmpl)
-			err := creds.ValidatePEM(certPEM, creds.CertificateNotExpired())
+			err := certs.ValidatePEM(certPEM, certs.NotExpired())
 			if tt.wantErr {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tt.errMsg)
@@ -175,27 +175,27 @@ func TestCertificateNotExpired(t *testing.T) {
 	}
 }
 
-func TestIsCACertificate(t *testing.T) {
+func TestIsCA(t *testing.T) {
 	t.Parallel()
 
 	t.Run("CA cert passes", func(t *testing.T) {
 		t.Parallel()
 
 		certPEM := testutil.RSACert(t, caTemplate())
-		require.NoError(t, creds.ValidatePEM(certPEM, creds.IsCACertificate()))
+		require.NoError(t, certs.ValidatePEM(certPEM, certs.IsCA()))
 	})
 
 	t.Run("non-CA cert fails", func(t *testing.T) {
 		t.Parallel()
 
 		certPEM := testutil.RSACert(t, validTemplate())
-		err := creds.ValidatePEM(certPEM, creds.IsCACertificate())
+		err := certs.ValidatePEM(certPEM, certs.IsCA())
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "not a CA")
 	})
 }
 
-func TestUsesSecureCertificateAlgorithm(t *testing.T) {
+func TestSecureAlgorithm(t *testing.T) {
 	t.Parallel()
 
 	rsaSuites := []uint16{
@@ -207,21 +207,21 @@ func TestUsesSecureCertificateAlgorithm(t *testing.T) {
 		t.Parallel()
 
 		certPEM := testutil.RSACert(t, validTemplate())
-		require.NoError(t, creds.ValidatePEM(certPEM, creds.UsesSecureCertificateAlgorithm()))
+		require.NoError(t, certs.ValidatePEM(certPEM, certs.SecureAlgorithm()))
 	})
 
 	t.Run("ECDSA cert with no suites passes", func(t *testing.T) {
 		t.Parallel()
 
 		certPEM := testutil.ECDSACert(t, validTemplate())
-		require.NoError(t, creds.ValidatePEM(certPEM, creds.UsesSecureCertificateAlgorithm()))
+		require.NoError(t, certs.ValidatePEM(certPEM, certs.SecureAlgorithm()))
 	})
 
 	t.Run("RSA cert with RSA suite passes", func(t *testing.T) {
 		t.Parallel()
 
 		certPEM := testutil.RSACert(t, validTemplate())
-		require.NoError(t, creds.ValidatePEM(certPEM, creds.UsesSecureCertificateAlgorithm(rsaSuites...)))
+		require.NoError(t, certs.ValidatePEM(certPEM, certs.SecureAlgorithm(rsaSuites...)))
 	})
 
 	t.Run("ECDSA cert incompatible with RSA-only suites fails", func(t *testing.T) {
@@ -233,7 +233,7 @@ func TestUsesSecureCertificateAlgorithm(t *testing.T) {
 		}
 
 		certPEM := testutil.ECDSACert(t, validTemplate())
-		err := creds.ValidatePEM(certPEM, creds.UsesSecureCertificateAlgorithm(rsaOnlySuites...))
+		err := certs.ValidatePEM(certPEM, certs.SecureAlgorithm(rsaOnlySuites...))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "key type")
 	})
@@ -241,61 +241,36 @@ func TestUsesSecureCertificateAlgorithm(t *testing.T) {
 	t.Run("unknown suites skip key type check", func(t *testing.T) {
 		t.Parallel()
 
-		// 0xFFFF is intentionally not in suiteKeyTypes, so no key type constraint applies.
+		// 0xFFFF is intentionally not a known suite, so no key type constraint applies.
 		certPEM := testutil.ECDSACert(t, validTemplate())
-		require.NoError(t, creds.ValidatePEM(certPEM, creds.UsesSecureCertificateAlgorithm(0xFFFF)))
+		require.NoError(t, certs.ValidatePEM(certPEM, certs.SecureAlgorithm(0xFFFF)))
 	})
 }
 
-func TestUsesSecureCertificateAlgorithm_WeakAlgorithm(t *testing.T) {
+func TestSecureAlgorithm_WeakAlgorithm(t *testing.T) {
 	t.Parallel()
 
-	// SHA1WithRSA is produced by openssl, but Go's x509.CreateCertificate does
-	// not expose SHA-1 signing for RSA directly. We construct and parse a
-	// certificate DER manually to simulate a weak-algorithm cert.
+	// Go rejects SHA-1 signing by default, so we build a well-formed modern cert
+	// and patch its SignatureAlgorithm to a weak value after parsing to exercise
+	// the rejection path without relying on Go producing a SHA-1 signature.
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
-	tmpl := &x509.Certificate{
-		SerialNumber:       big.NewInt(1),
-		Subject:            pkix.Name{CommonName: "sha1cert"},
-		NotBefore:          time.Now().Add(-time.Hour),
-		NotAfter:           time.Now().Add(time.Hour),
-		SignatureAlgorithm: x509.SHA1WithRSA,
-	}
-
-	// Go 1.21+ rejects SHA1 signing by default; we test the validator on a
-	// well-formed modern cert but swap the SignatureAlgorithm field after
-	// parsing to simulate the weak-algorithm case without relying on Go
-	// producing a SHA1 signature.
+	tmpl := validTemplate()
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	// CreateCertificate may error with SHA1 — if so, construct the cert object directly.
-	if err != nil {
-		// Build a parsed cert with a weak algorithm set manually.
-		goodTmpl := validTemplate()
-		der, err = x509.CreateCertificate(rand.Reader, goodTmpl, goodTmpl, &key.PublicKey, key)
-		require.NoError(t, err)
+	require.NoError(t, err)
 
-		cert, parseErr := x509.ParseCertificate(der)
-		require.NoError(t, parseErr)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
 
-		// Patch the signature algorithm to be weak.
-		cert.SignatureAlgorithm = x509.SHA1WithRSA
+	cert.SignatureAlgorithm = x509.SHA1WithRSA
 
-		v := creds.UsesSecureCertificateAlgorithm()
-		err = v(cert)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "weak signature algorithm")
-		return
-	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	err = creds.ValidatePEM(certPEM, creds.UsesSecureCertificateAlgorithm())
+	err = certs.SecureAlgorithm()(cert)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "weak signature algorithm")
 }
 
-func TestHasSufficientKeySize(t *testing.T) {
+func TestSufficientKeySize(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -348,7 +323,7 @@ func TestHasSufficientKeySize(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := creds.ValidatePEM(tt.certPEM(t), creds.HasSufficientKeySize())
+			err := certs.ValidatePEM(tt.certPEM(t), certs.SufficientKeySize())
 			if tt.wantErr {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tt.errMsg)
@@ -365,13 +340,13 @@ func TestValidatePEMKeyFile(t *testing.T) {
 	t.Run("valid private key file", func(t *testing.T) {
 		t.Parallel()
 
-		require.NoError(t, creds.ValidatePEMKeyFile(validKey(t)))
+		require.NoError(t, certs.ValidatePEMKeyFile(validKey(t)))
 	})
 
 	t.Run("missing file", func(t *testing.T) {
 		t.Parallel()
 
-		err := creds.ValidatePEMKeyFile("/tmp/definitely-not-a-real-key.pem")
+		err := certs.ValidatePEMKeyFile("/tmp/definitely-not-a-real-key.pem")
 		require.Error(t, err)
 		require.ErrorContains(t, err, "failed to read PEM key file")
 	})
@@ -379,7 +354,7 @@ func TestValidatePEMKeyFile(t *testing.T) {
 	t.Run("empty path", func(t *testing.T) {
 		t.Parallel()
 
-		err := creds.ValidatePEMKeyFile("")
+		err := certs.ValidatePEMKeyFile("")
 		require.Error(t, err)
 		require.ErrorContains(t, err, "failed to read PEM key file")
 	})
@@ -388,7 +363,7 @@ func TestValidatePEMKeyFile(t *testing.T) {
 		t.Parallel()
 
 		path := testutil.WriteFile(t, t.TempDir(), "key.pem", []byte("not pem at all"))
-		err := creds.ValidatePEMKeyFile(path)
+		err := certs.ValidatePEMKeyFile(path)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "no PRIVATE KEY block")
 	})
@@ -398,7 +373,7 @@ func TestValidatePEMKeyFile(t *testing.T) {
 
 		// A CERTIFICATE block is valid PEM but not a private key.
 		path := writePEMFile(t, testutil.RSACert(t, validTemplate()))
-		err := creds.ValidatePEMKeyFile(path)
+		err := certs.ValidatePEMKeyFile(path)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "no PRIVATE KEY block")
 	})
@@ -406,8 +381,8 @@ func TestValidatePEMKeyFile(t *testing.T) {
 	t.Run("PEM with mixed blocks accepts first PRIVATE KEY", func(t *testing.T) {
 		t.Parallel()
 
-		// A CERTIFICATE then a PRIVATE KEY block: the loop should keep
-		// scanning past the cert and accept the key.
+		// A CERTIFICATE then a PRIVATE KEY block: the loop should keep scanning
+		// past the cert and accept the key.
 		certPEM := testutil.RSACert(t, validTemplate())
 
 		_, keyFile := testutil.GenerateSelfSignedCert(t)
@@ -415,7 +390,7 @@ func TestValidatePEMKeyFile(t *testing.T) {
 
 		mixed := append(append([]byte{}, certPEM...), keyPEM...)
 		path := testutil.WriteFile(t, t.TempDir(), "mixed.pem", mixed)
-		require.NoError(t, creds.ValidatePEMKeyFile(path))
+		require.NoError(t, certs.ValidatePEMKeyFile(path))
 	})
 }
 
@@ -431,10 +406,10 @@ func writePEMFile(t *testing.T, data []byte) string {
 	return testutil.WriteFile(t, t.TempDir(), "cert.pem", data)
 }
 
-// validKey returns a path to a PEM-encoded private key file. The key
-// contents are not parsed by ValidatePEMKeyFile, so any PEM block typed
-// *PRIVATE KEY satisfies the check; this helper reuses the ECDSA key
-// produced by testutil to avoid duplicating key-generation code.
+// validKey returns a path to a PEM-encoded private key file. The key contents
+// are not parsed by ValidatePEMKeyFile, so any PEM block typed *PRIVATE KEY
+// satisfies the check; this helper reuses the ECDSA key produced by testutil to
+// avoid duplicating key-generation code.
 func validKey(t *testing.T) string {
 	t.Helper()
 	_, keyFile := testutil.GenerateSelfSignedCert(t)
@@ -473,8 +448,8 @@ func ecdsaCert(t *testing.T, curve elliptic.Curve) []byte {
 }
 
 // ed25519Cert generates a self-signed Ed25519 certificate and returns its PEM
-// encoding. Ed25519 is unsupported by HasSufficientKeySize, so this exercises
-// the rejection path for key types other than RSA and ECDSA.
+// encoding. Ed25519 is unsupported by SufficientKeySize, so this exercises the
+// rejection path for key types other than RSA and ECDSA.
 func ed25519Cert(t *testing.T) []byte {
 	t.Helper()
 

@@ -83,10 +83,45 @@ func GenerateSelfSignedCert(t *testing.T) (certFile, keyFile string) {
 	return certFile, keyFile
 }
 
+// GenerateRSACert writes a self-signed RSA-2048 certificate and its matching
+// PKCS#1 private key to a fresh [testing.T.TempDir] and returns the paths. It is
+// the RSA counterpart to [GenerateSelfSignedCert]: the key is retained and
+// written out, so the pair loads via [crypto/tls.LoadX509KeyPair] as a real TLS
+// identity. The certificate advertises CN "localhost" with DNSNames=["localhost"]
+// and both server- and client-auth extended key usages, so it serves as either a
+// server certificate or a client identity. It is valid for one hour.
+func GenerateRSACert(t *testing.T) (certFile, keyFile string) {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		DNSNames:     []string{"localhost"},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+
+	certFile = WriteFile(t, dir, "cert.pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}))
+	keyFile = WriteFile(t, dir, "key.pem",
+		pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+
+	return certFile, keyFile
+}
+
 // GenerateMTLSCerts writes a self-signed ECDSA P-256 CA certificate plus an
 // RSA-2048 leaf certificate signed by that CA (with its matching key) to a
 // fresh [testing.T.TempDir] and returns the three paths. The leaf is RSA
-// because creds.MTLS.Validate checks the leaf's key type against an RSA-only
+// because credential validation checks the leaf's key type against an RSA-only
 // cipher suite allowlist; an ECDSA leaf fails that check even though it
 // verifies fine against the CA. The leaf advertises CN "localhost" with
 // DNSNames=["localhost"]; both certificates are valid for one hour. Use this

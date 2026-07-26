@@ -556,7 +556,7 @@ func TestUpstreamOutboundTLS(t *testing.T) {
 				_, certFile, _ := testutil.GenerateMTLSCerts(t)
 				return &config.TLSConfig{Cert: certFile}
 			},
-			wantErr: "cert and key must be set together",
+			wantErr: "certificate and key must be set together",
 		},
 		{
 			name: "key without cert is rejected",
@@ -564,7 +564,7 @@ func TestUpstreamOutboundTLS(t *testing.T) {
 				_, _, keyFile := testutil.GenerateMTLSCerts(t)
 				return &config.TLSConfig{Key: keyFile}
 			},
-			wantErr: "cert and key must be set together",
+			wantErr: "certificate and key must be set together",
 		},
 		{
 			name: "client cert without CA is rejected",

@@ -1,10 +1,17 @@
-// Package creds provides gRPC transport credential implementations for use
-// with Temporal proxy connections.
+// Package creds resolves TLS transport credentials for Temporal proxy
+// connections from a small set of options.
 //
-// Each credential type exposes two methods:
+// A [Dialer] secures outbound (client) connections and a [Listener] secures
+// inbound (server) connections. Both are built from the same options
+// ([Insecure], [WithCA], [WithCertificate]) but interpret them per role: for a
+// client a CA is a trust anchor and a certificate is presented to the upstream;
+// for a server a CA requires and verifies client certificates. Each constructor
+// resolves the TLS [Mode] and the cross-field legality of the configuration
+// once, so validation, dialing, and serving cannot disagree.
 //
-//   - DialOption returns a [google.golang.org/grpc.DialOption] for configuring
-//     outbound (client) connections.
-//   - ServerOption returns a [google.golang.org/grpc.ServerOption] for
-//     configuring inbound (server) connections.
+// Security is the default: only [Insecure] yields a plaintext credential, and an
+// accidentally-empty client credential verifies the peer against the system root
+// pool rather than silently downgrading. Construction performs no file I/O;
+// certificate material is read and parsed lazily (and once) when a credential is
+// validated or used.
 package creds

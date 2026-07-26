@@ -1,4 +1,4 @@
-package creds
+package certs
 
 import (
 	"crypto/ecdsa"
@@ -17,11 +17,11 @@ import (
 
 const (
 	// minRSAKeyBits is the smallest RSA modulus size accepted by
-	// HasSufficientKeySize. 2048 bits is the current NIST-recommended minimum.
+	// SufficientKeySize. 2048 bits is the current NIST-recommended minimum.
 	minRSAKeyBits = 2048
 
 	// minECDSAKeyBits is the smallest ECDSA curve size accepted by
-	// HasSufficientKeySize. 256 bits (e.g. P-256) is the recommended minimum.
+	// SufficientKeySize. 256 bits (e.g. P-256) is the recommended minimum.
 	minECDSAKeyBits = 256
 )
 
@@ -58,20 +58,22 @@ var (
 	}
 )
 
-// Validator inspects a single parsed certificate and returns a
-// validation.Error describing any failure, or nil if the certificate is valid.
-type Validator validation.Check[*x509.Certificate]
+// Check inspects a single parsed certificate and returns a [validation.Error]
+// describing any failure, or nil if the certificate is valid. It is an alias for
+// the underlying [validation.Check] so callers can compose plain functions with
+// the built-in checks in this package.
+type Check = validation.Check[*x509.Certificate]
 
-// ValidatePEMFile reads path and forwards its contents to ValidatePEM. A read
+// ValidatePEMFile reads path and forwards its contents to [ValidatePEM]. A read
 // failure is returned wrapped so callers can distinguish IO problems from
 // validation failures; the wrapped os.ReadFile error already includes the path.
-func ValidatePEMFile(path string, validators ...Validator) error {
+func ValidatePEMFile(path string, checks ...Check) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("failed to read PEM file: %w", err)
 	}
 
-	return ValidatePEM(data, validators...)
+	return ValidatePEM(data, checks...)
 }
 
 // ValidatePEMKeyFile reads path and verifies it contains at least one PEM
@@ -101,12 +103,12 @@ func ValidatePEMKeyFile(path string) error {
 	return errors.New("no PRIVATE KEY block found in PEM data")
 }
 
-// ValidatePEM parses all CERTIFICATE blocks from pemData and runs each
-// validator against every parsed certificate, collecting all failures into an
-// Errors value. Returns nil immediately when no validators are provided.
-func ValidatePEM(pemData []byte, validators ...Validator) error {
-	// With no validators there is nothing to check; skip PEM parsing entirely.
-	if len(validators) == 0 {
+// ValidatePEM parses all CERTIFICATE blocks from pemData and runs each check
+// against every parsed certificate, collecting all failures into an
+// [validation.Errors] value. Returns nil immediately when no checks are provided.
+func ValidatePEM(pemData []byte, checks ...Check) error {
+	// With no checks there is nothing to verify; skip PEM parsing entirely.
+	if len(checks) == 0 {
 		return nil
 	}
 
@@ -117,8 +119,8 @@ func ValidatePEM(pemData []byte, validators ...Validator) error {
 
 	var errs validation.Errors
 	for _, cert := range parsed {
-		for _, v := range validators {
-			if vErr := v(cert); vErr != nil {
+		for _, check := range checks {
+			if vErr := check(cert); vErr != nil {
 				if ve, ok := errors.AsType[validation.Error](vErr); ok {
 					errs = append(errs, ve)
 					continue
@@ -140,10 +142,9 @@ func ValidatePEM(pemData []byte, validators ...Validator) error {
 	return nil
 }
 
-// CertificateNotExpired returns a CertificateValidator that rejects
-// certificates whose NotBefore is in the future or whose NotAfter is in the
-// past.
-func CertificateNotExpired() Validator {
+// NotExpired returns a [Check] that rejects certificates whose NotBefore is in
+// the future or whose NotAfter is in the past.
+func NotExpired() Check {
 	return func(cert *x509.Certificate) error {
 		now := time.Now()
 		if now.Before(cert.NotBefore) {
@@ -166,9 +167,9 @@ func CertificateNotExpired() Validator {
 	}
 }
 
-// IsCACertificate returns a CertificateValidator that rejects certificates
-// that do not have the CA basic constraint set.
-func IsCACertificate() Validator {
+// IsCA returns a [Check] that rejects certificates that do not have the CA basic
+// constraint set.
+func IsCA() Check {
 	return func(cert *x509.Certificate) error {
 		if !cert.IsCA {
 			return validation.Error{
@@ -182,11 +183,11 @@ func IsCACertificate() Validator {
 	}
 }
 
-// UsesSecureCertificateAlgorithm returns a CertificateValidator that rejects
-// certificates signed with known-weak algorithms (SHA-1, MD5, MD2, DSA). When
-// allowedSuites are provided it additionally rejects certificates whose public
-// key type is incompatible with every suite in that list.
-func UsesSecureCertificateAlgorithm(allowedSuites ...uint16) Validator {
+// SecureAlgorithm returns a [Check] that rejects certificates signed with
+// known-weak algorithms (SHA-1, MD5, MD2, DSA). When allowedSuites are provided
+// it additionally rejects certificates whose public key type is incompatible
+// with every suite in that list.
+func SecureAlgorithm(allowedSuites ...uint16) Check {
 	return func(cert *x509.Certificate) error {
 		if weakAlgorithms[cert.SignatureAlgorithm] {
 			return validation.Error{
@@ -224,12 +225,12 @@ func UsesSecureCertificateAlgorithm(allowedSuites ...uint16) Validator {
 	}
 }
 
-// HasSufficientKeySize returns a Validator that rejects certificates whose
-// public key is below the recommended minimum size: RSA keys must be at least
-// minRSAKeyBits and ECDSA keys at least minECDSAKeyBits. Key types other than
-// RSA and ECDSA (e.g. Ed25519) are unsupported and rejected, since the proxy's
-// allowed cipher suites cover only RSA and ECDSA keys.
-func HasSufficientKeySize() Validator {
+// SufficientKeySize returns a [Check] that rejects certificates whose public key
+// is below the recommended minimum size: RSA keys must be at least 2048 bits and
+// ECDSA keys at least 256 bits. Key types other than RSA and ECDSA (e.g.
+// Ed25519) are unsupported and rejected, since the supported cipher suites cover
+// only RSA and ECDSA keys.
+func SufficientKeySize() Check {
 	return func(cert *x509.Certificate) error {
 		switch pub := cert.PublicKey.(type) {
 		case *rsa.PublicKey:
