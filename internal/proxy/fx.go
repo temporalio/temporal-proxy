@@ -10,6 +10,7 @@ import (
 
 	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
@@ -24,6 +25,13 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 	// configured), fail fast rather than silently forwarding cleartext upstream.
 	if p.Config.Encryption.Enabled && p.Vault == nil {
 		return fmt.Errorf("encryption is enabled but no vault was provided")
+	}
+
+	// Built once (not per upstream) so its collectors register with Prometheus
+	// exactly once; a per-upstream build would panic on duplicate registration.
+	var encReporter *Reporter
+	if p.Vault != nil {
+		encReporter = NewReporter(p.Factory.ForSubsystem("encryption"))
 	}
 
 	for i := range p.Config.Upstreams {
@@ -57,7 +65,7 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 		// interceptor, sealing outbound payloads last and opening inbound
 		// payloads first.
 		if p.Vault != nil {
-			enc, err := EncryptionInterceptor(p.Config.Encryption.Enabled, p.Vault)
+			enc, err := EncryptionInterceptor(p.Config.Encryption.Enabled, p.Vault, encReporter)
 			if err != nil {
 				return fmt.Errorf("failed to build encryption interceptor for upstream %q: %w", up.Name, err)
 			}
@@ -131,6 +139,7 @@ type ProxyParams struct {
 	Translator *protoutil.Translator
 	Pool       *connect.Pool
 	Vault      *crypto.Vault
+	Factory    *metrics.Factory
 
 	// Optional values
 	Logger logger.Logger `optional:"true"`

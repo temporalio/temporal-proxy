@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.uber.org/fx"
@@ -124,6 +125,7 @@ func newProxyApp(t *testing.T, cfg *config.Config) *fx.App {
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(cfg),
 		fx.Provide(func() *crypto.Vault { return nil }),
+		fx.Provide(func() *metrics.Factory { return metrics.New("test", promauto.With(prometheus.NewRegistry())) }),
 		connect.Module,
 		protoutil.Module,
 		proxy.Module,

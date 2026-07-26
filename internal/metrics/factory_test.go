@@ -7,6 +7,7 @@ import (
 	goprom "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
 
@@ -142,6 +143,29 @@ myns_sub_wait_seconds_count{kind="a"} 1
 		require.NoError(t, err)
 		require.Equal(t, 1, n)
 	})
+}
+
+func TestNewGaugeIsNamespacedAndSubsystemed(t *testing.T) {
+	t.Parallel()
+
+	reg := goprom.NewRegistry()
+	f := metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption")
+
+	g := f.NewGauge(goprom.GaugeOpts{Name: "dek_cache_size", Help: "size"})
+	g.Set(7)
+
+	mfs, err := reg.Gather()
+	require.NoError(t, err)
+
+	var found *dto.MetricFamily
+	for _, mf := range mfs {
+		if mf.GetName() == "proxy_encryption_dek_cache_size" {
+			found = mf
+			break
+		}
+	}
+	require.NotNil(t, found, "expected proxy_encryption_dek_cache_size to be registered")
+	require.Equal(t, 7.0, found.GetMetric()[0].GetGauge().GetValue())
 }
 
 func TestModuleProvidesNamespacedMetrics(t *testing.T) {

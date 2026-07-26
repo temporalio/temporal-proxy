@@ -11,11 +11,14 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
@@ -88,7 +91,7 @@ func TestCreateKEKs(t *testing.T) {
 		t.Parallel()
 
 		p := &config.KeyPolicy{URI: primary, DecryptURIs: []url.URL{distinctKeyURL(t, 2), distinctKeyURL(t, 3)}}
-		keys, err := createKEKs(t.Context(), p, log, defaultNamespace)
+		keys, err := createKEKs(t.Context(), p, log, defaultNamespace, newFxTestReporter(t))
 		require.NoError(t, err)
 		t.Cleanup(func() { closeKEKs(t, keys) })
 
@@ -99,7 +102,7 @@ func TestCreateKEKs(t *testing.T) {
 	t.Run("primary only", func(t *testing.T) {
 		t.Parallel()
 
-		keys, err := createKEKs(t.Context(), &config.KeyPolicy{URI: primary}, log, defaultNamespace)
+		keys, err := createKEKs(t.Context(), &config.KeyPolicy{URI: primary}, log, defaultNamespace, newFxTestReporter(t))
 		require.NoError(t, err)
 		t.Cleanup(func() { closeKEKs(t, keys) })
 
@@ -109,7 +112,7 @@ func TestCreateKEKs(t *testing.T) {
 	t.Run("bad primary uri errors", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := createKEKs(t.Context(), &config.KeyPolicy{URI: url.URL{Scheme: "bogus", Host: "x"}}, log, defaultNamespace)
+		_, err := createKEKs(t.Context(), &config.KeyPolicy{URI: url.URL{Scheme: "bogus", Host: "x"}}, log, defaultNamespace, newFxTestReporter(t))
 		require.Error(t, err)
 	})
 
@@ -117,7 +120,7 @@ func TestCreateKEKs(t *testing.T) {
 		t.Parallel()
 
 		p := &config.KeyPolicy{URI: primary, DecryptURIs: []url.URL{{Scheme: "bogus", Host: "x"}}}
-		_, err := createKEKs(t.Context(), p, log, defaultNamespace)
+		_, err := createKEKs(t.Context(), p, log, defaultNamespace, newFxTestReporter(t))
 		require.Error(t, err)
 	})
 }
@@ -134,7 +137,7 @@ func TestKeyPolicyRegistryOpts(t *testing.T) {
 	t.Run("asDefault registers a usable default key", func(t *testing.T) {
 		t.Parallel()
 
-		opts, err := keyPolicyRegistryOpts(t.Context(), &config.KeyPolicy{URI: distinctKeyURL(t, 1)}, log, defaultNamespace, true)
+		opts, err := keyPolicyRegistryOpts(t.Context(), &config.KeyPolicy{URI: distinctKeyURL(t, 1)}, log, defaultNamespace, true, newFxTestReporter(t))
 		require.NoError(t, err)
 
 		reg, err := crypto.NewKEKRegistry(opts...)
@@ -145,7 +148,7 @@ func TestKeyPolicyRegistryOpts(t *testing.T) {
 	t.Run("non-default registers only a namespace key", func(t *testing.T) {
 		t.Parallel()
 
-		opts, err := keyPolicyRegistryOpts(t.Context(), &config.KeyPolicy{URI: distinctKeyURL(t, 2)}, log, "other", false)
+		opts, err := keyPolicyRegistryOpts(t.Context(), &config.KeyPolicy{URI: distinctKeyURL(t, 2)}, log, "other", false, newFxTestReporter(t))
 		require.NoError(t, err)
 
 		_, err = crypto.NewKEKRegistry(opts...)
@@ -158,7 +161,7 @@ func TestKeyPolicyRegistryOpts(t *testing.T) {
 	t.Run("default namespace with asDefault false is a namespace key", func(t *testing.T) {
 		t.Parallel()
 
-		opts, err := keyPolicyRegistryOpts(t.Context(), &config.KeyPolicy{URI: distinctKeyURL(t, 3)}, log, defaultNamespace, false)
+		opts, err := keyPolicyRegistryOpts(t.Context(), &config.KeyPolicy{URI: distinctKeyURL(t, 3)}, log, defaultNamespace, false, newFxTestReporter(t))
 		require.NoError(t, err)
 
 		_, err = crypto.NewKEKRegistry(opts...)
@@ -193,7 +196,7 @@ func TestCreateVault(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			v, err := createVault(&config.Config{Encryption: tt.enc}, reg)
+			v, err := createVault(&config.Config{Encryption: tt.enc}, reg, newFxTestReporter(t))
 			require.NoError(t, err)
 			require.NotNil(t, v)
 		})
@@ -221,7 +224,7 @@ func TestCreateVault_AppliesOverrideKeyConfig(t *testing.T) {
 		},
 	}}
 
-	_, err = createVault(cfg, reg)
+	_, err = createVault(cfg, reg, newFxTestReporter(t))
 	require.Error(t, err)
 }
 
@@ -231,7 +234,7 @@ func TestCreateKEKRegistry(t *testing.T) {
 	lc := fxtest.NewLifecycle(t)
 	cfg := &config.Config{Encryption: config.Encryption{Enabled: true, Default: &config.KeyPolicy{URI: distinctKeyURL(t, 1)}}}
 
-	reg, err := createKEKRegistry(t.Context(), lc, cfg, logger.NewNoopLogger())
+	reg, err := createKEKRegistry(t.Context(), lc, cfg, logger.NewNoopLogger(), newFxTestReporter(t))
 	require.NoError(t, err)
 	require.NotNil(t, reg)
 
@@ -256,12 +259,12 @@ func TestCreateKEKRegistry_OverrideKeySelectedByNamespace(t *testing.T) {
 		},
 	}}
 
-	reg, err := createKEKRegistry(t.Context(), lc, cfg, logger.NewNoopLogger())
+	reg, err := createKEKRegistry(t.Context(), lc, cfg, logger.NewNoopLogger(), newFxTestReporter(t))
 	require.NoError(t, err)
 	lc.RequireStart()
 	t.Cleanup(func() { lc.RequireStop() })
 
-	vault, err := createVault(cfg, reg)
+	vault, err := createVault(cfg, reg, newFxTestReporter(t))
 	require.NoError(t, err)
 
 	// The override namespace seals under its own KEK.
@@ -285,6 +288,7 @@ func TestModule_NoKeys_ProvidesNilVault(t *testing.T) {
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(&config.Config{Encryption: config.Encryption{Enabled: false}}),
 		fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
+		fx.Provide(func() *metrics.Factory { return metrics.New("test", promauto.With(prometheus.NewRegistry())) }),
 		Module,
 		fx.Populate(&v),
 		fx.NopLogger,
@@ -312,6 +316,7 @@ func TestModule_DisabledWithKeys_ProvidesVault(t *testing.T) {
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(cfg),
 		fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
+		fx.Provide(func() *metrics.Factory { return metrics.New("test", promauto.With(prometheus.NewRegistry())) }),
 		Module,
 		fx.Populate(&v),
 	)
@@ -336,6 +341,7 @@ func TestModule_Enabled_ProvidesVaultAndRunsCleanly(t *testing.T) {
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(cfg),
 		fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
+		fx.Provide(func() *metrics.Factory { return metrics.New("test", promauto.With(prometheus.NewRegistry())) }),
 		Module,
 		fx.Populate(&v),
 	)
@@ -360,6 +366,7 @@ func TestModule_Enabled_InvalidURI_FailsConstruction(t *testing.T) {
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(cfg),
 		fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
+		fx.Provide(func() *metrics.Factory { return metrics.New("test", promauto.With(prometheus.NewRegistry())) }),
 		Module,
 		fx.NopLogger,
 	)
@@ -388,4 +395,12 @@ func closeKEKs(t *testing.T, keys []crypto.KEK) {
 	for _, k := range keys {
 		require.NoError(t, k.Close())
 	}
+}
+
+// newFxTestReporter builds a Reporter backed by its own private registry, so
+// fx.go call sites under test have a Reporter to record into without
+// colliding with any other test's metrics.
+func newFxTestReporter(t *testing.T) *Reporter {
+	t.Helper()
+	return NewReporter(metrics.New("test", promauto.With(prometheus.NewRegistry())).ForSubsystem("encryption"))
 }

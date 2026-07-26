@@ -5,12 +5,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
 	"github.com/temporalio/temporal-proxy/internal/proxy"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
@@ -233,6 +236,7 @@ func TestModuleRequiresTranslator(t *testing.T) {
 			Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:47242"}}},
 		}),
 		fx.Provide(func() *crypto.Vault { return nil }),
+		fx.Provide(func() *metrics.Factory { return metrics.New("tmprl_proxy", promauto.With(prometheus.NewRegistry())) }),
 		connect.Module,
 		proxy.Module,
 		fx.NopLogger,
@@ -251,6 +255,7 @@ func newProxyApp(t *testing.T, cfg *config.Config, opts ...fx.Option) *fx.App {
 		// case, and the proxy skips the encryption interceptor. Tests that
 		// exercise encryption override this with a real vault.
 		fx.Provide(func() *crypto.Vault { return nil }),
+		fx.Provide(func() *metrics.Factory { return metrics.New("tmprl_proxy", promauto.With(prometheus.NewRegistry())) }),
 		connect.Module,
 		protoutil.Module,
 		proxy.Module,
