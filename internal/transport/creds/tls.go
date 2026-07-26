@@ -18,12 +18,16 @@ import (
 const minTLSVersion = tls.VersionTLS12
 
 // preferredCipherSuites lists the only TLS 1.2 cipher suites accepted on
-// server connections. Both use ECDHE for forward secrecy and AES-GCM for
-// authenticated encryption. TLS 1.3 cipher suites are not controlled by this
-// field and are always negotiated by the Go runtime.
+// server connections. All use ECDHE for forward secrecy and AES-GCM for
+// authenticated encryption; both RSA and ECDSA leaf keys are supported so the
+// proxy accepts identity material from either family. TLS 1.3 cipher suites
+// are not controlled by this field and are always negotiated by the Go
+// runtime.
 var preferredCipherSuites = []uint16{
 	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 }
 
 type (
