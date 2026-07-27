@@ -8,13 +8,18 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/common/v1"
 	"go.temporal.io/api/proxy"
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
 )
@@ -43,7 +48,7 @@ func TestEncryptionInterceptorRoundtrip(t *testing.T) {
 	t.Parallel()
 
 	v := &fakeVault{}
-	interceptor, err := EncryptionInterceptor(true, v)
+	interceptor, err := EncryptionInterceptor(true, v, newTestReporter(t))
 	require.NoError(t, err)
 
 	input := &common.Payloads{Payloads: []*common.Payload{testPayload("json/plain", `"hi"`)}}
@@ -77,7 +82,7 @@ func TestEncryptionInterceptorDisabledSkipsOutbound(t *testing.T) {
 	t.Parallel()
 
 	v := &fakeVault{}
-	interceptor, err := EncryptionInterceptor(false, v)
+	interceptor, err := EncryptionInterceptor(false, v, newTestReporter(t))
 	require.NoError(t, err)
 
 	// A response payload sealed exactly as fakeVault.Seal would produce it, so
@@ -121,10 +126,85 @@ func TestEncryptionInterceptorDisabledSkipsOutbound(t *testing.T) {
 	require.Empty(t, v.namespaces, "interceptor must not seal when disabled")
 }
 
+func TestEncryptionInterceptorRecordsDEKOps(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	reporter := NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"))
+
+	vault := &fakeVault{}
+	interceptor, err := EncryptionInterceptor(true, vault, reporter)
+	require.NoError(t, err)
+
+	ctx := metadata.AppendToOutgoingContext(t.Context(), meta.NamespaceHeader, "ns1")
+
+	req := &workflowservice.StartWorkflowExecutionRequest{
+		Input: &common.Payloads{Payloads: []*common.Payload{{Data: []byte("hi")}}},
+	}
+	resp := &workflowservice.StartWorkflowExecutionRequest{}
+
+	// Echo the sealed request payload back so the inbound path opens it,
+	// exercising the decrypt metric path alongside encrypt.
+	invoker := func(_ context.Context, _ string, gotReq, gotResp any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
+		sent := gotReq.(*workflowservice.StartWorkflowExecutionRequest).Input.Payloads[0]
+		gotResp.(*workflowservice.StartWorkflowExecutionRequest).Input = &common.Payloads{
+			Payloads: []*common.Payload{sent},
+		}
+		return nil
+	}
+	require.NoError(t, interceptor(ctx, "/method", req, resp, nil, invoker))
+
+	ops := gatherFamily(t, reg, "proxy_encryption_dek_ops_total")
+	require.NotNil(t, ops)
+	require.True(t, hasLabels(ops, map[string]string{"operation": "encrypt", "result": "success", "namespace": "ns1"}))
+	require.True(t, hasLabels(ops, map[string]string{"operation": "decrypt", "result": "success", "namespace": "ns1"}))
+
+	dur := gatherFamily(t, reg, "proxy_encryption_dek_ops_duration_secs")
+	require.NotNil(t, dur)
+	require.True(t, hasLabels(dur, map[string]string{"operation": "encrypt", "namespace": "ns1"}))
+	require.True(t, hasLabels(dur, map[string]string{"operation": "decrypt", "namespace": "ns1"}))
+}
+
+func TestEncryptionInterceptorSkipsMetricsForPassThrough(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	reporter := NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"))
+
+	vault := &fakeVault{}
+	interceptor, err := EncryptionInterceptor(true, vault, reporter)
+	require.NoError(t, err)
+
+	ctx := metadata.AppendToOutgoingContext(t.Context(), meta.NamespaceHeader, "ns1")
+
+	req := &workflowservice.StartWorkflowExecutionRequest{
+		Input: &common.Payloads{Payloads: []*common.Payload{{Data: []byte("hi")}}},
+	}
+	resp := &workflowservice.StartWorkflowExecutionRequest{}
+
+	// Return an unencrypted response payload; the inbound path must pass it
+	// through without opening it or recording a decrypt op.
+	invoker := func(_ context.Context, _ string, _, gotResp any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
+		gotResp.(*workflowservice.StartWorkflowExecutionRequest).Input = &common.Payloads{
+			Payloads: []*common.Payload{testPayload("json/plain", `"plain"`)},
+		}
+		return nil
+	}
+	require.NoError(t, interceptor(ctx, "/method", req, resp, nil, invoker))
+
+	require.Equal(t, 0, vault.opens)
+
+	ops := gatherFamily(t, reg, "proxy_encryption_dek_ops_total")
+	require.NotNil(t, ops)
+	require.True(t, hasLabels(ops, map[string]string{"operation": "encrypt", "result": "success", "namespace": "ns1"}))
+	require.False(t, hasLabels(ops, map[string]string{"operation": "decrypt", "result": "success", "namespace": "ns1"}))
+}
+
 func TestEncryptDecryptPayloadsRoundtrip(t *testing.T) {
 	t.Parallel()
 
 	v := &fakeVault{}
+	r := newTestReporter(t)
 	vc := visitCtx(meta.WithNamespace(t.Context(), "ns1"))
 
 	original := []*common.Payload{
@@ -136,7 +216,7 @@ func TestEncryptDecryptPayloadsRoundtrip(t *testing.T) {
 		proto.Clone(original[1]).(*common.Payload),
 	}
 
-	sealed, err := encryptPayloads(v)(vc, original)
+	sealed, err := encryptPayloads(v, r)(vc, original)
 	require.NoError(t, err)
 	require.Len(t, sealed, len(original))
 
@@ -150,7 +230,7 @@ func TestEncryptDecryptPayloadsRoundtrip(t *testing.T) {
 
 	require.Equal(t, []string{"ns1", "ns1"}, v.namespaces)
 
-	opened, err := decryptPayloads(v)(vc, sealed)
+	opened, err := decryptPayloads(v, r)(vc, sealed)
 	require.NoError(t, err)
 	require.Len(t, opened, len(want))
 
@@ -163,15 +243,16 @@ func TestDecryptPayloadsPassesThroughUnencrypted(t *testing.T) {
 	t.Parallel()
 
 	v := &fakeVault{}
+	r := newTestReporter(t)
 	vc := visitCtx(meta.WithNamespace(t.Context(), "ns1"))
 
 	orig := testPayload("json/plain", `"secret"`)
-	sealed, err := encryptPayloads(v)(vc, []*common.Payload{orig})
+	sealed, err := encryptPayloads(v, r)(vc, []*common.Payload{orig})
 	require.NoError(t, err)
 
 	plain := testPayload("json/plain", `"visible"`)
 
-	out, err := decryptPayloads(v)(vc, []*common.Payload{sealed[0], plain})
+	out, err := decryptPayloads(v, r)(vc, []*common.Payload{sealed[0], plain})
 	require.NoError(t, err)
 	require.Len(t, out, 2)
 	require.True(t, proto.Equal(orig, out[0]))
@@ -204,7 +285,7 @@ func TestEncryptPayloadsNamespace(t *testing.T) {
 			t.Parallel()
 
 			v := &fakeVault{}
-			_, err := encryptPayloads(v)(visitCtx(tc.ctx(t)), []*common.Payload{testPayload("json/plain", "x")})
+			_, err := encryptPayloads(v, newTestReporter(t))(visitCtx(tc.ctx(t)), []*common.Payload{testPayload("json/plain", "x")})
 			require.NoError(t, err)
 			require.Equal(t, []string{tc.want}, v.namespaces)
 		})
@@ -218,7 +299,7 @@ func TestEncryptDecryptPayloadsErrors(t *testing.T) {
 		t.Parallel()
 
 		v := &fakeVault{sealErr: errors.New("kms unavailable")}
-		_, err := encryptPayloads(v)(visitCtx(t.Context()), []*common.Payload{testPayload("json/plain", "x")})
+		_, err := encryptPayloads(v, newTestReporter(t))(visitCtx(t.Context()), []*common.Payload{testPayload("json/plain", "x")})
 		require.ErrorContains(t, err, "failed to encrypt payload")
 	})
 
@@ -226,12 +307,13 @@ func TestEncryptDecryptPayloadsErrors(t *testing.T) {
 		t.Parallel()
 
 		v := &fakeVault{}
+		r := newTestReporter(t)
 		vc := visitCtx(meta.WithNamespace(t.Context(), "ns1"))
-		sealed, err := encryptPayloads(v)(vc, []*common.Payload{testPayload("json/plain", "x")})
+		sealed, err := encryptPayloads(v, r)(vc, []*common.Payload{testPayload("json/plain", "x")})
 		require.NoError(t, err)
 
 		v.openErr = errors.New("unwrap failed")
-		_, err = decryptPayloads(v)(vc, sealed)
+		_, err = decryptPayloads(v, r)(vc, sealed)
 		require.ErrorContains(t, err, "failed to decrypt payload")
 	})
 
@@ -239,11 +321,12 @@ func TestEncryptDecryptPayloadsErrors(t *testing.T) {
 		t.Parallel()
 
 		v := &fakeVault{openReturn: []byte{0xFF, 0xFF, 0xFF}}
+		r := newTestReporter(t)
 		vc := visitCtx(meta.WithNamespace(t.Context(), "ns1"))
-		sealed, err := encryptPayloads(v)(vc, []*common.Payload{testPayload("json/plain", "x")})
+		sealed, err := encryptPayloads(v, r)(vc, []*common.Payload{testPayload("json/plain", "x")})
 		require.NoError(t, err)
 
-		_, err = decryptPayloads(v)(vc, sealed)
+		_, err = decryptPayloads(v, r)(vc, sealed)
 		require.ErrorContains(t, err, "failed to unmarshal payload")
 	})
 }
@@ -299,4 +382,57 @@ func mustMarshal(t *testing.T, p *common.Payload) []byte {
 
 func visitCtx(ctx context.Context) *proxy.VisitPayloadsContext {
 	return &proxy.VisitPayloadsContext{Context: ctx}
+}
+
+// newTestReporter builds a Reporter backed by its own private registry, so
+// call sites under test have a Reporter to record into without colliding with
+// any other test's metrics.
+func newTestReporter(t *testing.T) *Reporter {
+	t.Helper()
+	return NewReporter(metrics.New("test", promauto.With(prometheus.NewRegistry())).ForSubsystem("encryption"))
+}
+
+// gatherFamily returns the metric family named name from reg, or nil if no
+// such family has been registered/observed.
+func gatherFamily(t *testing.T, reg *prometheus.Registry, name string) *dto.MetricFamily {
+	t.Helper()
+
+	mfs, err := reg.Gather()
+	require.NoError(t, err)
+
+	for _, mf := range mfs {
+		if mf.GetName() == name {
+			return mf
+		}
+	}
+
+	return nil
+}
+
+// hasLabels reports whether mf contains a metric whose label set matches
+// labels exactly.
+func hasLabels(mf *dto.MetricFamily, labels map[string]string) bool {
+	for _, m := range mf.GetMetric() {
+		got := make(map[string]string, len(m.GetLabel()))
+		for _, l := range m.GetLabel() {
+			got[l.GetName()] = l.GetValue()
+		}
+
+		if len(got) != len(labels) {
+			continue
+		}
+
+		match := true
+		for k, v := range labels {
+			if got[k] != v {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+
+	return false
 }

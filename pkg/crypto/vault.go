@@ -25,6 +25,7 @@ type (
 		cache         *lru.Cache[string, *DEK]
 		defaultConfig *KeyConfig
 		nowFn         func() time.Time
+		observer      Observer
 	}
 
 	// NamespacedVault is a [Vault] bound to a single namespace so callers can
@@ -59,6 +60,7 @@ type (
 		defaultConfig *KeyConfig
 		nowFn         func() time.Time
 		cacheSize     int
+		observer      Observer
 		errs          []error
 	}
 
@@ -84,6 +86,7 @@ func NewVault(r *KEKRegistry, opts ...VaultOption) (*Vault, error) {
 		cacheSize: 100,
 		config:    make(map[string]KeyConfig),
 		nowFn:     time.Now,
+		observer:  nopObserver{},
 	}
 
 	for _, opt := range opts {
@@ -99,6 +102,7 @@ func NewVault(r *KEKRegistry, opts ...VaultOption) (*Vault, error) {
 		keys:          make(map[string]*slidingDEK),
 		defaultConfig: vopts.defaultConfig,
 		nowFn:         vopts.nowFn,
+		observer:      vopts.observer,
 	}
 
 	if vopts.cacheSize > 0 {
@@ -182,6 +186,19 @@ func WithCacheSize(n int) VaultOption {
 	}
 }
 
+// WithObserver sets the Observer notified of Vault-internal events such as DEK
+// cache hits and misses. A nil Observer is replaced with a no-op, so Open never
+// needs to nil-check. Without this option no events are emitted.
+func WithObserver(o Observer) VaultOption {
+	return func(e *vaultOptions) {
+		if o == nil {
+			o = nopObserver{}
+		}
+
+		e.observer = o
+	}
+}
+
 // Seal encrypts data for ns, returning the ciphertext together with the wrapped
 // DEK required to Open it. The active DEK for ns is created or rotated on demand.
 // Concurrent first-time seals holding the same DEK are coalesced into a single
@@ -257,6 +274,9 @@ func (v *Vault) Open(ctx context.Context, msg *Message) ([]byte, error) {
 	if v.cache != nil {
 		if cached, ok := v.cache.Get(msg.KeyMaterial.EncryptedDEK); ok {
 			dek = cached
+			v.observer.CacheHit(CacheEvent{Size: v.cache.Len()})
+		} else {
+			v.observer.CacheMiss(CacheEvent{Size: v.cache.Len()})
 		}
 	}
 

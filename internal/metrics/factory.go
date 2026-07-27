@@ -60,3 +60,15 @@ func (f *Factory) NewHistogram(opts prometheus.HistogramOpts, labelNames []strin
 
 	return f.factory.NewHistogramVec(opts, labelNames)
 }
+
+// NewGauge creates and registers a label-less Gauge. It forces the bound
+// namespace (and subsystem, when set) onto opts, overriding any the caller set,
+// so every gauge shares the same prefix.
+func (f *Factory) NewGauge(opts prometheus.GaugeOpts) prometheus.Gauge {
+	opts.Namespace = f.namespace
+	if f.subsystem != "" {
+		opts.Subsystem = f.subsystem
+	}
+
+	return f.factory.NewGauge(opts)
+}
