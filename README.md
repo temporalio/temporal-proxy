@@ -3,6 +3,7 @@
 [![ci](https://github.com/temporalio/temporal-proxy/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/temporalio/temporal-proxy/actions/workflows/ci.yaml)
 [![codecov](https://codecov.io/gh/temporalio/temporal-proxy/branch/main/graph/badge.svg)](https://codecov.io/gh/temporalio/temporal-proxy)
 [![Go Reference](https://pkg.go.dev/badge/github.com/temporalio/temporal-proxy.svg)](https://pkg.go.dev/github.com/temporalio/temporal-proxy)
+[![release](https://img.shields.io/github/v/release/temporalio/temporal-proxy)](https://github.com/temporalio/temporal-proxy/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A gRPC proxy that sits between Temporal SDK Clients, Workers, and the Temporal UI on one side and one or more upstream
@@ -28,16 +29,16 @@ reaches a different upstream with no change to the Worker.
 ## How
 
 ```mermaid
-flowchart LR
+  flowchart LR
     Worker[Worker]
     Client[SDK Client]
     UI[Web UI]
 
     subgraph Proxy[Temporal Proxy]
         direction LR
-        Gateway[Gateway]
-        ProxyA[Per-upstream proxy A]
-        ProxyB[Per-upstream proxy B]
+        Gateway["Gateway<br/>routes by Namespace<br/>codec-transparent (no payload parsing)"]
+        ProxyA["Per-upstream proxy A<br/>Namespace translation<br/>payload encryption (optional)"]
+        ProxyB["Per-upstream proxy B<br/>Namespace translation<br/>payload encryption (optional)"]
         Gateway -->|unix socket| ProxyA
         Gateway -->|unix socket| ProxyB
     end
@@ -50,7 +51,6 @@ flowchart LR
     UI --> Gateway
     ProxyA --> Cloud
     ProxyB --> SelfHosted
-
 ```
 
 ## Features
@@ -79,10 +79,11 @@ Install the `proxy` binary into your `$GOBIN` with `go install`:
 go install github.com/temporalio/temporal-proxy/cmd/proxy@latest
 ```
 
-`@latest` resolves to the newest stable release. Pin an explicit version if you prefer:
+`@latest` resolves to the newest stable release. Pin an explicit version from the
+[releases page](https://github.com/temporalio/temporal-proxy/releases) if you prefer:
 
 ```bash
-go install github.com/temporalio/temporal-proxy/cmd/proxy@v0.1.0
+go install github.com/temporalio/temporal-proxy/cmd/proxy@vX.Y.Z
 ```
 
 ### Container image
@@ -102,10 +103,10 @@ A chart is published to the Temporal Helm repo at `https://go.temporal.io/helm-c
 helm install temporal-proxy temporal-proxy \
   --repo https://go.temporal.io/helm-charts
 
-# Or pin a specific proxy version
+# Or pin a specific proxy version (see the releases page)
 helm install temporal-proxy temporal-proxy \
   --repo https://go.temporal.io/helm-charts \
-  --set image.tag=v0.1.0
+  --set image.tag=vX.Y.Z
 ```
 
 Each chart release deploys a proxy version by default; `--set image.tag` overrides it to pin a specific one.
