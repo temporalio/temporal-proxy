@@ -18,10 +18,13 @@ type (
 
 		// ID returns a unique ID for this KEK, e.g. a KMS ARN.
 		ID() string
-		// Encrypt encrypts a DEK, returning the ciphertext.
-		Encrypt(context.Context, []byte) ([]byte, error)
-		// Decrypt decrypts a DEK previously produced by Encrypt.
-		Decrypt(context.Context, []byte) ([]byte, error)
+		// Encrypt encrypts a DEK for the given namespace, returning the ciphertext.
+		// The namespace lets a KEK select a per-namespace key; implementations backed
+		// by a single fixed key ignore it.
+		Encrypt(ctx context.Context, ns string, dek []byte) ([]byte, error)
+		// Decrypt decrypts a DEK previously produced by Encrypt. No namespace is
+		// required: the KEK is selected by ID from the DEK material.
+		Decrypt(ctx context.Context, dek []byte) ([]byte, error)
 	}
 
 	// KEKRegistry holds the set of KEKs available for encrypting and decrypting DEKs.
@@ -153,7 +156,7 @@ func (r *KEKRegistry) Encrypt(ctx context.Context, ns string, dek *DEK) (*DEKMat
 		k = r.defaultKey
 	}
 
-	ct, err := k.Encrypt(ctx, dek.key)
+	ct, err := k.Encrypt(ctx, ns, dek.key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encrypt message in namespace: %s, %w", ns, err)
 	}

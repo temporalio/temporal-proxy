@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package api.kms.v1;
+
+import "api/kms/v1/decrypt.proto";
+import "api/kms/v1/encrypt.proto";
+
+option go_package = "github.com/temporalio/temporal-proxy/pkg/api/kms/v1;kms";
+
+// EncryptionService is the contract for a pluggable Key Management Service (KMS)
+// provider. The proxy ships with built-in providers backed by cloud KMS
+// (awskms, azurekeyvault, gcpkms) and a local testing key. An operator who
+// needs a backend the proxy does not support natively (for example, an on-prem
+// HSM or an internal key service) can instead run their own provider as a gRPC
+// server implementing this service and point the proxy at it.
+//
+// The service plays the role of a Key Encryption Key (KEK): it wraps and unwraps
+// the data encryption keys (DEKs) the proxy uses to seal payloads. It operates
+// only on DEK material and never sees plaintext payloads.
+service EncryptionService {
+  // Encrypt wraps the supplied key material and returns its ciphertext. The
+  // namespace selects which key the provider wraps with, letting a single
+  // provider serve per-namespace keys.
+  rpc Encrypt(EncryptRequest) returns (EncryptResponse) {}
+
+  // Decrypt unwraps ciphertext previously produced by Encrypt and returns the
+  // original key material. The ciphertext is expected to be self-describing so
+  // the provider can identify the key that produced it.
+  rpc Decrypt(DecryptRequest) returns (DecryptResponse) {}
+}

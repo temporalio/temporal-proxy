@@ -30,7 +30,7 @@ func TestMeteredKEKRecordsWrap(t *testing.T) {
 	r := &fakeRecorder{}
 	k := newMeteredKEK(stubKEK{}, "aws", r)
 
-	out, err := k.Encrypt(t.Context(), []byte("dek"))
+	out, err := k.Encrypt(t.Context(), "ns1", []byte("dek"))
 	require.NoError(t, err)
 	require.Equal(t, []byte("dek"), out) // result passed through unchanged
 
@@ -67,7 +67,7 @@ func TestProviderForScheme(t *testing.T) {
 }
 
 func (s stubKEK) ID() string { return "stub" }
-func (s stubKEK) Encrypt(_ context.Context, b []byte) ([]byte, error) {
+func (s stubKEK) Encrypt(_ context.Context, _ string, b []byte) ([]byte, error) {
 	if s.err != nil {
 		return nil, s.err
 	}

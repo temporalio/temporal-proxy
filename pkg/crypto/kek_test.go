@@ -18,6 +18,7 @@ type fakeKEK struct {
 	encErr     error
 	decErr     error
 	plaintext  []byte // when non-nil, returned from Decrypt instead of ct
+	gotNS      string // namespace passed to the most recent Encrypt call
 }
 
 func TestNewKEKRegistry(t *testing.T) {
@@ -199,6 +200,38 @@ func TestKEKRegistryEncrypt(t *testing.T) {
 			require.NotEmpty(t, m.EncryptedDEK)
 		})
 	}
+}
+
+func TestKEKRegistryEncryptForwardsNamespace(t *testing.T) {
+	t.Parallel()
+
+	dek, err := crypto.NewDEK()
+	require.NoError(t, err)
+
+	t.Run("selected namespace key receives the namespace", func(t *testing.T) {
+		t.Parallel()
+		nsKey := &fakeKEK{id: "k1"}
+		r, err := crypto.NewKEKRegistry(
+			crypto.WithDefaultKey(&fakeKEK{id: "default"}),
+			crypto.WithKeyForNamespace("ns1", nsKey),
+		)
+		require.NoError(t, err)
+
+		_, err = r.Encrypt(t.Context(), "ns1", dek)
+		require.NoError(t, err)
+		require.Equal(t, "ns1", nsKey.gotNS)
+	})
+
+	t.Run("default key receives the requested namespace on fallback", func(t *testing.T) {
+		t.Parallel()
+		def := &fakeKEK{id: "default"}
+		r, err := crypto.NewKEKRegistry(crypto.WithDefaultKey(def))
+		require.NoError(t, err)
+
+		_, err = r.Encrypt(t.Context(), "missing", dek)
+		require.NoError(t, err)
+		require.Equal(t, "missing", def.gotNS)
+	})
 }
 
 func TestKEKRegistryDecrypt(t *testing.T) {
@@ -435,7 +468,8 @@ func TestKEKRegistryClose(t *testing.T) {
 
 func (f *fakeKEK) ID() string { return f.id }
 
-func (f *fakeKEK) Encrypt(_ context.Context, pt []byte) ([]byte, error) {
+func (f *fakeKEK) Encrypt(_ context.Context, ns string, pt []byte) ([]byte, error) {
+	f.gotNS = ns
 	if f.encErr != nil {
 		return nil, f.encErr
 	}

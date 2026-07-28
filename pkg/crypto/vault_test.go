@@ -472,7 +472,7 @@ func newRegistry(t *testing.T, extra ...crypto.KEK) *crypto.KEKRegistry {
 
 func (k *countingKEK) ID() string { return k.id }
 
-func (k *countingKEK) Encrypt(_ context.Context, pt []byte) ([]byte, error) {
+func (k *countingKEK) Encrypt(_ context.Context, _ string, pt []byte) ([]byte, error) {
 	k.encCount.Add(1)
 	if k.block != nil {
 		<-k.block

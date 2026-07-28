@@ -16,7 +16,7 @@ func TestNewKEK_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = k.Close() })
 
-	ct, err := k.Encrypt(ctx, []byte("payload"))
+	ct, err := k.Encrypt(ctx, "ns1", []byte("payload"))
 	require.NoError(t, err)
 
 	pt, err := k.Decrypt(ctx, ct)

@@ -25,9 +25,9 @@ type (
 	}
 )
 
-func (m *meteredKEK) Encrypt(ctx context.Context, b []byte) ([]byte, error) {
+func (m *meteredKEK) Encrypt(ctx context.Context, ns string, b []byte) ([]byte, error) {
 	start := time.Now()
-	ct, err := m.KEK.Encrypt(ctx, b)
+	ct, err := m.KEK.Encrypt(ctx, ns, b)
 	m.recorder.KEKOp(m.provider, "wrap", resultLabel(err), time.Since(start).Seconds())
 	return ct, err
 }

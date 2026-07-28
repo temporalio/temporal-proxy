@@ -43,6 +43,13 @@ func (k *kek) ID() string {
 	return k.id
 }
 
+// Encrypt wraps the DEK using the underlying keeper. The namespace is unused: a
+// gocloud keeper addresses a single fixed key, so namespace-based selection has
+// already happened by the time this KEK is chosen.
+func (k *kek) Encrypt(ctx context.Context, _ string, dek []byte) ([]byte, error) {
+	return k.Keeper.Encrypt(ctx, dek)
+}
+
 func safeKeyString(uri string) string {
 	if !strings.HasPrefix(uri, "testing://") {
 		return uri

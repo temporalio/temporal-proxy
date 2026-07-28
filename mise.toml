@@ -6,7 +6,7 @@ lockfile = true
 [tools]
 "github:mattn/goreman" = "latest"
 "github:temporalio/cli" = "latest"
-buf = "1.69"
+buf = "1.72"
 go = "1.26"
 golangci-lint = "2.12"
 goreleaser = "2.17"
@@ -26,14 +26,14 @@ svu = "3.4"
 [tasks.server]
 description = "Run the server locally"
 interactive = true
-depends = ["gen-certs"]
+depends = ["gen:certs"]
 run = "goreman -exit-on-error -set-ports=false -f dev/Procfile start"
 
 # Bare method names are assumed to be on WorkflowService; anything containing a
 # slash is treated as a full service/method path (e.g. grpc.health.v1.Health/Check).
 [tasks.grpc]
 description = "Call the local proxy via buf curl using the dev mTLS certs"
-depends = ["gen-certs"]
+depends = ["gen:certs"]
 usage = '''
 arg "<method>" help="Method name (e.g. GetSystemInfo) or a full service/method path"
 arg "[data]" help="Request body as JSON" default="{}"
@@ -72,7 +72,7 @@ buf curl --protocol grpc --http2-prior-knowledge \
 
 [tasks.lint]
 description = "Lint files"
-run = [{ task = "lint:go" }, { task = "lint:md" }]
+run = [{ task = "lint:go" }, { task = "lint:md" }, { task = "lint:protos" }]
 
 [tasks."lint:go"]
 description = "Lint Go files"
@@ -82,9 +82,17 @@ run = ["golangci-lint run ./..."]
 description = "Lint markdown files"
 run = ["markdownlint-cli2 '**/*.md' --config markdownlint.yaml"]
 
+[tasks."lint:protos"]
+description = "Lint proto files"
+run = ["buf lint"]
+
 [tasks.format]
 description = "Format files"
-run = [{ task = "format:go" }, { task = "format:md" }]
+run = [
+  { task = "format:go" },
+  { task = "format:md" },
+  { task = "format:protos" },
+]
 
 [tasks."format:go"]
 description = "Format Go files"
@@ -93,6 +101,10 @@ run = ["go fix ./...", "golangci-lint fmt"]
 [tasks."format:md"]
 description = "Format markdown files"
 run = ["markdownlint-cli2 '**/*.md' --config markdownlint.yaml --fix"]
+
+[tasks."format:protos"]
+description = "Format proto files"
+run = ["buf format -w"]
 
 [tasks.test]
 description = "Run unit tests"
@@ -111,7 +123,7 @@ run = "go test -run='^$' -bench=. -benchmem -count=${usage_count?} -benchtime=${
 # Code Gen Tasks
 ################################################################################
 
-[tasks.gen-certs]
+[tasks."gen:certs"]
 description = "Generate development certs (client and server)"
 hide = true
 dir = "dev/certs"
@@ -126,6 +138,12 @@ run = [
   "mv rootCA.pem ca.crt",
   "rm -f rootCA-key.pem",
 ]
+
+[tasks."gen:protos"]
+description = "Generate protocol buffers"
+sources = ["api/**/*.proto"]
+outputs = ["pkg/api/**/*.pb.go"]
+run = "buf generate"
 
 ################################################################################
 # Build Tasks

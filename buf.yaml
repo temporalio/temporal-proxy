@@ -1,0 +1,12 @@
+version: v2
+
+deps:
+  - buf.build/bufbuild/protovalidate:v1.2.2
+
+modules:
+  - path: .
+    includes:
+      - api
+
+lint:
+  disallow_comment_ignores: true
