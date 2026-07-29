@@ -70,7 +70,7 @@ changelog:
     - title: Changes
       order: 0
     - title: Dependencies
-      regexp: "^Bump "
+      regexp: "^Bump\\s.*"
       order: 1
 
 release:
@@ -99,20 +99,23 @@ release:
     **Container image**
 
     ```bash
-    docker pull temporalio/{{ .ProjectName }}:v{{ .Version }}
+    docker pull temporalio/{{ .ProjectName }}:{{ .Tag }}
     ```
 
     **Helm**
 
+    See <https://github.com/temporalio/helm-charts/tree/main/charts/temporal-proxy> for more information.
+
     ```bash
     helm install {{ .ProjectName }} {{ .ProjectName }} \
       --repo https://go.temporal.io/helm-charts \
-      --version {{ .Version }}
+      --set image.tag={{ .Tag }}
     ```
 
-    Prebuilt binaries for each platform are attached as assets below. See the
-    [README](https://github.com/temporalio/{{ .ProjectName }}#installation) for full installation and
+    Prebuilt binaries for each platform are attached as assets below. See the [README] for full installation and
     configuration details.
+
+    [README]: https://github.com/temporalio/{{ .ProjectName }}#installation
 
   footer: |
     **Full Changelog**: https://github.com/temporalio/{{ .ProjectName }}/compare/{{ .PreviousTag }}...{{ .Tag }}
