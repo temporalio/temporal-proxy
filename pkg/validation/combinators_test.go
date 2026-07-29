@@ -291,6 +291,93 @@ func TestNested_PrefixesChildSubjects(t *testing.T) {
 	require.Equal(t, "outer", out[1].Subject, "empty subject must be set to the segment")
 }
 
+func TestNested_AccessorSegments(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		entry       validation.Error
+		wantSubject string
+		wantField   string
+	}{
+		{
+			name:        "indexed child subject concatenates onto the segment",
+			entry:       validation.Error{Subject: "[0]", Field: "name"},
+			wantSubject: "upstreams[0]",
+			wantField:   "name",
+		},
+		{
+			name:        "deeper path under an indexed child keeps its dots",
+			entry:       validation.Error{Subject: "[0].tls", Field: "certFile"},
+			wantSubject: "upstreams[0].tls",
+			wantField:   "certFile",
+		},
+		{
+			name:        "unattributed bracketed field binds to the field, not the subject",
+			entry:       validation.Error{Field: "[name]"},
+			wantSubject: "",
+			wantField:   "upstreams[name]",
+		},
+		{
+			name:        "named child subject still dot-joins",
+			entry:       validation.Error{Subject: "explicit", Field: "x"},
+			wantSubject: "upstreams.explicit",
+			wantField:   "x",
+		},
+		{
+			name:        "unattributed plain field still takes the segment as its subject",
+			entry:       validation.Error{Field: "x"},
+			wantSubject: "upstreams",
+			wantField:   "x",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tt.entry.Message = "boom"
+			v := &recordingValidator{err: validation.Errors{tt.entry}}
+
+			out := validation.Nested("upstreams", v)()
+			require.Len(t, out, 1)
+			require.Equal(t, tt.wantSubject, out[0].Subject)
+			require.Equal(t, tt.wantField, out[0].Field)
+		})
+	}
+}
+
+func TestNested_OverChildren_ComposesIndexedSubjects(t *testing.T) {
+	t.Parallel()
+
+	// A collection validator names its elements with an empty Children prefix
+	// ("[0]") and its whole-collection checks with a bracketed field
+	// ("[name]"), leaving the parent to supply "upstreams" via Nested.
+	names := []string{"", "ok"}
+	collection := &recordingValidator{err: validation.Validate(
+		"",
+		validation.Field("[name]", names, func([]string) error {
+			return errors.New("contains duplicate value")
+		}),
+		validation.Children("", names, func(name *string) error {
+			if *name == "" {
+				return validation.Errors{{Field: "name", Message: "is required"}}
+			}
+
+			return nil
+		}),
+	)}
+
+	out := validation.Nested("upstreams", collection)()
+	require.Len(t, out, 2)
+
+	require.Equal(t, "", out[0].Subject, "collection-level failure belongs to no element")
+	require.Equal(t, "upstreams[name]", out[0].Field)
+
+	require.Equal(t, "upstreams[0]", out[1].Subject)
+	require.Equal(t, "name", out[1].Field)
+}
+
 func TestNested_SingleValidationError(t *testing.T) {
 	t.Parallel()
 

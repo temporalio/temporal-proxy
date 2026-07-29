@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
+	"github.com/temporalio/temporal-proxy/internal/api"
 	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/kms"
@@ -99,6 +100,7 @@ func newFullApp(t *testing.T, cfg *config.Config) *fx.App {
 			func() prometheus.Gatherer { return reg },
 			func() prometheus.Registerer { return reg },
 		),
+		api.Module,
 		auth.Module,
 		connect.Module,
 		kms.Module,

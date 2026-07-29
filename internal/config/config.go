@@ -15,11 +15,12 @@ import (
 type (
 	// Config is the top-level proxy configuration.
 	Config struct {
-		Listen     ListenConfig `yaml:",inline"`
-		Encryption Encryption   `yaml:"encryption"`
-		Routing    Routing      `yaml:"routing"`
-		Upstreams  []Upstream   `yaml:"upstreams"`
-		Auth       *AuthConfig  `yaml:"auth"`
+		Listen           ListenConfig        `yaml:",inline"`
+		Encryption       Encryption          `yaml:"encryption"`
+		ExtensionServers ExtensionServerList `yaml:"extensionServers"`
+		Routing          Routing             `yaml:"routing"`
+		Upstreams        UpstreamList        `yaml:"upstreams"`
+		Auth             *AuthConfig         `yaml:"auth"`
 	}
 )
 
@@ -62,7 +63,7 @@ func LoadFile(path string) (*Config, error) {
 // routing reference on the "routing"/"routing.rules[i]" subject.
 func (c *Config) Validate() error {
 	rules := []validation.Rule{
-		validation.Field("upstreams", c.Upstreams, func(us []Upstream) error {
+		validation.Field("upstreams", c.Upstreams, func(us UpstreamList) error {
 			if len(us) == 0 {
 				return errors.New("at least one upstream is required")
 			}
@@ -71,23 +72,24 @@ func (c *Config) Validate() error {
 		}),
 		validation.Nested("", &c.Listen),
 		validation.Nested("encryption", &c.Encryption),
+		validation.Nested("extensionServers", &c.ExtensionServers),
 		validation.Nested("routing", &c.Routing),
 		validation.WhenRules(func() bool { return c.Auth != nil }, validation.Nested("auth", c.Auth)),
-		validation.Children("upstreams", c.Upstreams, func(u *Upstream) error { return u.Validate() }),
+		validation.Nested("upstreams", &c.Upstreams),
 	}
 
-	names := make([]string, len(c.Upstreams))
-	hostPorts := make([]string, len(c.Upstreams))
 	known := make(map[string]struct{}, len(c.Upstreams))
 	for i := range c.Upstreams {
-		names[i] = c.Upstreams[i].Name
-		hostPorts[i] = c.Upstreams[i].Listen.HostPort
-		known[names[i]] = struct{}{}
+		known[c.Upstreams[i].Name] = struct{}{}
 	}
 
-	rules = append(rules, validation.Field("upstreams[name]", names, validation.Unique[string]()))
-	rules = append(rules, validation.Field("upstreams[hostPort]", hostPorts, validation.Unique[string]()))
+	knownExtensions := make(map[string]struct{}, len(c.ExtensionServers))
+	for i := range c.ExtensionServers {
+		knownExtensions[c.ExtensionServers[i].Name] = struct{}{}
+	}
+
 	rules = append(rules, c.Routing.referentialRules(known)...)
+	rules = append(rules, c.Encryption.referentialRules(knownExtensions)...)
 	return validation.Validate("", rules...)
 }
 

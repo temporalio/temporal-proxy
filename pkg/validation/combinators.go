@@ -1,6 +1,9 @@
 package validation
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type (
 	// Validator is satisfied by any type whose Validate method returns an
@@ -76,6 +79,13 @@ func WhenNested(pred func() bool, subject string, v Validator) Rule {
 // empty subject leaves entries unchanged, and any non-validation error is
 // wrapped as a single entry whose Message is err.Error() and whose Subject is
 // subject.
+//
+// A child segment that starts with "[" is an accessor on the segment before it
+// rather than a path component of its own, so it is concatenated instead of
+// dot-joined. That covers both element indexes, where a child Subject of "[0]"
+// composes into "classes[0]", and whole-collection pseudo-fields, where an
+// unattributed child Field of "[name]" composes into "classes[name]" and leaves
+// Subject empty - the failure belongs to the collection, not to any one element.
 func Nested(subject string, v Validator) Rule {
 	return func() Errors {
 		err := v.Validate()
@@ -89,10 +99,13 @@ func Nested(subject string, v Validator) Rule {
 		}
 
 		for i := range errs {
-			if errs[i].Subject == "" {
+			switch {
+			case errs[i].Subject != "":
+				errs[i].Subject = join(subject, errs[i].Subject)
+			case strings.HasPrefix(errs[i].Field, "["):
+				errs[i].Field = subject + errs[i].Field
+			default:
 				errs[i].Subject = subject
-			} else {
-				errs[i].Subject = subject + "." + errs[i].Subject
 			}
 		}
 
@@ -124,3 +137,13 @@ func Children[S ~[]T, T any](name string, items S, validate func(*T) error) Rule
 }
 
 func (f validatorFunc) Validate() error { return f() }
+
+// join appends a child path segment to a parent, concatenating accessor
+// segments ("[0]", "[name]") and dot-joining named ones.
+func join(parent, child string) string {
+	if strings.HasPrefix(child, "[") {
+		return parent + child
+	}
+
+	return parent + "." + child
+}

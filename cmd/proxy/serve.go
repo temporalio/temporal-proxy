@@ -9,6 +9,7 @@ import (
 	"go.uber.org/fx"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
+	"github.com/temporalio/temporal-proxy/internal/api"
 	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/kms"
@@ -72,6 +73,7 @@ func serve() *cli.Command {
 					func() prometheus.Gatherer { return prometheus.DefaultGatherer },
 					func() prometheus.Registerer { return prometheus.DefaultRegisterer },
 				),
+				api.Module,
 				auth.Module,
 				config.Module,
 				connect.Module,
