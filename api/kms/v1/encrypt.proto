@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package api.kms.v1;
+
+option go_package = "github.com/temporalio/temporal-proxy/pkg/api/kms/v1;kms";
+
+// EncryptRequest asks the provider to wrap key material under the key selected
+// for the given namespace.
+message EncryptRequest {
+  // namespace is the pre-translation (local) namespace the DEK belongs to. A
+  // provider may use it to select a per-namespace wrapping key.
+  string namespace = 1;
+  // plaintext is the key material to wrap (a DEK in the proxy's envelope
+  // encryption scheme).
+  bytes plaintext = 2;
+}
+
+// EncryptResponse returns the wrapped key material.
+message EncryptResponse {
+  // ciphertext is the wrapped form of the request's plaintext. It should carry
+  // whatever the provider needs to later identify the wrapping key, so that
+  // Decrypt can unwrap it.
+  bytes ciphertext = 1;
+}

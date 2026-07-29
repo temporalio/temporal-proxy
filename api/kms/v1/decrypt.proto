@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package api.kms.v1;
+
+option go_package = "github.com/temporalio/temporal-proxy/pkg/api/kms/v1;kms";
+
+// DecryptRequest asks the provider to unwrap ciphertext produced by a prior
+// Encrypt call.
+message DecryptRequest {
+  // ciphertext is the wrapped key material to unwrap. It carries whatever the
+  // provider needs to locate the key that produced it.
+  bytes ciphertext = 1;
+}
+
+// DecryptResponse returns the unwrapped key material.
+message DecryptResponse {
+  // plaintext is the original key material recovered from the request's
+  // ciphertext.
+  bytes plaintext = 1;
+}
