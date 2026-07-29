@@ -143,6 +143,9 @@ The [Temporal Cloud example](examples/cloud) is the quickest way to see the prox
 carry no Cloud configuration talk plaintext to `localhost:7233`, and the proxy adds TLS, the API key, and the Namespace
 rewrite on the way to Cloud. Follow its README to run it end to end.
 
+The [KMS extension server example](examples/kms) shows the pluggable key management path end to end: a local dev server,
+a key provider you run, and workflow payloads that the Temporal Service only ever stores as ciphertext.
+
 ## Terms
 
 | Term             | Meaning                                                                                                                                                                                        |
