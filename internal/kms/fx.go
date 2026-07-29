@@ -10,6 +10,7 @@ import (
 
 	"go.uber.org/fx"
 
+	"github.com/temporalio/temporal-proxy/internal/api"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
@@ -44,6 +45,7 @@ var Module = fx.Options(
 				p.Config,
 				p.Logger,
 				reporter,
+				p.Extensions,
 			)
 			if err != nil {
 				return nil, err
@@ -88,6 +90,9 @@ type (
 		Lifecycle fx.Lifecycle
 		Logger    logger.Logger
 		Factory   *metrics.Factory
+
+		// Extensions supplies the connections behind "extension://" key URIs.
+		Extensions api.Connections
 	}
 
 	// vaultRefresher is the subset of *crypto.Vault the rotation loop depends
@@ -166,10 +171,17 @@ func createVault(c *config.Config, r *crypto.KEKRegistry, reporter *Reporter) (*
 // createKEKRegistry opens the configured KEKs and assembles a registry,
 // registering an fx OnStop hook that closes the registry (and its KEKs) on
 // shutdown.
-func createKEKRegistry(ctx context.Context, lc fx.Lifecycle, c *config.Config, logger logger.Logger, reporter *Reporter) (*crypto.KEKRegistry, error) {
+func createKEKRegistry(
+	ctx context.Context,
+	lc fx.Lifecycle,
+	c *config.Config,
+	logger logger.Logger,
+	reporter *Reporter,
+	conns api.Connections,
+) (*crypto.KEKRegistry, error) {
 	opts := []crypto.KEKRegistryOption{}
 	if dp := c.Encryption.Default; dp != nil {
-		res, err := keyPolicyRegistryOpts(ctx, dp, logger, defaultNamespace, true, reporter)
+		res, err := keyPolicyRegistryOpts(ctx, dp, logger, defaultNamespace, true, reporter, conns)
 		if err != nil {
 			return nil, err
 		}
@@ -181,7 +193,7 @@ func createKEKRegistry(ctx context.Context, lc fx.Lifecycle, c *config.Config, l
 	// logs and, on a partial failure, a repeatable point of failure).
 	for _, ns := range slices.Sorted(maps.Keys(c.Encryption.Overrides)) {
 		policy := c.Encryption.Overrides[ns]
-		res, err := keyPolicyRegistryOpts(ctx, &policy, logger, ns, false, reporter)
+		res, err := keyPolicyRegistryOpts(ctx, &policy, logger, ns, false, reporter, conns)
 		if err != nil {
 			return nil, err
 		}
@@ -216,9 +228,10 @@ func keyPolicyRegistryOpts(
 	ns string,
 	asDefault bool,
 	reporter *Reporter,
+	conns api.Connections,
 ) ([]crypto.KEKRegistryOption, error) {
 	opts := []crypto.KEKRegistryOption{}
-	keys, err := createKEKs(ctx, p, log, ns, reporter)
+	keys, err := createKEKs(ctx, p, log, ns, reporter, conns)
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +254,14 @@ func keyPolicyRegistryOpts(
 // returning the KEKs in that order. The primary key is always element zero. If
 // any key fails to open, every key opened so far is closed before returning, so
 // a partial failure leaks no keepers.
-func createKEKs(ctx context.Context, p *config.KeyPolicy, log logger.Logger, ns string, reporter *Reporter) (_ []crypto.KEK, err error) {
+func createKEKs(
+	ctx context.Context,
+	p *config.KeyPolicy,
+	log logger.Logger,
+	ns string,
+	reporter *Reporter,
+	conns api.Connections,
+) (_ []crypto.KEK, err error) {
 	log = log.With(tag.String("namespace", ns))
 	keys := make([]crypto.KEK, 0, len(p.DecryptURIs)+1)
 
@@ -255,7 +275,7 @@ func createKEKs(ctx context.Context, p *config.KeyPolicy, log logger.Logger, ns 
 
 	mkKey := func(uri *url.URL) error {
 		log.Info("Registering crypto key", tag.String("uri", safeKeyString(uri.String())))
-		k, err := newKEK(ctx, uri.String())
+		k, err := newKEKForURI(ctx, uri, conns)
 		if err != nil {
 			return err
 		}

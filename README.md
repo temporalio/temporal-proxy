@@ -64,6 +64,9 @@ reaches a different upstream with no change to the Worker.
 - **Payload encryption.** Optionally seal payloads with envelope encryption on the hop to an upstream and open them on
   responses, so the upstream only ever sees ciphertext while local Workers keep exchanging cleartext. DEKs are wrapped
   by a KMS key (AWS KMS, Azure Key Vault, or GCP KMS), rotate automatically, and can be overridden per Namespace.
+- **Pluggable key management.** For a backend the proxy has no built-in support for, such as an on-prem HSM or an
+  internal key service, point it at an extension server you run and it wraps DEKs through that instead. Only key
+  material is exchanged; payloads never reach it.
 - **Inbound authentication.** Optional static-token or JWKS validation on the gateway; off by default.
 - **Codec-transparent.** The gateway never parses payloads. It peeks the Namespace, picks an upstream, and relays raw
   frames in both directions.
@@ -147,6 +150,7 @@ rewrite on the way to Cloud. Follow its README to run it end to end.
 | gateway          | The single inbound gRPC endpoint that every SDK Client, Worker, and the UI connects to. It routes each request to an upstream by Namespace and/or request metadata, and never parses payloads. |
 | upstream         | A configured destination the proxy forwards to: a Temporal Service (local dev, self-hosted, or Temporal Cloud), or another Temporal Proxy.                                                     |
 | system upstream  | The upstream that handles Namespace-less requests, such as the SDK's `GetSystemInfo` call on connect.                                                                                          |
+| extension server | A gRPC service you run that the proxy calls out to for a capability it has no built-in backend for. Today that means wrapping DEKs as a key management backend.                                |
 | Temporal Service | A Temporal frontend the proxy connects to.                                                                                                                                                     |
 
 ## Development

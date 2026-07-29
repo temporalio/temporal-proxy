@@ -9,11 +9,20 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/api/kms/v1"
 )
 
+// KMS wraps and unwraps data encryption keys on an extension server
+// implementing api.kms.v1.EncryptionService. Only key material crosses the
+// wire; payload plaintext never reaches the server.
+//
+// The id names the key this client addresses. It is recorded in every DEK the
+// key wraps and is what selects the key again when unwrapping, so it must stay
+// stable for as long as any sealed payload references it.
 type KMS struct {
 	id  string
 	kms kms.EncryptionServiceClient
 }
 
+// NewKMS returns a KMS addressing the key named by id over cc. Several keys may
+// live on one extension server and share a connection, so cc is not owned here.
 func NewKMS(id string, cc grpc.ClientConnInterface) *KMS {
 	return &KMS{
 		id:  id,

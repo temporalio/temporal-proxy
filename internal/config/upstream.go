@@ -19,6 +19,8 @@ type (
 		Credentials *CredentialConfig `yaml:"credentials"`
 	}
 
+	UpstreamList []Upstream
+
 	// NamespaceConfig groups the namespace translation rules for an upstream.
 	NamespaceConfig struct {
 		Rules NamespaceRules `yaml:"rules"`
@@ -88,6 +90,24 @@ func (u *Upstream) IsTemplated() bool {
 	}
 
 	return u.Listen.TLS != nil && isTemplated(u.Listen.TLS.ServerName)
+}
+
+func (ul UpstreamList) Validate() error {
+	names := make([]string, len(ul))
+	hostPorts := make([]string, len(ul))
+	for i, s := range ul {
+		names[i] = s.Name
+		hostPorts[i] = s.Listen.HostPort
+	}
+
+	return validation.Validate(
+		"",
+		validation.Field("[name]", names, validation.Unique[string]()),
+		validation.Field("[hostPort]", hostPorts, validation.Unique[string]()),
+		validation.Children("", ul, func(u *Upstream) error {
+			return u.Validate()
+		}),
+	)
 }
 
 // Validate checks the namespace translation rules.

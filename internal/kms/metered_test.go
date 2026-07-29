@@ -60,6 +60,9 @@ func TestProviderForScheme(t *testing.T) {
 		"testing":       "testing",
 		"base64key":     "testing",
 		"weird":         "weird",
+		// Every extension server shares one label; per-server labels would make
+		// the metric's cardinality track the configuration.
+		ExtensionScheme: ExtensionScheme,
 	}
 	for scheme, want := range cases {
 		require.Equal(t, want, providerForScheme(scheme), "scheme %q", scheme)
