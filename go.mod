@@ -8,7 +8,7 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/prometheus/client_golang v1.24.0
+	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.2
 	github.com/rs/zerolog v1.35.1
 	github.com/stretchr/testify v1.11.1
@@ -16,7 +16,7 @@ require (
 	go.temporal.io/api v1.63.3
 	go.uber.org/fx v1.24.0
 	gocloud.dev v0.46.0
-	golang.org/x/sync v0.21.0
+	golang.org/x/sync v0.22.0
 	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
 )
@@ -69,7 +69,7 @@ require (
 	github.com/nexus-rpc/nexus-proto-annotations v0.1.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/prometheus/common v0.70.0 // indirect
+	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.67.0 // indirect
@@ -82,11 +82,11 @@ require (
 	go.uber.org/dig v1.19.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.1 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/crypto v0.54.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/api v0.272.0 // indirect
