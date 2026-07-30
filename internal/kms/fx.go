@@ -19,6 +19,11 @@ import (
 )
 
 const (
+
+	// testingKeyScheme addresses a local in-process key whose material is carried
+	// in the URI itself, so it has to be redacted before a URI is logged.
+	testingKeyScheme = "testing://"
+
 	defaultNamespace = "default"
 	rotationInterval = 10 * time.Second
 )
@@ -32,20 +37,26 @@ const (
 // decrypts. With no key policy the vault is nil and no rotation runs.
 var Module = fx.Options(
 	fx.Provide(
-		func(p KMSParams) (*crypto.Vault, error) {
+		// One Reporter for the whole subsystem. Each NewReporter call registers its
+		// collectors, and Prometheus rejects a duplicate registration, so the vault
+		// and the key factory have to share an instance rather than build their own.
+		func(p KMSParams) *Reporter {
+			return NewReporter(p.Factory.ForSubsystem("encryption"))
+		},
+		func(p KMSParams, reporter *Reporter) *KeyFactory {
+			return NewKeyFactory(p.Extensions, reporter)
+		},
+		func(p KMSParams, kf *KeyFactory, reporter *Reporter) (*crypto.Vault, error) {
 			if p.Config.Encryption.Default == nil {
 				return nil, nil
 			}
-
-			reporter := NewReporter(p.Factory.ForSubsystem("encryption"))
 
 			r, err := createKEKRegistry(
 				p.Context,
 				p.Lifecycle,
 				p.Config,
 				p.Logger,
-				reporter,
-				p.Extensions,
+				kf,
 			)
 			if err != nil {
 				return nil, err
@@ -176,12 +187,11 @@ func createKEKRegistry(
 	lc fx.Lifecycle,
 	c *config.Config,
 	logger logger.Logger,
-	reporter *Reporter,
-	conns api.Connections,
+	kf *KeyFactory,
 ) (*crypto.KEKRegistry, error) {
 	opts := []crypto.KEKRegistryOption{}
 	if dp := c.Encryption.Default; dp != nil {
-		res, err := keyPolicyRegistryOpts(ctx, dp, logger, defaultNamespace, true, reporter, conns)
+		res, err := keyPolicyRegistryOpts(ctx, dp, logger, defaultNamespace, true, kf)
 		if err != nil {
 			return nil, err
 		}
@@ -193,7 +203,7 @@ func createKEKRegistry(
 	// logs and, on a partial failure, a repeatable point of failure).
 	for _, ns := range slices.Sorted(maps.Keys(c.Encryption.Overrides)) {
 		policy := c.Encryption.Overrides[ns]
-		res, err := keyPolicyRegistryOpts(ctx, &policy, logger, ns, false, reporter, conns)
+		res, err := keyPolicyRegistryOpts(ctx, &policy, logger, ns, false, kf)
 		if err != nil {
 			return nil, err
 		}
@@ -227,11 +237,10 @@ func keyPolicyRegistryOpts(
 	log logger.Logger,
 	ns string,
 	asDefault bool,
-	reporter *Reporter,
-	conns api.Connections,
+	kf *KeyFactory,
 ) ([]crypto.KEKRegistryOption, error) {
 	opts := []crypto.KEKRegistryOption{}
-	keys, err := createKEKs(ctx, p, log, ns, reporter, conns)
+	keys, err := createKEKs(ctx, p, log, ns, kf)
 	if err != nil {
 		return nil, err
 	}
@@ -259,8 +268,7 @@ func createKEKs(
 	p *config.KeyPolicy,
 	log logger.Logger,
 	ns string,
-	reporter *Reporter,
-	conns api.Connections,
+	kf *KeyFactory,
 ) (_ []crypto.KEK, err error) {
 	log = log.With(tag.String("namespace", ns))
 	keys := make([]crypto.KEK, 0, len(p.DecryptURIs)+1)
@@ -275,12 +283,12 @@ func createKEKs(
 
 	mkKey := func(uri *url.URL) error {
 		log.Info("Registering crypto key", tag.String("uri", safeKeyString(uri.String())))
-		k, err := newKEKForURI(ctx, uri, conns)
+		k, err := kf.Create(ctx, uri.String())
 		if err != nil {
 			return err
 		}
 
-		keys = append(keys, newMeteredKEK(k, providerForScheme(uri.Scheme), reporter))
+		keys = append(keys, k)
 		return nil
 	}
 

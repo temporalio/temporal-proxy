@@ -4,9 +4,10 @@ import (
 	"context"
 	"log"
 
-	"github.com/temporalio/temporal-proxy/pkg/api/kms/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/temporalio/temporal-proxy/pkg/api/kms/v1"
 )
 
 // service implements api.kms.v1.EncryptionService over a keyring. Embedding the

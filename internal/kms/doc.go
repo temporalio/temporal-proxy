@@ -5,11 +5,14 @@
 // [crypto.KEKRegistry], and constructs the [crypto.Vault] that the rest of the
 // proxy uses to seal and open payloads.
 //
-// A key is opened one of two ways, chosen by its URI scheme. A cloud KMS key
-// goes through gocloud.dev/secrets (awskms, azurekeyvault, gcpkms, or a local
-// testing key). An "extension://" key instead resolves to an operator-run
-// extension server over a connection supplied by the api package; several keys
-// may name the same server, so each is identified by its whole URI.
+// Keys are opened by a [KeyFactory], which extends [crypto.KeyFactory] in two
+// ways. It adds the "extension://" scheme, resolving such a key to an
+// operator-run extension server over a connection supplied by the api package;
+// several keys may name the same server, so each is identified by its whole URI.
+// Every other scheme is a cloud KMS key that crypto opens through
+// gocloud.dev/secrets (awskms, azurekeyvault, gcpkms, or a local testing key).
+// It also meters what it opens, so each key's wraps and unwraps are recorded
+// against its provider.
 //
 // The package exposes a single [Module] for Uber fx. When encryption is
 // disabled the module provides a nil *crypto.Vault and starts no background
