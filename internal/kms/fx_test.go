@@ -1,14 +1,9 @@
-package kms
+package kms_test
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
-	"errors"
 	"net/url"
-	"sync/atomic"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -19,284 +14,19 @@ import (
 
 	"github.com/temporalio/temporal-proxy/internal/api"
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/kms"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
-
-type refresherFunc func() error
-
-func TestRunRotation_RefreshesImmediatelyThenEachInterval(t *testing.T) {
-	t.Parallel()
-
-	synctest.Test(t, func(t *testing.T) {
-		var calls atomic.Int64
-		r := refresherFunc(func() error {
-			calls.Add(1)
-			return nil
-		})
-
-		ctx, cancel := context.WithCancel(t.Context())
-		go runRotation(ctx, r, time.Second, logger.NewNoopLogger())
-
-		// The first refresh runs immediately; the goroutine then blocks on the
-		// interval timer.
-		synctest.Wait()
-		require.Equal(t, int64(1), calls.Load())
-
-		// Advance past three ticks (t=1s, 2s, 3s); the fourth at t=4s has not fired.
-		time.Sleep(3500 * time.Millisecond)
-		synctest.Wait()
-		require.Equal(t, int64(4), calls.Load())
-
-		// Cancellation stops the loop and no further refreshes occur.
-		cancel()
-		synctest.Wait()
-		require.Equal(t, int64(4), calls.Load())
-	})
-}
-
-func TestRunRotation_ContinuesAfterRefreshError(t *testing.T) {
-	t.Parallel()
-
-	synctest.Test(t, func(t *testing.T) {
-		var calls atomic.Int64
-		r := refresherFunc(func() error {
-			calls.Add(1)
-			return errors.New("kms unavailable")
-		})
-
-		ctx, cancel := context.WithCancel(t.Context())
-		go runRotation(ctx, r, time.Second, logger.NewNoopLogger())
-
-		synctest.Wait()
-		require.Equal(t, int64(1), calls.Load())
-
-		// A failing Refresh is logged and the loop keeps ticking.
-		time.Sleep(2500 * time.Millisecond)
-		synctest.Wait()
-		require.Equal(t, int64(3), calls.Load())
-
-		cancel()
-		synctest.Wait()
-	})
-}
-
-func TestCreateKEKs(t *testing.T) {
-	t.Parallel()
-
-	log := logger.NewNoopLogger()
-	primary := distinctKeyURL(t, 1)
-
-	t.Run("primary followed by decrypt uris, in order", func(t *testing.T) {
-		t.Parallel()
-
-		p := &config.KeyPolicy{URI: primary, DecryptURIs: []url.URL{distinctKeyURL(t, 2), distinctKeyURL(t, 3)}}
-		keys, err := createKEKs(t.Context(), p, log, defaultNamespace, newFxTestReporter(t), nil)
-		require.NoError(t, err)
-		t.Cleanup(func() { closeKEKs(t, keys) })
-
-		require.Len(t, keys, 3)
-		require.Equal(t, "base64key://"+primary.Host, keys[0].ID())
-	})
-
-	t.Run("primary only", func(t *testing.T) {
-		t.Parallel()
-
-		keys, err := createKEKs(t.Context(), &config.KeyPolicy{URI: primary}, log, defaultNamespace, newFxTestReporter(t), nil)
-		require.NoError(t, err)
-		t.Cleanup(func() { closeKEKs(t, keys) })
-
-		require.Len(t, keys, 1)
-	})
-
-	t.Run("bad primary uri errors", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := createKEKs(t.Context(), &config.KeyPolicy{URI: url.URL{Scheme: "bogus", Host: "x"}}, log, defaultNamespace, newFxTestReporter(t), nil)
-		require.Error(t, err)
-	})
-
-	t.Run("bad decrypt uri errors", func(t *testing.T) {
-		t.Parallel()
-
-		p := &config.KeyPolicy{URI: primary, DecryptURIs: []url.URL{{Scheme: "bogus", Host: "x"}}}
-		_, err := createKEKs(t.Context(), p, log, defaultNamespace, newFxTestReporter(t), nil)
-		require.Error(t, err)
-	})
-}
-
-func TestKeyPolicyRegistryOpts(t *testing.T) {
-	t.Parallel()
-
-	log := logger.NewNoopLogger()
-
-	// asDefault selects WithDefaultKey vs WithKeyForNamespace. A default key lets
-	// NewKEKRegistry build; a namespace key alone does not (a default is
-	// required), so the registry's success or failure reveals which option was
-	// chosen.
-	t.Run("asDefault registers a usable default key", func(t *testing.T) {
-		t.Parallel()
-
-		opts, err := keyPolicyRegistryOpts(t.Context(), &config.KeyPolicy{URI: distinctKeyURL(t, 1)}, log, defaultNamespace, true, newFxTestReporter(t), nil)
-		require.NoError(t, err)
-
-		reg, err := crypto.NewKEKRegistry(opts...)
-		require.NoError(t, err)
-		require.NoError(t, reg.Close())
-	})
-
-	t.Run("non-default registers only a namespace key", func(t *testing.T) {
-		t.Parallel()
-
-		opts, err := keyPolicyRegistryOpts(t.Context(), &config.KeyPolicy{URI: distinctKeyURL(t, 2)}, log, "other", false, newFxTestReporter(t), nil)
-		require.NoError(t, err)
-
-		_, err = crypto.NewKEKRegistry(opts...)
-		require.Error(t, err)
-	})
-
-	// The decision is driven by asDefault, not by the namespace string: an
-	// override for the literal "default" namespace must register a namespace key,
-	// not silently overwrite the configured default key.
-	t.Run("default namespace with asDefault false is a namespace key", func(t *testing.T) {
-		t.Parallel()
-
-		opts, err := keyPolicyRegistryOpts(t.Context(), &config.KeyPolicy{URI: distinctKeyURL(t, 3)}, log, defaultNamespace, false, newFxTestReporter(t), nil)
-		require.NoError(t, err)
-
-		_, err = crypto.NewKEKRegistry(opts...)
-		require.Error(t, err)
-	})
-}
-
-func TestCreateVault(t *testing.T) {
-	t.Parallel()
-
-	dk, err := newKEK(t.Context(), "testing://")
-	require.NoError(t, err)
-	reg, err := crypto.NewKEKRegistry(crypto.WithDefaultKey(dk))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = reg.Close() })
-
-	tests := []struct {
-		name string
-		enc  config.Encryption
-	}{
-		{
-			name: "with default policy",
-			enc:  config.Encryption{CacheSize: 10, Default: &config.KeyPolicy{Duration: time.Hour, RenewBefore: time.Minute}},
-		},
-		{
-			name: "without default policy",
-			enc:  config.Encryption{CacheSize: 10},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			v, err := createVault(&config.Config{Encryption: tt.enc}, reg, newFxTestReporter(t))
-			require.NoError(t, err)
-			require.NotNil(t, v)
-		})
-	}
-}
-
-func TestCreateVault_AppliesOverrideKeyConfig(t *testing.T) {
-	t.Parallel()
-
-	dk, err := newKEK(t.Context(), "testing://")
-	require.NoError(t, err)
-	reg, err := crypto.NewKEKRegistry(crypto.WithDefaultKey(dk))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = reg.Close() })
-
-	// An override with an invalid KeyConfig (RenewBefore >= Duration) must make
-	// createVault fail. Config validation would normally reject this, but calling
-	// createVault directly bypasses it, so the error proves the override's config
-	// reaches WithKeyConfig instead of being dropped.
-	cfg := &config.Config{Encryption: config.Encryption{
-		CacheSize: 10,
-		Default:   &config.KeyPolicy{Duration: time.Hour, RenewBefore: time.Minute},
-		Overrides: map[string]config.KeyPolicy{
-			"payments": {Duration: time.Hour, RenewBefore: time.Hour},
-		},
-	}}
-
-	_, err = createVault(cfg, reg, newFxTestReporter(t))
-	require.Error(t, err)
-}
-
-func TestCreateKEKRegistry(t *testing.T) {
-	t.Parallel()
-
-	lc := fxtest.NewLifecycle(t)
-	cfg := &config.Config{Encryption: config.Encryption{Enabled: true, Default: &config.KeyPolicy{URI: distinctKeyURL(t, 1)}}}
-
-	reg, err := createKEKRegistry(t.Context(), lc, cfg, logger.NewNoopLogger(), newFxTestReporter(t), nil)
-	require.NoError(t, err)
-	require.NotNil(t, reg)
-
-	// The registered OnStop hook closes the registry without error.
-	lc.RequireStart()
-	lc.RequireStop()
-}
-
-func TestCreateKEKRegistry_OverrideKeySelectedByNamespace(t *testing.T) {
-	t.Parallel()
-
-	lc := fxtest.NewLifecycle(t)
-	defaultURL := distinctKeyURL(t, 1)
-	overrideURL := distinctKeyURL(t, 2)
-
-	cfg := &config.Config{Encryption: config.Encryption{
-		Enabled:   true,
-		CacheSize: 10,
-		Default:   &config.KeyPolicy{URI: defaultURL, Duration: time.Hour, RenewBefore: time.Minute},
-		Overrides: map[string]config.KeyPolicy{
-			"payments": {URI: overrideURL, Duration: time.Hour, RenewBefore: time.Minute},
-		},
-	}}
-
-	reg, err := createKEKRegistry(t.Context(), lc, cfg, logger.NewNoopLogger(), newFxTestReporter(t), nil)
-	require.NoError(t, err)
-	lc.RequireStart()
-	t.Cleanup(func() { lc.RequireStop() })
-
-	vault, err := createVault(cfg, reg, newFxTestReporter(t))
-	require.NoError(t, err)
-
-	// The override namespace seals under its own KEK.
-	msg, err := vault.Seal(t.Context(), "payments", []byte("secret"))
-	require.NoError(t, err)
-	require.Equal(t, "base64key://"+overrideURL.Host, msg.KeyMaterial.KEKID)
-
-	// Any namespace without an override falls back to the default KEK.
-	msg, err = vault.Seal(t.Context(), "other", []byte("secret"))
-	require.NoError(t, err)
-	require.Equal(t, "base64key://"+defaultURL.Host, msg.KeyMaterial.KEKID)
-}
 
 func TestModule_NoKeys_ProvidesNilVault(t *testing.T) {
 	t.Parallel()
 
 	// No key policy configured (and encryption disabled): there is nothing to
 	// seal or open, so the vault is nil.
-	var v *crypto.Vault
-	app := fx.New(
-		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
-		fx.Supply(&config.Config{Encryption: config.Encryption{Enabled: false}}),
-		fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
-		fx.Provide(func() *metrics.Factory { return metrics.New("test", promauto.With(prometheus.NewRegistry())) }),
-		fx.Supply(api.Connections{}),
-		Module,
-		fx.Populate(&v),
-		fx.NopLogger,
-	)
-
-	require.NoError(t, app.Err())
+	v, err := buildVault(t, &config.Config{Encryption: config.Encryption{Enabled: false}}, logger.NewNoopLogger(), nil)
+	require.NoError(t, err)
 	require.Nil(t, v)
 }
 
@@ -306,53 +36,17 @@ func TestModule_DisabledWithKeys_ProvidesVault(t *testing.T) {
 	// Encryption is off for new traffic but keys remain configured, so the vault
 	// is still built to open payloads sealed earlier. The rotation goroutine is
 	// gated on Enabled, so a clean start/stop confirms none was scheduled.
-	var v *crypto.Vault
-	cfg := &config.Config{Encryption: config.Encryption{
-		Enabled:   false,
-		CacheSize: 10,
-		Default:   &config.KeyPolicy{URI: distinctKeyURL(t, 1), Duration: time.Hour, RenewBefore: time.Minute},
-	}}
-
-	app := fxtest.New(
-		t,
-		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
-		fx.Supply(cfg),
-		fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
-		fx.Provide(func() *metrics.Factory { return metrics.New("test", promauto.With(prometheus.NewRegistry())) }),
-		fx.Supply(api.Connections{}),
-		Module,
-		fx.Populate(&v),
-	)
-
-	app.RequireStart()
+	v := startVault(t, encryptionConfig(false, keyPolicy(t, 1)))
 	require.NotNil(t, v)
-	app.RequireStop()
 }
 
 func TestModule_Enabled_ProvidesVaultAndRunsCleanly(t *testing.T) {
 	t.Parallel()
 
-	var v *crypto.Vault
-	cfg := &config.Config{Encryption: config.Encryption{
-		Enabled:   true,
-		CacheSize: 10,
-		Default:   &config.KeyPolicy{URI: distinctKeyURL(t, 1), Duration: time.Hour, RenewBefore: time.Minute},
-	}}
-
-	app := fxtest.New(
-		t,
-		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
-		fx.Supply(cfg),
-		fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
-		fx.Provide(func() *metrics.Factory { return metrics.New("test", promauto.With(prometheus.NewRegistry())) }),
-		fx.Supply(api.Connections{}),
-		Module,
-		fx.Populate(&v),
-	)
-
-	app.RequireStart()
+	// A clean stop also proves the registry's OnStop hook closed every KEK without
+	// error, since fxtest fails the test on a stop error.
+	v := startVault(t, encryptionConfig(true, keyPolicy(t, 1)))
 	require.NotNil(t, v)
-	app.RequireStop()
 }
 
 func TestModule_Enabled_InvalidURI_FailsConstruction(t *testing.T) {
@@ -361,93 +55,223 @@ func TestModule_Enabled_InvalidURI_FailsConstruction(t *testing.T) {
 	// An unopenable key URI must fail app construction, not surface later at
 	// runtime. Module's Invoke depends on *crypto.Vault, so building the app
 	// forces the erroring provider to run.
-	cfg := &config.Config{Encryption: config.Encryption{
-		Enabled: true,
-		Default: &config.KeyPolicy{URI: url.URL{Scheme: "bogus", Host: "x"}},
-	}}
+	cfg := encryptionConfig(true, config.KeyPolicy{URI: url.URL{Scheme: "bogus", Host: "x"}})
 
-	app := fx.New(
+	_, err := buildVault(t, cfg, logger.NewNoopLogger(), nil)
+	require.Error(t, err)
+}
+
+func TestModule_InvalidDecryptURI_FailsConstruction(t *testing.T) {
+	t.Parallel()
+
+	// A decrypt-only URI is opened alongside the primary, so a bad one has to fail
+	// construction too rather than leaving a key that cannot open old payloads.
+	policy := keyPolicy(t, 1)
+	policy.DecryptURIs = []url.URL{{Scheme: "bogus", Host: "x"}}
+
+	_, err := buildVault(t, encryptionConfig(true, policy), logger.NewNoopLogger(), nil)
+	require.Error(t, err)
+}
+
+func TestModule_InvalidOverrideKeyConfig_FailsConstruction(t *testing.T) {
+	t.Parallel()
+
+	// An override with an invalid KeyConfig (RenewBefore >= Duration) must fail
+	// construction. Config validation would normally reject it, but the module is
+	// handed a Config directly, so the error proves the override's own duration
+	// reaches the vault rather than being dropped in favour of the default's.
+	cfg := encryptionConfig(true, keyPolicy(t, 1))
+	cfg.Encryption.Overrides = map[string]config.KeyPolicy{
+		"payments": {URI: testingKeyURL(t, 2), Duration: time.Hour, RenewBefore: time.Hour},
+	}
+
+	_, err := buildVault(t, cfg, logger.NewNoopLogger(), nil)
+	require.ErrorContains(t, err, `key config for "payments"`)
+}
+
+func TestModule_SelectsKeyByNamespace(t *testing.T) {
+	t.Parallel()
+
+	defaultURL, overrideURL := testingKeyURL(t, 1), testingKeyURL(t, 2)
+
+	cfg := encryptionConfig(true, keyPolicy(t, 1))
+	cfg.Encryption.Overrides = map[string]config.KeyPolicy{
+		"payments": {URI: overrideURL, Duration: time.Hour, RenewBefore: time.Minute},
+	}
+
+	v := startVault(t, cfg)
+
+	// The override namespace seals under its own KEK.
+	msg, err := v.Seal(t.Context(), "payments", []byte("secret"))
+	require.NoError(t, err)
+	require.Equal(t, "base64key://"+overrideURL.Host, msg.KeyMaterial.KEKID)
+
+	// Any namespace without an override falls back to the default KEK.
+	msg, err = v.Seal(t.Context(), "other", []byte("secret"))
+	require.NoError(t, err)
+	require.Equal(t, "base64key://"+defaultURL.Host, msg.KeyMaterial.KEKID)
+}
+
+func TestModule_OverrideForDefaultNamespaceKeepsTheDefaultKey(t *testing.T) {
+	t.Parallel()
+
+	// An override for the literal "default" namespace must register a namespace
+	// key, not overwrite the configured default key: namespaces with no override of
+	// their own still have to reach the default.
+	defaultURL, overrideURL := testingKeyURL(t, 1), testingKeyURL(t, 2)
+
+	cfg := encryptionConfig(true, keyPolicy(t, 1))
+	cfg.Encryption.Overrides = map[string]config.KeyPolicy{
+		"default": {URI: overrideURL, Duration: time.Hour, RenewBefore: time.Minute},
+	}
+
+	v := startVault(t, cfg)
+
+	msg, err := v.Seal(t.Context(), "default", []byte("secret"))
+	require.NoError(t, err)
+	require.Equal(t, "base64key://"+overrideURL.Host, msg.KeyMaterial.KEKID)
+
+	msg, err = v.Seal(t.Context(), "other", []byte("secret"))
+	require.NoError(t, err)
+	require.Equal(t, "base64key://"+defaultURL.Host, msg.KeyMaterial.KEKID)
+}
+
+func TestModule_OpensPayloadsSealedByADecryptOnlyKey(t *testing.T) {
+	t.Parallel()
+
+	// A rotated-out key lives on in DecryptURIs. Sealing under it while it is
+	// primary and then opening that payload from a second app where it is only a
+	// decrypt URI is the whole point of the setting, and the only way to observe
+	// that those keys reach the registry.
+	rotatedOut := testingKeyURL(t, 7)
+
+	sealed, err := startVault(t, encryptionConfig(true, config.KeyPolicy{
+		URI: rotatedOut, Duration: time.Hour, RenewBefore: time.Minute,
+	})).Seal(t.Context(), "ns1", []byte("secret"))
+	require.NoError(t, err)
+	require.Equal(t, "base64key://"+rotatedOut.Host, sealed.KeyMaterial.KEKID)
+
+	current := keyPolicy(t, 1)
+	current.DecryptURIs = []url.URL{rotatedOut}
+
+	pt, err := startVault(t, encryptionConfig(true, current)).Open(t.Context(), sealed)
+	require.NoError(t, err)
+	require.Equal(t, []byte("secret"), pt)
+}
+
+func TestModule_UnknownExtensionServer_FailsConstruction(t *testing.T) {
+	t.Parallel()
+
+	cfg := encryptionConfig(true, config.KeyPolicy{
+		URI: *mustParse(t, "extension://missing/payments"), Duration: time.Hour, RenewBefore: time.Minute,
+	})
+
+	_, err := buildVault(t, cfg, logger.NewNoopLogger(), extensionConns("audit"))
+	require.ErrorContains(t, err, `unknown extension server "missing"`)
+}
+
+func TestModule_MixesExtensionAndKeeperKeysInOnePolicy(t *testing.T) {
+	t.Parallel()
+
+	// Both kinds of key may appear in one policy. Nothing is sealed here: these
+	// connections fail any call, so construction succeeding is what shows every URI
+	// resolved.
+	cfg := encryptionConfig(true, config.KeyPolicy{
+		URI:         *mustParse(t, "extension://audit/payments"),
+		DecryptURIs: []url.URL{testingKeyURL(t, 9), *mustParse(t, "extension://audit/legacy")},
+		Duration:    time.Hour,
+		RenewBefore: time.Minute,
+	})
+
+	v, err := buildVault(t, cfg, logger.NewNoopLogger(), extensionConns("audit"))
+	require.NoError(t, err)
+	require.NotNil(t, v)
+}
+
+// moduleOptions are the dependencies Module needs, wired for a test: a private
+// metrics registry so collectors cannot collide with another test's, the given
+// logger, and conns for any extension key URIs.
+func moduleOptions(t *testing.T, cfg *config.Config, log logger.Logger, conns api.Connections) []fx.Option {
+	t.Helper()
+
+	return []fx.Option{
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(cfg),
-		fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
-		fx.Provide(func() *metrics.Factory { return metrics.New("test", promauto.With(prometheus.NewRegistry())) }),
-		fx.Supply(api.Connections{}),
-		Module,
-		fx.NopLogger,
-	)
-
-	require.Error(t, app.Err())
-}
-
-func (f refresherFunc) Refresh() error { return f() }
-
-// distinctKeyURL builds a testing:// key URI whose 32-byte key is filled with b,
-// so different b values produce KEKs with distinct IDs. Bytes 1-3 base64-encode
-// without URL-hostile characters.
-func distinctKeyURL(t *testing.T, b byte) url.URL {
-	t.Helper()
-
-	key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{b}, 32))
-	u, err := url.Parse("testing://" + key)
-	require.NoError(t, err)
-
-	return *u
-}
-
-func closeKEKs(t *testing.T, keys []crypto.KEK) {
-	t.Helper()
-
-	for _, k := range keys {
-		require.NoError(t, k.Close())
+		fx.Provide(func() logger.Logger { return log }),
+		fx.Provide(func() *metrics.Factory {
+			return metrics.New("test", promauto.With(prometheus.NewRegistry()))
+		}),
+		fx.Supply(conns),
+		kms.Module,
 	}
 }
 
-// newFxTestReporter builds a Reporter backed by its own private registry, so
-// fx.go call sites under test have a Reporter to record into without
-// colliding with any other test's metrics.
-func newFxTestReporter(t *testing.T) *Reporter {
+// buildVault constructs an app around Module and returns the vault it provides
+// together with any construction error, without starting the app.
+func buildVault(
+	t *testing.T,
+	cfg *config.Config,
+	log logger.Logger,
+	conns api.Connections,
+) (*crypto.Vault, error) {
 	t.Helper()
-	return NewReporter(metrics.New("test", promauto.With(prometheus.NewRegistry())).ForSubsystem("encryption"))
+
+	if conns == nil {
+		conns = api.Connections{}
+	}
+
+	var v *crypto.Vault
+	app := fx.New(append(
+		moduleOptions(t, cfg, log, conns),
+		fx.Populate(&v),
+		fx.NopLogger,
+	)...)
+
+	return v, app.Err()
 }
 
-func TestCreateKEKs_ResolvesExtensionURIs(t *testing.T) {
-	t.Parallel()
+// startVault builds and starts an app around Module, stopping it when the test
+// ends. Construction, start, or stop failing fails the test.
+func startVault(t *testing.T, cfg *config.Config) *crypto.Vault {
+	t.Helper()
 
-	log := logger.NewNoopLogger()
-	conns := extensionConns("audit")
+	var v *crypto.Vault
+	app := fxtest.New(t, append(
+		moduleOptions(t, cfg, logger.NewNoopLogger(), api.Connections{}),
+		fx.Populate(&v),
+	)...)
 
-	t.Run("mixes extension and keeper keys in one policy", func(t *testing.T) {
-		t.Parallel()
+	app.RequireStart()
+	t.Cleanup(func() { app.RequireStop() })
 
-		p := &config.KeyPolicy{
-			URI:         *mustParse(t, "extension://audit/payments"),
-			DecryptURIs: []url.URL{distinctKeyURL(t, 9), *mustParse(t, "extension://audit/legacy")},
-		}
+	return v
+}
 
-		keys, err := createKEKs(t.Context(), p, log, defaultNamespace, newFxTestReporter(t), conns)
-		require.NoError(t, err)
-		t.Cleanup(func() { closeKEKs(t, keys) })
+// encryptionConfig builds a Config whose encryption is governed by policy.
+func encryptionConfig(enabled bool, policy config.KeyPolicy) *config.Config {
+	return &config.Config{Encryption: config.Encryption{
+		Enabled:   enabled,
+		CacheSize: 10,
+		Default:   &policy,
+	}}
+}
 
-		require.Len(t, keys, 3)
-		require.Equal(t, "extension://audit/payments", keys[0].ID())
-		require.Equal(t, "extension://audit/legacy", keys[2].ID())
-	})
+// keyPolicy builds a usable default policy around the testing key filled with b.
+func keyPolicy(t *testing.T, b byte) config.KeyPolicy {
+	t.Helper()
 
-	t.Run("an unknown server aborts the policy", func(t *testing.T) {
-		t.Parallel()
+	return config.KeyPolicy{
+		URI:         testingKeyURL(t, b),
+		Duration:    time.Hour,
+		RenewBefore: time.Minute,
+	}
+}
 
-		p := &config.KeyPolicy{URI: *mustParse(t, "extension://missing/payments")}
+func mustParse(t *testing.T, raw string) *url.URL {
+	t.Helper()
 
-		_, err := createKEKs(t.Context(), p, log, defaultNamespace, newFxTestReporter(t), conns)
-		require.ErrorContains(t, err, `unknown extension server "missing"`)
-	})
+	u, err := url.Parse(raw)
+	require.NoError(t, err)
 
-	t.Run("without connections an extension uri cannot resolve", func(t *testing.T) {
-		t.Parallel()
-
-		p := &config.KeyPolicy{URI: *mustParse(t, "extension://audit/payments")}
-
-		_, err := createKEKs(t.Context(), p, log, defaultNamespace, newFxTestReporter(t), nil)
-		require.ErrorContains(t, err, `unknown extension server "audit"`)
-	})
+	return u
 }

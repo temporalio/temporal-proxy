@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/temporalio/temporal-proxy/pkg/crypto"
 	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
@@ -15,13 +16,8 @@ import (
 // as "extension://<server>/<key>". The host names an entry in ExtensionServers.
 const extensionKeyScheme = "extension"
 
-var validKeySchemes = []string{
-	"awskms",
-	"azurekeyvault",
-	extensionKeyScheme,
-	"gcpkms",
-	"testing",
-}
+// validKeySchemes includes all built-in schemes and our extra extension one.
+var validKeySchemes = append(crypto.DefaultSchemes(), extensionKeyScheme)
 
 type (
 	// Encryption configures envelope encryption of payloads. When Enabled, a

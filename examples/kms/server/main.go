@@ -23,9 +23,10 @@ import (
 	"net"
 	"os"
 
-	"github.com/temporalio/temporal-proxy/pkg/api/kms/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+
+	"github.com/temporalio/temporal-proxy/pkg/api/kms/v1"
 )
 
 func main() {

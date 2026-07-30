@@ -7,5 +7,7 @@
 // the DEK to be recovered and the data decrypted later.
 //
 // A [KEKRegistry] manages the set of available KEKs, selecting the appropriate
-// key by namespace for encryption and by key ID for decryption.
+// key by namespace for encryption and by key ID for decryption. KEKs themselves
+// are opened from key URIs by a [KeyFactory], which handles the cloud KMS
+// schemes directly and can be extended with schemes of the caller's own.
 package crypto
