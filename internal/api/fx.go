@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 
 	"go.uber.org/fx"
@@ -23,9 +24,11 @@ import (
 const extensionKeyPrefix = "extension:"
 
 // Module provides the pooled connection for every configured extension server,
-// built when the provider runs rather than on first use, so a bad dial target,
-// certificate, or credential surfaces at construction instead of on the first
-// encryption call.
+// built when the provider runs rather than on first use, so a bad dial target
+// surfaces at construction instead of on the first encryption call, and opened on
+// start so an unreachable server (or one whose certificate this proxy will not
+// accept) fails startup. Per-call credentials are still only exercised by a real
+// request.
 var Module = fx.Options(
 	fx.Provide(func(p APIParams) (Connections, error) {
 		// api.Module is wired ahead of server.Module, which is what validates the
@@ -38,6 +41,8 @@ var Module = fx.Options(
 		}
 
 		out := make(Connections, len(p.Config.ExtensionServers))
+		conns := make([]*connect.Conn, 0, len(p.Config.ExtensionServers))
+
 		for i := range p.Config.ExtensionServers {
 			es := &p.Config.ExtensionServers[i]
 
@@ -47,7 +52,20 @@ var Module = fx.Options(
 			}
 
 			out[es.Name] = conn
+			conns = append(conns, conn)
 		}
+
+		// Config rejects a templated extension server hostPort, so every one of
+		// these is static and reachable now or not at all. An extension server backs
+		// payload encryption, so serving without one means failing encrypted
+		// traffic; fail startup instead.
+		p.Lifecycle.Append(fx.StartHook(func(ctx context.Context) error {
+			if err := connect.WaitReady(ctx, conns...); err != nil {
+				return fmt.Errorf("extension server connection not ready: %w", err)
+			}
+
+			return nil
+		}))
 
 		return out, nil
 	}),
@@ -61,8 +79,9 @@ type (
 	APIParams struct {
 		fx.In
 
-		Config *config.Config
-		Pool   *connect.Pool
+		Config    *config.Config
+		Lifecycle fx.Lifecycle
+		Pool      *connect.Pool
 	}
 
 	// Connections maps an extension server name to a connection to that server.
@@ -77,7 +96,8 @@ type (
 
 // extensionConn builds the pooled connection for a single extension server.
 // Config rejects a templated hostPort, so the target is always static: the
-// resolver is fixed and [connect.NewConn] creates the connection eagerly.
+// resolver is fixed and [connect.NewConn] creates the connection here, which the
+// module then opens on start.
 //
 // This is deliberately narrower than the equivalent upstream path in
 // internal/proxy. There is no namespace translation, because an extension

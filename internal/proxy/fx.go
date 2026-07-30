@@ -34,6 +34,8 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 		encReporter = NewReporter(p.Factory.ForSubsystem("encryption"))
 	}
 
+	conns := make([]*connect.Conn, 0, len(p.Config.Upstreams))
+
 	for i := range p.Config.Upstreams {
 		up := &p.Config.Upstreams[i]
 		if err := up.Validate(); err != nil {
@@ -83,6 +85,8 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 			return err
 		}
 
+		conns = append(conns, conn)
+
 		var opts []Option
 		if p.Logger != nil {
 			opts = append(opts, WithLogger(p.Logger))
@@ -120,6 +124,20 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 		})
 	}
 
+	// A static upstream's connection is created while the graph is built, but gRPC
+	// does not open a socket until it is used, so open them here: an unreachable
+	// upstream fails startup instead of surfacing as request errors once the proxy
+	// is already serving. Templated upstreams resolve their target per request and
+	// have nothing to open yet, so they are skipped (see [connect.Conn.WaitReady])
+	// and stay unverified until traffic arrives.
+	p.Lifecycle.Append(fx.StartHook(func(ctx context.Context) error {
+		if err := connect.WaitReady(ctx, conns...); err != nil {
+			return fmt.Errorf("upstream connection not ready: %w", err)
+		}
+
+		return nil
+	}))
+
 	return nil
 }))
 
@@ -147,11 +165,11 @@ type ProxyParams struct {
 
 // upstreamResolver builds the [connect.Resolver] for an upstream. When neither
 // the hostPort nor the TLS server name is templated it returns a static
-// resolver whose connection is constructed eagerly (and reused for every
-// request); otherwise it returns a DynamicResolver that renders the target and
-// server name, and rebuilds credentials, per request. opts holds the
-// request-independent dial options (namespace translation and outbound
-// credentials).
+// resolver, whose connection is constructed while the graph is built, opened on
+// start, and reused for every request; otherwise it returns a DynamicResolver
+// that renders the target and server name, and rebuilds credentials, per request.
+// opts holds the request-independent dial options (namespace translation and
+// outbound credentials).
 func upstreamResolver(upstream *config.Upstream, opts []grpc.DialOption) (connect.Resolver, error) {
 	// One Dialer per upstream owns the TLS-mode decision and parses its
 	// certificate material once, so a templated upstream reuses it across every

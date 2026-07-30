@@ -2,6 +2,7 @@ package proxy_test
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func TestModule(t *testing.T) {
 	t.Run("wires defaults and runs the lifecycle", func(t *testing.T) {
 		t.Parallel()
 
-		const upstream = "127.0.0.1:47233"
+		upstream := serveUpstream(t)
 
 		app := newProxyApp(t, &config.Config{
 			Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: upstream}}},
@@ -42,7 +43,7 @@ func TestModule(t *testing.T) {
 	t.Run("uses the supplied logger", func(t *testing.T) {
 		t.Parallel()
 
-		const upstream = "127.0.0.1:57233"
+		upstream := serveUpstream(t)
 
 		log := logger.NewTestLogger()
 		app := newProxyApp(
@@ -76,10 +77,7 @@ func TestModule(t *testing.T) {
 func TestModuleMultipleUpstreams(t *testing.T) {
 	t.Parallel()
 
-	const (
-		a = "127.0.0.1:47234"
-		b = "127.0.0.1:47235"
-	)
+	a, b := serveUpstream(t), serveUpstream(t)
 
 	app := newProxyApp(t, &config.Config{
 		Upstreams: []config.Upstream{
@@ -181,7 +179,8 @@ func TestModuleAcceptsTemplatedUpstream(t *testing.T) {
 	// Previously this failed with "templated upstreams are not yet supported".
 	// A templated hostPort is now resolved per-request via a templatedPlan, so
 	// construction (and the full start/stop lifecycle) succeeds without ever
-	// dialing the upstream.
+	// dialing the upstream. Nothing here is listening, so this also covers the
+	// start hook that opens static upstreams skipping templated ones.
 	require.NoError(t, app.Err())
 
 	startCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -196,7 +195,7 @@ func TestModuleAcceptsTemplatedUpstream(t *testing.T) {
 func TestModuleInstallsNamespaceTranslation(t *testing.T) {
 	t.Parallel()
 
-	const upstream = "127.0.0.1:47241"
+	upstream := serveUpstream(t)
 
 	// An upstream that configures namespace rules wires translation from the
 	// injected Translator and must still build and serve.
@@ -210,6 +209,25 @@ func TestModuleInstallsNamespaceTranslation(t *testing.T) {
 	require.NoError(t, app.Err())
 
 	startServeStop(t, app, upstream)
+}
+
+func TestModuleFailsStartWhenStaticUpstreamUnreachable(t *testing.T) {
+	t.Parallel()
+
+	app := newProxyApp(t, &config.Config{
+		Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: deadUpstream(t)}}},
+	})
+
+	// An unreachable upstream is valid configuration, so it survives construction
+	// (grpc.NewClient does not dial) and fails when the connection is opened on
+	// start.
+	require.NoError(t, app.Err())
+
+	startCtx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer cancel()
+
+	err := app.Start(startCtx)
+	require.ErrorContains(t, err, "upstream connection not ready")
 }
 
 func TestModuleFailsFastWhenEncryptionEnabledWithoutVault(t *testing.T) {
@@ -243,6 +261,38 @@ func TestModuleRequiresTranslator(t *testing.T) {
 	)
 
 	require.Error(t, app.Err())
+}
+
+// serveUpstream starts a plaintext gRPC server on a loopback port and returns
+// its address, for use as an upstream hostPort. A static upstream's connection
+// is opened on start, so an upstream pointing at nothing fails the lifecycle.
+// The ephemeral port also keeps the proxy's derived socket path unique across
+// parallel tests.
+func serveUpstream(t *testing.T) string {
+	t.Helper()
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	svr := grpc.NewServer()
+	go func() { _ = svr.Serve(lis) }()
+	t.Cleanup(svr.Stop)
+
+	return lis.Addr().String()
+}
+
+// deadUpstream returns a loopback address with nothing behind it, by taking a
+// port from the kernel and immediately giving it back.
+func deadUpstream(t *testing.T) string {
+	t.Helper()
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	addr := lis.Addr().String()
+	require.NoError(t, lis.Close())
+
+	return addr
 }
 
 func newProxyApp(t *testing.T, cfg *config.Config, opts ...fx.Option) *fx.App {
