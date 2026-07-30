@@ -1,9 +1,12 @@
 package api_test
 
 import (
+	"context"
 	"maps"
+	"net"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
@@ -32,6 +35,20 @@ func buildModule(t *testing.T, cfg *config.Config, pool *connect.Pool) (api.Conn
 	return out, app.Err()
 }
 
+// deadAddr returns a loopback address with nothing behind it, by taking a port
+// from the kernel and immediately giving it back.
+func deadAddr(t *testing.T) string {
+	t.Helper()
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	addr := lis.Addr().String()
+	require.NoError(t, lis.Close())
+
+	return addr
+}
+
 func extensionServers(servers ...config.ExtensionServer) *config.Config {
 	return &config.Config{
 		Listen:           config.ListenConfig{HostPort: ":8080"},
@@ -40,6 +57,37 @@ func extensionServers(servers ...config.ExtensionServer) *config.Config {
 			{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
 		},
 	}
+}
+
+func TestModuleFailsStartWhenExtensionServerUnreachable(t *testing.T) {
+	t.Parallel()
+
+	pool := connect.NewPool()
+	t.Cleanup(func() { require.NoError(t, pool.Close()) })
+
+	var out api.Connections
+	app := fx.New(
+		fx.Supply(
+			extensionServers(config.ExtensionServer{
+				Name:   "audit",
+				Listen: config.ListenConfig{HostPort: deadAddr(t)},
+			}),
+			pool,
+		),
+		api.Module,
+		fx.Populate(&out),
+		fx.NopLogger,
+	)
+
+	// An unreachable server is valid configuration, so it survives construction
+	// (grpc.NewClient does not dial) and fails when the connection is opened on
+	// start.
+	require.NoError(t, app.Err())
+
+	startCtx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer cancel()
+
+	require.ErrorContains(t, app.Start(startCtx), "extension server connection not ready")
 }
 
 func TestModuleBuildsAConnPerExtensionServer(t *testing.T) {
@@ -156,8 +204,9 @@ func TestModulePoolsConnectionsUnderANamespacedKey(t *testing.T) {
 	), pool)
 	require.NoError(t, err)
 
-	// The connection is created eagerly, under a key distinct from the bare
-	// dial address, so it cannot be handed to a caller resolving that address.
+	// The connection is created during construction, under a key distinct from
+	// the bare dial address, so it cannot be handed to a caller resolving that
+	// address.
 	conn, err := pool.Conn("extension:127.0.0.1:9090")
 	require.NoError(t, err)
 	require.NotNil(t, conn)
