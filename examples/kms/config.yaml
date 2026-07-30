@@ -1,0 +1,57 @@
+# Proxy configuration for the extension server KMS example.
+#
+# Workers connect to the gateway in plaintext with no credentials and exchange
+# cleartext payloads. The proxy seals every payload before it reaches the
+# Temporal Service and opens it again on the way back, wrapping the data
+# encryption keys through the extension server rather than a cloud KMS.
+#
+# Driven by two environment variables, both also read by the extension server:
+#   KMS_API_KEY        bearer token the proxy presents to the extension server
+#   KMS_MASTER_SECRET  the extension server's key derivation secret (server only)
+#
+# The proxy runs from the repository root, so paths here are relative to it.
+hostPort: 127.0.0.1:7234 # the dev server holds 7233
+
+routing:
+  # One upstream serves everything, including the namespace-less calls the SDK
+  # makes on connect (GetSystemInfo): with no system upstream set they fall
+  # through to the default. That works because this upstream's hostPort is a
+  # literal address; a templated one would need its own system upstream, having
+  # no namespace to resolve the template from.
+  default: local
+
+upstreams:
+  - name: local
+    hostPort: 127.0.0.1:7233 # temporal server start-dev
+
+# The pluggable key management backend. The proxy builds this connection when it
+# builds its key policies, so a malformed address, credentials without TLS, or an
+# unreadable ca file all fail at startup. Peer verification is later: gRPC connects
+# lazily, so a ca that simply does not match the server's certificate is not
+# discovered until the first payload needs a key.
+extensionServers:
+  - name: kms
+    hostPort: 127.0.0.1:9443
+    tls:
+      # A file path, read when the connection is built.
+      ca: examples/kms/certs/ca.pem
+      # Load bearing: the certificate carries DNS:localhost and no IP address,
+      # so verifying against the dialed 127.0.0.1 would fail without this.
+      serverName: localhost
+    # Sent as "authorization: Bearer <apiKey>". Credentials require TLS, both
+    # because the config rejects them without it and because gRPC refuses to put
+    # a credential on a plaintext connection.
+    credentials:
+      static:
+        apiKey: ${KMS_API_KEY}
+
+# Envelope encryption. Each DEK is wrapped by the extension server key addressed
+# below: "kms" names the server above, and "payloads" is a proxy-side key name
+# recorded in every sealed payload so the same key is chosen when opening it. The
+# extension server never receives that name; it selects keys by namespace.
+encryption:
+  enabled: true
+  default:
+    uri: extension://kms/payloads
+    duration: 1h
+    renewBefore: 15m
