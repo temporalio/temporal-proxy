@@ -126,7 +126,7 @@ func TestEncryptionInterceptorDisabledSkipsOutbound(t *testing.T) {
 	require.Empty(t, v.namespaces, "interceptor must not seal when disabled")
 }
 
-func TestEncryptionInterceptorRecordsDEKOps(t *testing.T) {
+func TestEncryptionInterceptorRecordsVaultOps(t *testing.T) {
 	t.Parallel()
 
 	reg := prometheus.NewRegistry()
@@ -154,12 +154,12 @@ func TestEncryptionInterceptorRecordsDEKOps(t *testing.T) {
 	}
 	require.NoError(t, interceptor(ctx, "/method", req, resp, nil, invoker))
 
-	ops := gatherFamily(t, reg, "proxy_encryption_dek_ops_total")
+	ops := gatherFamily(t, reg, "proxy_encryption_vault_ops_total")
 	require.NotNil(t, ops)
 	require.True(t, hasLabels(ops, map[string]string{"operation": "encrypt", "result": "success", "namespace": "ns1"}))
 	require.True(t, hasLabels(ops, map[string]string{"operation": "decrypt", "result": "success", "namespace": "ns1"}))
 
-	dur := gatherFamily(t, reg, "proxy_encryption_dek_ops_duration_secs")
+	dur := gatherFamily(t, reg, "proxy_encryption_vault_ops_duration_secs")
 	require.NotNil(t, dur)
 	require.True(t, hasLabels(dur, map[string]string{"operation": "encrypt", "namespace": "ns1"}))
 	require.True(t, hasLabels(dur, map[string]string{"operation": "decrypt", "namespace": "ns1"}))
@@ -194,7 +194,7 @@ func TestEncryptionInterceptorSkipsMetricsForPassThrough(t *testing.T) {
 
 	require.Equal(t, 0, vault.opens)
 
-	ops := gatherFamily(t, reg, "proxy_encryption_dek_ops_total")
+	ops := gatherFamily(t, reg, "proxy_encryption_vault_ops_total")
 	require.NotNil(t, ops)
 	require.True(t, hasLabels(ops, map[string]string{"operation": "encrypt", "result": "success", "namespace": "ns1"}))
 	require.False(t, hasLabels(ops, map[string]string{"operation": "decrypt", "result": "success", "namespace": "ns1"}))

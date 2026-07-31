@@ -43,8 +43,9 @@ type Vault interface {
 // back only payloads this interceptor sealed (identified by the
 // encryptionEncoding marker) are opened; anything else passes through
 // untouched. Search attributes are skipped so they stay queryable upstream. r
-// records the duration and result of every seal/open through DEKOp. It returns
-// an error only if the underlying visitor interceptor cannot be constructed.
+// records the duration and result of every seal/open through VaultOp. It
+// returns an error only if the underlying visitor interceptor cannot be
+// constructed.
 func EncryptionInterceptor(enabled bool, v Vault, r *Reporter) (grpc.UnaryClientInterceptor, error) {
 	var outbound *proxy.VisitPayloadsOptions
 	if enabled {
@@ -69,8 +70,8 @@ func EncryptionInterceptor(enabled bool, v Vault, r *Reporter) (grpc.UnaryClient
 // the bytes under v for the context's namespace, and replaces it with a payload
 // whose data is the ciphertext and whose metadata carries the wrapped DEK
 // needed to open it. The entire original payload (metadata included) is sealed,
-// so decryptPayloads can restore it exactly. Each Seal call is timed and
-// recorded via r.DEKOp, regardless of outcome.
+// so decryptPayloads can restore it exactly. Each Seal call is timed end to
+// end and recorded via r.VaultOp, regardless of outcome.
 func encryptPayloads(v Vault, r *Reporter) func(*proxy.VisitPayloadsContext, []*common.Payload) ([]*common.Payload, error) {
 	return func(ctx *proxy.VisitPayloadsContext, payloads []*common.Payload) ([]*common.Payload, error) {
 		ns := meta.NamespaceFrom(ctx)
@@ -84,7 +85,7 @@ func encryptPayloads(v Vault, r *Reporter) func(*proxy.VisitPayloadsContext, []*
 
 			start := time.Now()
 			msg, err := v.Seal(ctx, ns, data)
-			r.DEKOp("encrypt", resultLabel(err), ns, time.Since(start).Seconds())
+			r.VaultOp("encrypt", resultLabel(err), ns, time.Since(start).Seconds())
 			if err != nil {
 				return nil, fmt.Errorf("failed to encrypt payload: %w", err)
 			}
@@ -107,7 +108,8 @@ func encryptPayloads(v Vault, r *Reporter) func(*proxy.VisitPayloadsContext, []*
 // payloads carrying the encryptionEncoding marker are opened and unmarshaled
 // back into their original form, while any others pass through unchanged so
 // payloads produced elsewhere survive the round trip. Only payloads actually
-// opened are timed and recorded via r.DEKOp; pass-through payloads are not.
+// opened are timed end to end and recorded via r.VaultOp; pass-through
+// payloads are not.
 func decryptPayloads(v Vault, r *Reporter) func(*proxy.VisitPayloadsContext, []*common.Payload) ([]*common.Payload, error) {
 	return func(ctx *proxy.VisitPayloadsContext, payloads []*common.Payload) ([]*common.Payload, error) {
 		ns := meta.NamespaceFrom(ctx)
@@ -128,7 +130,7 @@ func decryptPayloads(v Vault, r *Reporter) func(*proxy.VisitPayloadsContext, []*
 					EncryptedDEK: string(p.Metadata[metadataEncryptionDEK]),
 				},
 			})
-			r.DEKOp("decrypt", resultLabel(err), ns, time.Since(start).Seconds())
+			r.VaultOp("decrypt", resultLabel(err), ns, time.Since(start).Seconds())
 			if err != nil {
 				return nil, fmt.Errorf("failed to decrypt payload: %w", err)
 			}

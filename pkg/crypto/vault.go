@@ -71,6 +71,14 @@ type (
 		dur      time.Duration
 		before   time.Duration
 	}
+
+	// cryptoStep records what the AES-256-GCM step cost and whether it failed.
+	// Its zero value means the step was never reached, which is what an early
+	// failure returns.
+	cryptoStep struct {
+		dur time.Duration
+		err error
+	}
 )
 
 // NewVault constructs a Vault backed by r, applying opts in order. A DEK is
@@ -186,9 +194,11 @@ func WithCacheSize(n int) VaultOption {
 	}
 }
 
-// WithObserver sets the Observer notified of Vault-internal events such as DEK
-// cache hits and misses. A nil Observer is replaced with a no-op, so Open never
-// needs to nil-check. Without this option no events are emitted.
+// WithObserver sets the Observer notified of Vault-internal events: a
+// CacheEvent from Open, an EnvelopeEvent from both Seal and Open, and a
+// RotationEvent from Seal and Refresh. A nil Observer is replaced with a
+// no-op, so no Vault call site needs to nil-check. Without this option no
+// events are emitted.
 func WithObserver(o Observer) VaultOption {
 	return func(e *vaultOptions) {
 		if o == nil {
@@ -203,102 +213,54 @@ func WithObserver(o Observer) VaultOption {
 // DEK required to Open it. The active DEK for ns is created or rotated on demand.
 // Concurrent first-time seals holding the same DEK are coalesced into a single
 // KEK (KMS) call.
+//
+// Exactly one [EnvelopeEvent] is reported to the Observer, on every path
+// including failures.
 func (v *Vault) Seal(ctx context.Context, ns string, data []byte) (*Message, error) {
-	sd, err := v.getOrRefreshKey(ns)
-	if err != nil {
-		return nil, err
-	}
+	start := time.Now()
+	msg, step, err := v.seal(ctx, ns, data)
 
-	// Snapshot key and material under RLock; release immediately so the
-	// encryption work happens outside the lock.
-	v.mu.RLock()
-	dek := sd.key
-	material := sd.material
-	v.mu.RUnlock()
-
-	ct, err := dek.Encrypt(ctx, data)
-	if err != nil {
-		return nil, err
-	}
-
-	if material != nil {
-		return &Message{Ciphertext: ct, KeyMaterial: material}, nil
-	}
-
-	// First Seal after a rotation: coalesce concurrent callers for the same namespace
-	// into a single KMS call so bursts don't trigger rate limiting in the Cloud provider.
-	//
-	// Key on both the namespace and the DEK pointer. If the KMS call is slow and
-	// Refresh rotates the DEK while it is in-flight, a goroutine that snapshotted
-	// the new DEK must not join the old call as it would receive material for DEK1
-	// while its ciphertext was encrypted with DEK2, causing Open to fail. Callers
-	// holding the same DEK pointer still coalesce as intended.
-	sfKey := fmt.Sprintf("%s:%p", ns, dek)
-	res, err, _ := v.encryptor.Do(sfKey, func() (any, error) {
-		return v.registry.Encrypt(ctx, ns, dek)
+	v.observer.Observe(EnvelopeEvent{
+		Op:        OpEncrypt,
+		Namespace: ns,
+		Err:       err,
+		CryptoErr: step.err,
+		Total:     time.Since(start),
+		Crypto:    step.dur,
 	})
-	if err != nil {
-		return nil, err
-	}
-	m := res.(*DEKMaterial)
 
-	// Store under write lock.
-	// Only touch sd.material when sd.key == dek: if the key was rotated between
-	// our snapshot and now we must not read or write material that belongs to a
-	// different DEK. The envelope we built (ct + m) is still correct for this call.
-	// When sd.key == dek, prefer an already-stored value so all concurrent callers
-	// for the same DEK return identical material.
-	v.mu.Lock()
-	if sd.key == dek {
-		if sd.material == nil {
-			sd.material = m
-		} else {
-			m = sd.material
-		}
-	}
-	v.mu.Unlock()
-
-	return &Message{Ciphertext: ct, KeyMaterial: m}, nil
+	return msg, err
 }
 
 // Open decrypts msg, which must have been produced by [Vault.Seal] (or
 // [NamespacedVault.Seal]). The wrapped DEK is unwrapped via the [KEKRegistry]
 // using the KEK identified by the material carried in msg, served from the
 // decrypted-DEK cache when it is enabled.
+//
+// Exactly one [EnvelopeEvent] is reported to the Observer, on every path
+// including failures. It carries no namespace: the KEK is selected by ID from
+// the material, so Open never learns one.
 func (v *Vault) Open(ctx context.Context, msg *Message) ([]byte, error) {
-	if msg == nil || msg.KeyMaterial == nil {
-		return nil, errors.New("message and key material must not be nil")
-	}
+	start := time.Now()
+	pt, step, err := v.open(ctx, msg)
 
-	var dek *DEK
-	if v.cache != nil {
-		if cached, ok := v.cache.Get(msg.KeyMaterial.EncryptedDEK); ok {
-			dek = cached
-			v.observer.CacheHit(CacheEvent{Size: v.cache.Len()})
-		} else {
-			v.observer.CacheMiss(CacheEvent{Size: v.cache.Len()})
-		}
-	}
+	v.observer.Observe(EnvelopeEvent{
+		Op:        OpDecrypt,
+		Err:       err,
+		CryptoErr: step.err,
+		Total:     time.Since(start),
+		Crypto:    step.dur,
+	})
 
-	if dek == nil {
-		var err error
-		dek, err = v.registry.Decrypt(ctx, msg.KeyMaterial)
-		if err != nil {
-			return nil, err
-		}
-
-		if v.cache != nil {
-			v.cache.Add(msg.KeyMaterial.EncryptedDEK, dek)
-		}
-	}
-
-	return dek.Decrypt(ctx, msg.Ciphertext)
+	return pt, err
 }
 
 // Refresh rotates every namespace DEK that has reached its renewal threshold.
 // It is meant to be called periodically. Seal also rotates an expired DEK on
 // demand, so Refresh is an optimization that keeps rotation off the request
 // path rather than a correctness requirement.
+//
+// One [RotationEvent] with [RotationScheduled] is reported per key rotated.
 func (v *Vault) Refresh() error {
 	// Find expired keys without acquiring a write lock.
 	v.mu.RLock()
@@ -321,15 +283,33 @@ func (v *Vault) Refresh() error {
 		updates[k] = dek
 	}
 
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	for k, d := range updates {
-		// Re-check: a concurrent Seal (or Refresh) may have rotated this key
-		// between the scan above and this write lock. Rotating again would
-		// discard that fresh DEK and force an extra KEK wrap on the next Seal.
-		if v.keys[k].isExpired(v.nowFn) {
-			v.keys[k].rotate(d, v.nowFn)
+	// Collect what actually rotated under the lock and report it after the
+	// closure returns and its deferred unlock has run: an Observer must never
+	// run while v.mu is held, or a slow one stalls every Seal and one that
+	// calls back into the Vault deadlocks. The locked region is a closure
+	// rather than inline code so a panic partway through still unlocks; an
+	// explicit Unlock placed after the loop would skip that on a panic and
+	// leave v.mu write-locked forever.
+	rotated := func() []string {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+
+		rotated := make([]string, 0, len(updates))
+		for k, d := range updates {
+			// Re-check: a concurrent Seal (or Refresh) may have rotated this key
+			// between the scan above and this write lock. Rotating again would
+			// discard that fresh DEK and force an extra KEK wrap on the next Seal.
+			if v.keys[k].isExpired(v.nowFn) {
+				v.keys[k].rotate(d, v.nowFn)
+				rotated = append(rotated, k)
+			}
 		}
+
+		return rotated
+	}()
+
+	for _, ns := range rotated {
+		v.observer.Observe(RotationEvent{Namespace: ns, Reason: RotationScheduled})
 	}
 
 	return nil
@@ -343,13 +323,129 @@ func (v *Vault) ForNamespace(ns string) *NamespacedVault {
 	}
 }
 
+// seal is Seal's body. The middle return value describes what the AES-256-GCM
+// step cost and whether it failed, or is the zero value if it was never
+// reached.
+func (v *Vault) seal(ctx context.Context, ns string, data []byte) (*Message, cryptoStep, error) {
+	sd, err := v.getOrRefreshKey(ns)
+	if err != nil {
+		return nil, cryptoStep{}, err
+	}
+
+	// Snapshot key and material under RLock; release immediately so the
+	// encryption work happens outside the lock.
+	v.mu.RLock()
+	dek := sd.key
+	material := sd.material
+	v.mu.RUnlock()
+
+	cryptoStart := time.Now()
+	ct, err := dek.Encrypt(ctx, data)
+	step := cryptoStep{dur: time.Since(cryptoStart), err: err}
+	if err != nil {
+		return nil, step, err
+	}
+
+	if material != nil {
+		return &Message{Ciphertext: ct, KeyMaterial: material}, step, nil
+	}
+
+	// First Seal after a rotation: coalesce concurrent callers for the same namespace
+	// into a single KMS call so bursts don't trigger rate limiting in the Cloud provider.
+	//
+	// Key on both the namespace and the DEK pointer. If the KMS call is slow and
+	// Refresh rotates the DEK while it is in-flight, a goroutine that snapshotted
+	// the new DEK must not join the old call as it would receive material for DEK1
+	// while its ciphertext was encrypted with DEK2, causing Open to fail. Callers
+	// holding the same DEK pointer still coalesce as intended.
+	sfKey := fmt.Sprintf("%s:%p", ns, dek)
+	res, err, _ := v.encryptor.Do(sfKey, func() (any, error) {
+		return v.registry.Encrypt(ctx, ns, dek)
+	})
+	if err != nil {
+		return nil, step, err
+	}
+	m := res.(*DEKMaterial)
+
+	// Store under write lock.
+	// Only touch sd.material when sd.key == dek: if the key was rotated between
+	// our snapshot and now we must not read or write material that belongs to a
+	// different DEK. The envelope we built (ct + m) is still correct for this call.
+	// When sd.key == dek, prefer an already-stored value so all concurrent callers
+	// for the same DEK return identical material.
+	v.mu.Lock()
+	if sd.key == dek {
+		if sd.material == nil {
+			sd.material = m
+		} else {
+			m = sd.material
+		}
+	}
+	v.mu.Unlock()
+
+	return &Message{Ciphertext: ct, KeyMaterial: m}, step, nil
+}
+
+// open is Open's body. The middle return value describes what the AES-256-GCM
+// step cost and whether it failed, or is the zero value if it was never
+// reached.
+func (v *Vault) open(ctx context.Context, msg *Message) ([]byte, cryptoStep, error) {
+	if msg == nil || msg.KeyMaterial == nil {
+		return nil, cryptoStep{}, errors.New("message and key material must not be nil")
+	}
+
+	var dek *DEK
+	if v.cache != nil {
+		if cached, ok := v.cache.Get(msg.KeyMaterial.EncryptedDEK); ok {
+			dek = cached
+			v.observer.Observe(CacheEvent{Hit: true, Size: v.cache.Len()})
+		} else {
+			v.observer.Observe(CacheEvent{Hit: false, Size: v.cache.Len()})
+		}
+	}
+
+	if dek == nil {
+		var err error
+		dek, err = v.registry.Decrypt(ctx, msg.KeyMaterial)
+		if err != nil {
+			return nil, cryptoStep{}, err
+		}
+
+		if v.cache != nil {
+			v.cache.Add(msg.KeyMaterial.EncryptedDEK, dek)
+		}
+	}
+
+	cryptoStart := time.Now()
+	pt, err := dek.Decrypt(ctx, msg.Ciphertext)
+
+	return pt, cryptoStep{dur: time.Since(cryptoStart), err: err}, err
+}
+
+// getOrRefreshKey returns the sliding DEK for ns, creating or rotating it on
+// demand, and reports any rotation to the Observer. The report happens here
+// rather than inside lookupKey so that it lands after lookupKey's deferred
+// unlock: an Observer must never run while v.mu is held.
 func (v *Vault) getOrRefreshKey(ns string) (*slidingDEK, error) {
+	sd, rotated, err := v.lookupKey(ns)
+	if rotated != nil {
+		v.observer.Observe(*rotated)
+	}
+
+	return sd, err
+}
+
+// lookupKey is getOrRefreshKey's body. The middle return value describes a
+// rotation it performed, or nil if the key it returns was already current. Any
+// event it produces, including one bubbled up from createDefaultKey, is reported
+// by its caller.
+func (v *Vault) lookupKey(ns string) (*slidingDEK, *RotationEvent, error) {
 	v.mu.RLock()
 	key := v.keys[ns]
 	if key == nil {
 		v.mu.RUnlock()
 		if v.defaultConfig == nil {
-			return nil, fmt.Errorf("key not found, ns: %s", ns)
+			return nil, nil, fmt.Errorf("key not found, ns: %s", ns)
 		}
 
 		return v.createDefaultKey(ns)
@@ -357,7 +453,7 @@ func (v *Vault) getOrRefreshKey(ns string) (*slidingDEK, error) {
 
 	if !key.isExpired(v.nowFn) {
 		v.mu.RUnlock()
-		return key, nil
+		return key, nil, nil
 	}
 	v.mu.RUnlock()
 
@@ -365,32 +461,35 @@ func (v *Vault) getOrRefreshKey(ns string) (*slidingDEK, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	// Re-check: Refresh (or another Seal) may have already rotated this key.
+	// Re-check: Refresh (or another Seal) may have already rotated this key. It
+	// reports nothing, so a contended rotation yields exactly one event.
 	if !key.isExpired(v.nowFn) {
-		return key, nil
+		return key, nil, nil
 	}
 
 	k, err := NewDEK()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate DEK for %s: %w", ns, err)
+		return nil, nil, fmt.Errorf("failed to generate DEK for %s: %w", ns, err)
 	}
 
 	key.rotate(k, v.nowFn)
-	return key, nil
+
+	return key, &RotationEvent{Namespace: ns, Reason: RotationOnDemand}, nil
 }
 
-func (v *Vault) createDefaultKey(ns string) (*slidingDEK, error) {
+func (v *Vault) createDefaultKey(ns string) (*slidingDEK, *RotationEvent, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	// Re-check: another goroutine may have created this slot while we waited for the lock.
+	// Re-check: another goroutine may have created this slot while we waited for
+	// the lock. It reports nothing, so a namespace is only ever announced once.
 	if key := v.keys[ns]; key != nil {
-		return key, nil
+		return key, nil, nil
 	}
 
 	dek, err := NewDEK()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate DEK for %s: %w", ns, err)
+		return nil, nil, fmt.Errorf("failed to generate DEK for %s: %w", ns, err)
 	}
 
 	sd := &slidingDEK{
@@ -401,7 +500,7 @@ func (v *Vault) createDefaultKey(ns string) (*slidingDEK, error) {
 	sd.rotate(dek, v.nowFn)
 	v.keys[ns] = sd
 
-	return sd, nil
+	return sd, &RotationEvent{Namespace: ns, Reason: RotationInitial}, nil
 }
 
 // Seal encrypts data within the bound namespace. See [Vault.Seal].
