@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/temporalio/temporal-proxy/internal/api"
 	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/server"
@@ -149,6 +150,7 @@ func TestServerModuleWithAuth(t *testing.T) {
 	var authenticator auth.Authenticator
 	app := fx.New(
 		fx.Supply(cfg),
+		fx.Supply(api.Connections{}),
 		auth.Module,
 		fx.Populate(&authenticator),
 		fx.NopLogger,
@@ -325,6 +327,7 @@ func TestServerEndToEndAuth(t *testing.T) {
 				}
 			},
 		),
+		fx.Supply(api.Connections{}),
 		auth.Module,
 		server.Module,
 		fx.NopLogger,
@@ -385,7 +388,7 @@ func TestServerEndToEndAuth(t *testing.T) {
 }
 
 func (stubAuthenticator) Authenticate(context.Context, metadata.MD) error { return nil }
-func (stubAuthenticator) Header() string                                  { return "" }
+func (stubAuthenticator) SecureHeaders() []string                         { return nil }
 
 func newTestApp(t *testing.T, opts ...fx.Option) *fx.App {
 	t.Helper()

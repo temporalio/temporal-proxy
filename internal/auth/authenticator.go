@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
@@ -21,20 +20,14 @@ const (
 type (
 	// Authenticator authenticates an inbound request from its metadata. It
 	// returns nil to allow the request, or a gRPC status error to reject it.
-	// Header reports the metadata header the authenticator consumes, so the
-	// proxy can strip the caller's credential before forwarding upstream; it
-	// returns "" when the authenticator consumes no header.
+	// SecureHeaders reports the metadata headers the authenticator consumes, so
+	// the proxy can strip the caller's credentials before forwarding upstream;
+	// it returns nil when the authenticator consumes no header. An
+	// authenticator may name more than one because it need not own the header
+	// it reads: an external one is told which headers its server consumes.
 	Authenticator interface {
 		Authenticate(ctx context.Context, md metadata.MD) error
-		Header() string
-	}
-
-	// rejection is an authentication failure that reports a generic, client-safe
-	// gRPC status to the caller while carrying a detailed reason for server-side
-	// logging. The detail must never contain secrets (tokens or key material).
-	rejection struct {
-		st     *status.Status
-		detail string
+		SecureHeaders() []string
 	}
 
 	defaultAuthenticator struct{}
@@ -70,13 +63,16 @@ func StreamServerInterceptor(a Authenticator, log logger.Logger) grpc.StreamServ
 			return err
 		}
 
-		// The proxy terminates inbound auth, so strip the header it consumed:
+		// The proxy terminates inbound auth, so strip the headers it consumed:
 		// the caller's credential must not be forwarded upstream, where it would
 		// otherwise collide with (or leak alongside) an outbound credential on
 		// the same header.
-		if header := a.Header(); header != "" {
+		if hdrs := a.SecureHeaders(); len(hdrs) > 0 {
 			stripped := md.Copy()
-			stripped.Delete(header)
+			for _, hdr := range hdrs {
+				stripped.Delete(hdr)
+			}
+
 			ss = &strippedStream{
 				ServerStream: ss,
 				ctx:          metadata.NewIncomingContext(ss.Context(), stripped),
@@ -87,31 +83,17 @@ func StreamServerInterceptor(a Authenticator, log logger.Logger) grpc.StreamServ
 	}
 }
 
-// Error returns the detailed, server-side rejection reason. It must never be
-// sent to the client directly; gRPC surfaces GRPCStatus() instead.
-func (r *rejection) Error() string { return r.detail }
-
-// GRPCStatus lets gRPC surface the client-safe status while Error keeps the
-// detail server-side.
-func (r *rejection) GRPCStatus() *status.Status { return r.st }
-
 func (a *defaultAuthenticator) Authenticate(_ context.Context, _ metadata.MD) error {
 	return nil
 }
 
-// Header reports that the admit-all default consumes no header, so
+// SecureHeaders reports that the admit-all default consumes no header, so
 // StreamServerInterceptor strips nothing and the transparent relay is
 // preserved.
-func (a *defaultAuthenticator) Header() string { return "" }
+func (a *defaultAuthenticator) SecureHeaders() []string { return nil }
 
 // Context returns the context carrying the stripped incoming metadata.
 func (s *strippedStream) Context() context.Context { return s.ctx }
-
-// reject builds a rejection carrying a client-safe code+message and a
-// server-side detail for logging.
-func reject(code codes.Code, clientMsg, detail string) error {
-	return &rejection{st: status.New(code, clientMsg), detail: detail}
-}
 
 // canonicalHeader returns the metadata header to use for a credential: the
 // default when h is blank, otherwise h lowercased. gRPC canonicalizes metadata

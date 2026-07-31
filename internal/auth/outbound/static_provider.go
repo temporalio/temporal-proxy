@@ -1,8 +1,14 @@
-package auth
+package outbound
 
 import (
 	"context"
 	"errors"
+	"strings"
+)
+
+const (
+	defaultHeader = "authorization"
+	defaultScheme = "Bearer"
 )
 
 // StaticCredentialProvider attaches a fixed bearer header to every outbound
@@ -40,3 +46,15 @@ func (p *StaticCredentialProvider) Header() string { return p.header }
 // RequireTransportSecurity reports that the credential must only travel over a
 // secure transport.
 func (p *StaticCredentialProvider) RequireTransportSecurity() bool { return true }
+
+// canonicalHeader returns the metadata header this credential will occupy: the
+// default when h is blank, otherwise h lowercased. gRPC canonicalizes metadata
+// keys to lowercase, so normalizing here keeps a mixed-case configured header
+// matching what the credential sends and what DialOptions strips.
+func canonicalHeader(h string) string {
+	if h == "" {
+		return defaultHeader
+	}
+
+	return strings.ToLower(h)
+}

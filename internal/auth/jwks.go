@@ -14,6 +14,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+
+	"github.com/temporalio/temporal-proxy/pkg/api"
 )
 
 const (
@@ -111,7 +113,7 @@ func newJWKSAuthenticator(keyfn jwt.Keyfunc, audiences []string, issuer, header,
 func (a *JWKSAuthenticator) Authenticate(_ context.Context, md metadata.MD) error {
 	raw, ok := extractToken(md, a.header, a.scheme)
 	if !ok {
-		return reject(codes.Unauthenticated, "missing or malformed credentials",
+		return api.Reject(codes.Unauthenticated, "missing or malformed credentials",
 			"jwks: missing or malformed "+a.header+" header")
 	}
 
@@ -126,22 +128,22 @@ func (a *JWKSAuthenticator) Authenticate(_ context.Context, md metadata.MD) erro
 	claims := jwt.MapClaims{}
 	if _, err := jwt.ParseWithClaims(raw, claims, a.keyfn, opts...); err != nil {
 		if errors.Is(err, errKeysUnavailable) {
-			return reject(codes.Unavailable, "authentication temporarily unavailable", "jwks: "+err.Error())
+			return api.Reject(codes.Unavailable, "authentication temporarily unavailable", "jwks: "+err.Error())
 		}
 
-		return reject(codes.Unauthenticated, "invalid credentials", "jwks: token verification failed: "+err.Error())
+		return api.Reject(codes.Unauthenticated, "invalid credentials", "jwks: token verification failed: "+err.Error())
 	}
 
 	if len(a.audiences) > 0 && !audienceMatches(claims, a.audiences) {
-		return reject(codes.Unauthenticated, "invalid credentials", "jwks: audience not allowed")
+		return api.Reject(codes.Unauthenticated, "invalid credentials", "jwks: audience not allowed")
 	}
 
 	return nil
 }
 
-// Header reports the metadata header this authenticator consumes, so
-// StreamServerInterceptor can strip it before forwarding upstream.
-func (a *JWKSAuthenticator) Header() string { return a.header }
+// SecureHeaders reports the single metadata header this authenticator consumes,
+// so StreamServerInterceptor can strip it before forwarding upstream.
+func (a *JWKSAuthenticator) SecureHeaders() []string { return []string{a.header} }
 
 // audienceMatches reports whether the token's aud claim intersects allowed.
 func audienceMatches(claims jwt.MapClaims, allowed []string) bool {

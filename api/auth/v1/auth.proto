@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package api.auth.v1;
+
+option go_package = "github.com/temporalio/temporal-proxy/pkg/api/auth/v1;auth";
+
+// AuthRequest asks the provider to authenticate the caller behind an inbound
+// stream.
+//
+// The caller's credentials travel in a field rather than in the request's
+// metadata, because the proxy authenticates itself to this server with metadata
+// of its own and the two would otherwise land on the same header. Splitting them
+// across body and metadata means a provider never has to work out which value on
+// a shared header belongs to whom: metadata credentials are the proxy's, and
+// everything in credentials is the caller's.
+//
+// The caller's other metadata is forwarded as request metadata, so a provider can
+// weigh context such as the method being invoked, but the credential headers
+// themselves are removed from it. A credential appears in exactly one place.
+message AuthRequest {
+  // credentials are the caller's credentials, one entry per header the operator
+  // declared as carrying one. It is empty when the operator declared no headers
+  // or the caller sent none of them, which a provider should treat as an
+  // unauthenticated caller rather than a trusted one.
+  repeated CallerCredential credentials = 1;
+}
+
+// CallerCredential is one credential-bearing header as the caller sent it.
+message CallerCredential {
+  // header is the canonical (lowercase) metadata key the values arrived under,
+  // so a provider can tell an opaque API key from a bearer token without
+  // guessing from the format.
+  string header = 1;
+  // values are that header's values in the order the caller sent them. gRPC
+  // metadata allows a key to repeat, so this preserves every value rather than
+  // silently choosing one.
+  repeated string values = 2;
+}
+
+// AuthResponse is the provider's verdict, and carries no fields by design:
+// returning a response at all means "admit this caller". A provider rejects by
+// returning a gRPC error status instead, so there is no way to accidentally admit
+// a caller by leaving a field unset.
+message AuthResponse {}

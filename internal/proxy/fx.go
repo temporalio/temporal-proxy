@@ -8,7 +8,7 @@ import (
 	"go.uber.org/fx"
 	"google.golang.org/grpc"
 
-	"github.com/temporalio/temporal-proxy/internal/auth"
+	"github.com/temporalio/temporal-proxy/internal/auth/outbound"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
@@ -50,12 +50,12 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 			dialOpts = append(dialOpts, translationDialOptions(p.Translator, rules.Remote, rules.Local)...)
 		}
 
-		cp, err := auth.CredentialProviderFor(up.Credentials)
+		cp, err := outbound.CredentialProviderFor(up.Credentials)
 		if err != nil {
 			return fmt.Errorf("invalid credentials for upstream %q: %w", up.Name, err)
 		}
 		if cp != nil {
-			dialOpts = append(dialOpts, auth.DialOptions(cp)...)
+			dialOpts = append(dialOpts, outbound.DialOptions(cp)...)
 		}
 
 		// Payload encryption. A vault is present whenever encryption keys are

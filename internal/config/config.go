@@ -56,11 +56,14 @@ func LoadFile(path string) (*Config, error) {
 
 // Validate requires at least one upstream, checks the listen configuration and
 // every upstream, requires upstream names to be unique, and checks that every
-// routing reference names a configured upstream. A missing upstream surfaces on
-// the "upstreams" field. Failures are stamped with the failing node's YAML path
-// as the subject (e.g. "upstreams[0].namespaces.rules.overrides[1]"). A
-// duplicate name surfaces on the "upstreams[name]" field, and an unknown
-// routing reference on the "routing"/"routing.rules[i]" subject.
+// cross-reference names something configured: routing references an upstream,
+// while encryption key URIs and external authentication reference an extension
+// server. A missing upstream surfaces on the "upstreams" field. Failures are
+// stamped with the failing node's YAML path as the subject (e.g.
+// "upstreams[0].namespaces.rules.overrides[1]"). A duplicate name surfaces on the
+// "upstreams[name]" field, an unknown routing reference on the
+// "routing"/"routing.rules[i]" subject, and an unknown extension server on the
+// referring "encryption.*" or "auth.external" subject.
 func (c *Config) Validate() error {
 	rules := []validation.Rule{
 		validation.Field("upstreams", c.Upstreams, func(us UpstreamList) error {
@@ -88,6 +91,7 @@ func (c *Config) Validate() error {
 		knownExtensions[c.ExtensionServers[i].Name] = struct{}{}
 	}
 
+	rules = append(rules, c.Auth.referentialRules(knownExtensions)...)
 	rules = append(rules, c.Routing.referentialRules(known)...)
 	rules = append(rules, c.Encryption.referentialRules(knownExtensions)...)
 	return validation.Validate("", rules...)

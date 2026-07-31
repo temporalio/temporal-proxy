@@ -5,10 +5,16 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
+	"google.golang.org/grpc"
 
+	"github.com/temporalio/temporal-proxy/internal/api"
 	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
 )
+
+// nopConn stands in for a connection to an extension server. The module only has
+// to find one by name and hand it to the client, so nothing is dialed here.
+type nopConn struct{ grpc.ClientConnInterface }
 
 func TestModuleProvidesAuthenticator(t *testing.T) {
 	t.Parallel()
@@ -29,6 +35,7 @@ func TestModuleProvidesAuthenticator(t *testing.T) {
 			var got auth.Authenticator
 			app := fx.New(
 				fx.Supply(tt.cfg),
+				fx.Supply(api.Connections{}),
 				auth.Module,
 				fx.Populate(&got),
 				fx.NopLogger,
@@ -43,6 +50,47 @@ func TestModuleProvidesAuthenticator(t *testing.T) {
 	}
 }
 
+func TestModuleProvidesExternalAuthenticator(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{Auth: &config.AuthConfig{External: &config.ExternalAuthConfig{
+		Name:              "policy",
+		CredentialHeaders: []string{"authorization"},
+	}}}
+
+	var got auth.Authenticator
+	app := fx.New(
+		fx.Supply(cfg),
+		fx.Supply(api.Connections{"policy": nopConn{}}),
+		auth.Module,
+		fx.Populate(&got),
+		fx.NopLogger,
+	)
+	require.NoError(t, app.Err())
+
+	// The declared headers have to reach the client, since they are what it lifts
+	// into the request and what the interceptor strips before proxying upstream.
+	require.Equal(t, []string{"authorization"}, got.SecureHeaders())
+}
+
+func TestModuleExternalNamingUnknownServerFailsApp(t *testing.T) {
+	t.Parallel()
+
+	// Fail at construction rather than on the first request: an authenticator that
+	// cannot reach its provider would otherwise reject every caller at runtime.
+	cfg := &config.Config{Auth: &config.AuthConfig{External: &config.ExternalAuthConfig{Name: "absent"}}}
+
+	var got auth.Authenticator
+	app := fx.New(
+		fx.Supply(cfg),
+		fx.Supply(api.Connections{"policy": nopConn{}}),
+		auth.Module,
+		fx.Populate(&got),
+		fx.NopLogger,
+	)
+	require.ErrorContains(t, app.Err(), "absent")
+}
+
 func TestModuleInvalidConfigFailsApp(t *testing.T) {
 	t.Parallel()
 
@@ -51,6 +99,7 @@ func TestModuleInvalidConfigFailsApp(t *testing.T) {
 	var got auth.Authenticator
 	app := fx.New(
 		fx.Supply(cfg),
+		fx.Supply(api.Connections{}),
 		auth.Module,
 		fx.Populate(&got),
 		fx.NopLogger,
@@ -66,6 +115,7 @@ func TestModuleEmptyAuthBlockFailsApp(t *testing.T) {
 	var got auth.Authenticator
 	app := fx.New(
 		fx.Supply(cfg),
+		fx.Supply(api.Connections{}),
 		auth.Module,
 		fx.Populate(&got),
 		fx.NopLogger,

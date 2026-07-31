@@ -1,11 +1,11 @@
-package auth_test
+package outbound_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/auth"
+	"github.com/temporalio/temporal-proxy/internal/auth/outbound"
 )
 
 func TestStaticCredentialProvider(t *testing.T) {
@@ -13,13 +13,13 @@ func TestStaticCredentialProvider(t *testing.T) {
 
 	t.Run("empty api key is rejected", func(t *testing.T) {
 		t.Parallel()
-		_, err := auth.NewStaticCredentialProvider("", "", "")
+		_, err := outbound.NewStaticCredentialProvider("", "", "")
 		require.Error(t, err)
 	})
 
 	t.Run("defaults produce a bearer authorization header", func(t *testing.T) {
 		t.Parallel()
-		p, err := auth.NewStaticCredentialProvider("k3y", "", "")
+		p, err := outbound.NewStaticCredentialProvider("k3y", "", "")
 		require.NoError(t, err)
 
 		md, err := p.GetRequestMetadata(t.Context())
@@ -30,7 +30,7 @@ func TestStaticCredentialProvider(t *testing.T) {
 
 	t.Run("custom header and scheme", func(t *testing.T) {
 		t.Parallel()
-		p, err := auth.NewStaticCredentialProvider("k3y", "x-api-key", "Token")
+		p, err := outbound.NewStaticCredentialProvider("k3y", "x-api-key", "Token")
 		require.NoError(t, err)
 
 		md, err := p.GetRequestMetadata(t.Context())
@@ -40,7 +40,7 @@ func TestStaticCredentialProvider(t *testing.T) {
 
 	t.Run("mixed-case header is lowercased to a canonical metadata key", func(t *testing.T) {
 		t.Parallel()
-		p, err := auth.NewStaticCredentialProvider("k3y", "Authorization", "")
+		p, err := outbound.NewStaticCredentialProvider("k3y", "Authorization", "")
 		require.NoError(t, err)
 
 		require.Equal(t, "authorization", p.Header())
