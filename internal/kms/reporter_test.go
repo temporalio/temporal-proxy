@@ -67,7 +67,7 @@ func TestReporterEnvelopeOp(t *testing.T) {
 	}{
 		{
 			name:          "encrypt records the AES step",
-			event:         crypto.EnvelopeEvent{Op: crypto.OpEncrypt, Crypto: 250 * time.Microsecond, Total: 3 * time.Millisecond},
+			event:         crypto.EnvelopeEvent{Op: crypto.OpEncrypt, CryptoAttempted: true, Crypto: 250 * time.Microsecond, Total: 3 * time.Millisecond},
 			operation:     "encrypt",
 			wantDurCount:  1,
 			wantSuccesses: 1,
@@ -76,7 +76,7 @@ func TestReporterEnvelopeOp(t *testing.T) {
 			name: "decrypt with a CryptoErr counts as a failed AES step",
 			// AES was attempted and timed even though it failed, so the histogram
 			// still records it and the counter reports the failure.
-			event:        crypto.EnvelopeEvent{Op: crypto.OpDecrypt, Crypto: 100 * time.Microsecond, Total: time.Millisecond, CryptoErr: crypto.ErrMalformedCipherText, Err: crypto.ErrMalformedCipherText},
+			event:        crypto.EnvelopeEvent{Op: crypto.OpDecrypt, CryptoAttempted: true, Crypto: 100 * time.Microsecond, Total: time.Millisecond, CryptoErr: crypto.ErrMalformedCipherText, Err: crypto.ErrMalformedCipherText},
 			operation:    "decrypt",
 			wantDurCount: 1,
 			wantErrors:   1,
@@ -86,28 +86,35 @@ func TestReporterEnvelopeOp(t *testing.T) {
 			// Err is set because the overall Seal failed, but CryptoErr is nil
 			// because AES itself succeeded: the KEK wrap is what failed, and that
 			// failure belongs to kek_ops_total, not here.
-			event:         crypto.EnvelopeEvent{Op: crypto.OpEncrypt, Crypto: 250 * time.Microsecond, Total: 3 * time.Millisecond, Err: errors.New("kms unavailable")},
+			event:         crypto.EnvelopeEvent{Op: crypto.OpEncrypt, CryptoAttempted: true, Crypto: 250 * time.Microsecond, Total: 3 * time.Millisecond, Err: errors.New("kms unavailable")},
 			operation:     "encrypt",
 			wantDurCount:  1,
 			wantSuccesses: 1,
 		},
 		{
 			name: "a failure before AES records nothing",
-			// Crypto is zero and CryptoErr is nil, the only combination meaning AES
-			// was never reached. Recording that zero would drag the quantiles toward
-			// nothing, and there is no AES result to count either.
+			// CryptoAttempted is false, so no DEK operation happened.
 			event:        crypto.EnvelopeEvent{Op: crypto.OpDecrypt, Err: errors.New("unknown key"), Total: 2 * time.Millisecond},
 			operation:    "decrypt",
 			wantDurCount: 0,
 		},
 		{
-			name: "an AES failure counts even with an unmeasurably short duration",
-			// Whether AES ran is decided by CryptoErr, not by the duration, so this
-			// failure is counted. Its duration is still withheld from the histogram,
-			// which is why the count and the histogram's sample count can differ.
-			event:        crypto.EnvelopeEvent{Op: crypto.OpDecrypt, CryptoErr: crypto.ErrMalformedCipherText, Err: crypto.ErrMalformedCipherText, Total: time.Millisecond},
+			name: "a fast success is recorded despite a zero duration",
+			// A step that ran but finished inside the clock's resolution. Whether AES
+			// ran is decided by CryptoAttempted, never by the duration, so this is
+			// counted and its zero lands in the lowest bucket. Testing the duration
+			// instead would silently undercount successful DEK operations.
+			event:         crypto.EnvelopeEvent{Op: crypto.OpEncrypt, CryptoAttempted: true, Total: time.Millisecond},
+			operation:     "encrypt",
+			wantDurCount:  1,
+			wantSuccesses: 1,
+		},
+		{
+			name: "a fast failure is recorded despite a zero duration",
+			// The same, for a step that ran and failed.
+			event:        crypto.EnvelopeEvent{Op: crypto.OpDecrypt, CryptoAttempted: true, CryptoErr: crypto.ErrMalformedCipherText, Err: crypto.ErrMalformedCipherText, Total: time.Millisecond},
 			operation:    "decrypt",
-			wantDurCount: 0,
+			wantDurCount: 1,
 			wantErrors:   1,
 		},
 	}

@@ -72,10 +72,16 @@ type (
 		before   time.Duration
 	}
 
-	// cryptoStep records what the AES-256-GCM step cost and whether it failed.
-	// Its zero value means the step was never reached, which is what an early
-	// failure returns.
+	// cryptoStep records whether the AES-256-GCM step ran, what it cost, and
+	// whether it failed. Its zero value means the step was never reached, which
+	// is what an early failure returns.
+	//
+	// ran is tracked explicitly rather than inferred from dur being nonzero,
+	// because a small payload can complete inside the clock's resolution: a step
+	// that did run can measure as zero, so dur cannot distinguish "never ran"
+	// from "ran very fast".
 	cryptoStep struct {
+		ran bool
 		dur time.Duration
 		err error
 	}
@@ -221,12 +227,13 @@ func (v *Vault) Seal(ctx context.Context, ns string, data []byte) (*Message, err
 	msg, step, err := v.seal(ctx, ns, data)
 
 	v.observer.Observe(EnvelopeEvent{
-		Op:        OpEncrypt,
-		Namespace: ns,
-		Err:       err,
-		CryptoErr: step.err,
-		Total:     time.Since(start),
-		Crypto:    step.dur,
+		Op:              OpEncrypt,
+		Namespace:       ns,
+		Err:             err,
+		CryptoAttempted: step.ran,
+		CryptoErr:       step.err,
+		Total:           time.Since(start),
+		Crypto:          step.dur,
 	})
 
 	return msg, err
@@ -245,11 +252,12 @@ func (v *Vault) Open(ctx context.Context, msg *Message) ([]byte, error) {
 	pt, step, err := v.open(ctx, msg)
 
 	v.observer.Observe(EnvelopeEvent{
-		Op:        OpDecrypt,
-		Err:       err,
-		CryptoErr: step.err,
-		Total:     time.Since(start),
-		Crypto:    step.dur,
+		Op:              OpDecrypt,
+		Err:             err,
+		CryptoAttempted: step.ran,
+		CryptoErr:       step.err,
+		Total:           time.Since(start),
+		Crypto:          step.dur,
 	})
 
 	return pt, err
@@ -341,7 +349,7 @@ func (v *Vault) seal(ctx context.Context, ns string, data []byte) (*Message, cry
 
 	cryptoStart := time.Now()
 	ct, err := dek.Encrypt(ctx, data)
-	step := cryptoStep{dur: time.Since(cryptoStart), err: err}
+	step := cryptoStep{ran: true, dur: time.Since(cryptoStart), err: err}
 	if err != nil {
 		return nil, step, err
 	}
@@ -419,7 +427,7 @@ func (v *Vault) open(ctx context.Context, msg *Message) ([]byte, cryptoStep, err
 	cryptoStart := time.Now()
 	pt, err := dek.Decrypt(ctx, msg.Ciphertext)
 
-	return pt, cryptoStep{dur: time.Since(cryptoStart), err: err}, err
+	return pt, cryptoStep{ran: true, dur: time.Since(cryptoStart), err: err}, err
 }
 
 // getOrRefreshKey returns the sliding DEK for ns, creating or rotating it on

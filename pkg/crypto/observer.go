@@ -55,9 +55,14 @@ type (
 		Namespace string
 		// Err is the error the operation returned, or nil.
 		Err error
+		// CryptoAttempted reports whether the AES-256-GCM step ran. It is the
+		// only reliable signal for that, and Crypto is not: a small payload can
+		// complete inside the clock's resolution, so a step that did run can
+		// still report a zero duration. Crypto and CryptoErr are meaningful only
+		// when this is true.
+		CryptoAttempted bool
 		// CryptoErr is the error from the AES-256-GCM step alone, or nil when
-		// that step succeeded or was never reached. It is non-nil only when
-		// Crypto is nonzero. Err, by contrast, is the whole operation's error,
+		// that step succeeded. Err, by contrast, is the whole operation's error,
 		// which may come from a KEK wrap or a cache-miss unwrap rather than from
 		// AES, so the two differ whenever a Seal encrypts successfully and then
 		// fails to wrap its DEK.
@@ -65,10 +70,9 @@ type (
 		// Total covers the whole operation, including any KEK wrap on the first
 		// Seal after a rotation and any unwrap on a cache miss.
 		Total time.Duration
-		// Crypto covers only the AES-256-GCM step. It is nonzero if and only if
-		// that step was attempted, so a failure inside AES still reports a
-		// duration while a failure before it reports zero. Total minus Crypto is
-		// meaningful only when Crypto is nonzero.
+		// Crypto covers only the AES-256-GCM step, and may be zero for a step
+		// that ran. Total minus Crypto is the cost of everything around AES, and
+		// is meaningful only when CryptoAttempted is true.
 		Crypto time.Duration
 	}
 

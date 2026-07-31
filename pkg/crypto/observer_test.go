@@ -508,7 +508,13 @@ func TestObserverDEKOpEvents(t *testing.T) {
 				require.NoError(t, got.Err)
 			}
 
+			require.Equal(t, tt.wantCrypto, got.CryptoAttempted)
 			if tt.wantCrypto {
+				// Every row that reaches AES seals a payload large enough that the
+				// step cannot finish inside the clock's resolution, so a positive
+				// duration is safe to assert here. That is a property of these
+				// fixtures, not of the API: Crypto may legitimately be zero for a
+				// step that ran, which is why CryptoAttempted exists.
 				require.Positive(t, got.Crypto)
 			} else {
 				require.Zero(t, got.Crypto)
@@ -520,10 +526,10 @@ func TestObserverDEKOpEvents(t *testing.T) {
 				require.NoError(t, got.CryptoErr)
 			}
 
-			// A non-nil CryptoErr is only meaningful if AES ran, so it must imply
-			// a positive Crypto duration.
+			// CryptoErr describes the AES step, so it can only be set when that
+			// step ran. Note this implies nothing about the duration.
 			if got.CryptoErr != nil {
-				require.Positive(t, got.Crypto)
+				require.True(t, got.CryptoAttempted)
 			}
 		})
 	}

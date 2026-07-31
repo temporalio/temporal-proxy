@@ -183,25 +183,19 @@ func (r *Reporter) Observe(e crypto.Event) {
 // kek_ops_total already reports, and counting it here would blame the wrong
 // actor.
 func (r *Reporter) envelopeOp(e crypto.EnvelopeEvent) {
-	// Whether AES ran is decided by both fields, not by the duration alone. A
-	// zero Crypto with no CryptoErr is the only combination that means AES was
-	// never reached, so there is no DEK operation to record. A non-nil CryptoErr
-	// means AES ran and failed, and that must still be counted even if its
-	// measured duration read as zero: the outcome lives in CryptoErr, so testing
-	// the duration alone would silently drop the failure.
-	if e.Crypto <= 0 && e.CryptoErr == nil {
+	// No AES step, no DEK operation to record. CryptoAttempted is the only sound
+	// test for that: a zero Crypto cannot distinguish a step that never ran from
+	// one that finished inside the clock's resolution, so treating a zero as
+	// "never ran" would undercount both fast successes and fast failures.
+	if !e.CryptoAttempted {
 		return
 	}
 
+	// Every observation from here is a real measurement, including a zero, which
+	// belongs in the lowest bucket rather than being withheld.
 	op := e.Op.String()
 	r.countDEKOp(op, resultLabel(e.CryptoErr))
-
-	// Observe only a real measurement. A zero would drag the quantiles toward
-	// nothing, which is why this is a separate condition from counting the
-	// operation rather than one guard over both.
-	if e.Crypto > 0 {
-		r.observeDEKDur(op, e.Crypto.Seconds())
-	}
+	r.observeDEKDur(op, e.Crypto.Seconds())
 }
 
 // cacheAccess records a DEK cache hit or miss, distinguished by e.Hit, and
