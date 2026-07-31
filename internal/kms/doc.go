@@ -18,4 +18,14 @@
 // disabled the module provides a nil *crypto.Vault and starts no background
 // work; when enabled it also runs a goroutine that periodically refreshes the
 // vault so DEKs rotate ahead of expiry.
+//
+// The package also reports encryption telemetry to Prometheus under the
+// "encryption" subsystem. A [Reporter] implements [crypto.Observer] to record
+// DEK cache behavior, the AES-step duration and result of each envelope
+// operation as dek_ops_duration_secs and dek_ops_total, and DEK rotations by
+// reason; the metered keys above record their KMS wraps and unwraps against a
+// provider as kek_ops_total and kek_ops_duration_secs. This package owns the
+// DEK and KEK operations themselves; internal/proxy owns the end-to-end envelope
+// operation, timing its own Seal and Open calls and reporting them as
+// vault_ops_total and vault_ops_duration_secs, labeled by namespace.
 package kms

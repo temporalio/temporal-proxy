@@ -1,8 +1,10 @@
 package kms_test
 
 import (
+	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -35,9 +37,9 @@ func TestReporterCacheEvents(t *testing.T) {
 	t.Parallel()
 
 	r, reg := newTestReporter(t)
-	r.CacheMiss(crypto.CacheEvent{Size: 0})
-	r.CacheHit(crypto.CacheEvent{Size: 1})
-	r.CacheHit(crypto.CacheEvent{Size: 2})
+	r.Observe(crypto.CacheEvent{Hit: false, Size: 0})
+	r.Observe(crypto.CacheEvent{Hit: true, Size: 1})
+	r.Observe(crypto.CacheEvent{Hit: true, Size: 2})
 
 	hits := gather(t, reg, "proxy_encryption_dek_cache_hits_total")
 	require.NotNil(t, hits)
@@ -50,6 +52,121 @@ func TestReporterCacheEvents(t *testing.T) {
 	size := gather(t, reg, "proxy_encryption_dek_cache_size")
 	require.NotNil(t, size)
 	require.Equal(t, 2.0, size.GetMetric()[0].GetGauge().GetValue()) // last Set wins
+}
+
+func TestReporterEnvelopeOp(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		event         crypto.EnvelopeEvent
+		operation     string
+		wantDurCount  uint64
+		wantSuccesses float64
+		wantErrors    float64
+	}{
+		{
+			name:          "encrypt records the AES step",
+			event:         crypto.EnvelopeEvent{Op: crypto.OpEncrypt, CryptoAttempted: true, Crypto: 250 * time.Microsecond, Total: 3 * time.Millisecond},
+			operation:     "encrypt",
+			wantDurCount:  1,
+			wantSuccesses: 1,
+		},
+		{
+			name: "decrypt with a CryptoErr counts as a failed AES step",
+			// AES was attempted and timed even though it failed, so the histogram
+			// still records it and the counter reports the failure.
+			event:        crypto.EnvelopeEvent{Op: crypto.OpDecrypt, CryptoAttempted: true, Crypto: 100 * time.Microsecond, Total: time.Millisecond, CryptoErr: crypto.ErrMalformedCipherText, Err: crypto.ErrMalformedCipherText},
+			operation:    "decrypt",
+			wantDurCount: 1,
+			wantErrors:   1,
+		},
+		{
+			name: "encrypt whose KEK fails to wrap still counts as an AES success",
+			// Err is set because the overall Seal failed, but CryptoErr is nil
+			// because AES itself succeeded: the KEK wrap is what failed, and that
+			// failure belongs to kek_ops_total, not here.
+			event:         crypto.EnvelopeEvent{Op: crypto.OpEncrypt, CryptoAttempted: true, Crypto: 250 * time.Microsecond, Total: 3 * time.Millisecond, Err: errors.New("kms unavailable")},
+			operation:     "encrypt",
+			wantDurCount:  1,
+			wantSuccesses: 1,
+		},
+		{
+			name: "a failure before AES records nothing",
+			// CryptoAttempted is false, so no DEK operation happened.
+			event:        crypto.EnvelopeEvent{Op: crypto.OpDecrypt, Err: errors.New("unknown key"), Total: 2 * time.Millisecond},
+			operation:    "decrypt",
+			wantDurCount: 0,
+		},
+		{
+			name: "a fast success is recorded despite a zero duration",
+			// A step that ran but finished inside the clock's resolution. Whether AES
+			// ran is decided by CryptoAttempted, never by the duration, so this is
+			// counted and its zero lands in the lowest bucket. Testing the duration
+			// instead would silently undercount successful DEK operations.
+			event:         crypto.EnvelopeEvent{Op: crypto.OpEncrypt, CryptoAttempted: true, Total: time.Millisecond},
+			operation:     "encrypt",
+			wantDurCount:  1,
+			wantSuccesses: 1,
+		},
+		{
+			name: "a fast failure is recorded despite a zero duration",
+			// The same, for a step that ran and failed.
+			event:        crypto.EnvelopeEvent{Op: crypto.OpDecrypt, CryptoAttempted: true, CryptoErr: crypto.ErrMalformedCipherText, Err: crypto.ErrMalformedCipherText, Total: time.Millisecond},
+			operation:    "decrypt",
+			wantDurCount: 1,
+			wantErrors:   1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r, reg := newTestReporter(t)
+			r.Observe(tt.event)
+
+			mf := gather(t, reg, "proxy_encryption_dek_ops_duration_secs")
+			require.NotNil(t, mf)
+			m := findMetric(t, mf, map[string]string{"operation": tt.operation})
+			require.Equal(t, tt.wantDurCount, m.GetHistogram().GetSampleCount())
+
+			ops := gather(t, reg, "proxy_encryption_dek_ops_total")
+			require.NotNil(t, ops)
+			success := findMetric(t, ops, map[string]string{"operation": tt.operation, "result": "success"})
+			require.Equal(t, tt.wantSuccesses, success.GetCounter().GetValue())
+			failure := findMetric(t, ops, map[string]string{"operation": tt.operation, "result": "error"})
+			require.Equal(t, tt.wantErrors, failure.GetCounter().GetValue())
+		})
+	}
+}
+
+func TestReporterRotated(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		reason crypto.RotationReason
+		want   string
+	}{
+		{name: "scheduled", reason: crypto.RotationScheduled, want: "scheduled"},
+		{name: "on demand", reason: crypto.RotationOnDemand, want: "on_demand"},
+		{name: "initial", reason: crypto.RotationInitial, want: "initial"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r, reg := newTestReporter(t)
+			r.Observe(crypto.RotationEvent{Namespace: "ns1", Reason: tt.reason})
+
+			mf := gather(t, reg, "proxy_encryption_dek_rotations_total")
+			require.NotNil(t, mf)
+			m := findMetric(t, mf, map[string]string{"reason": tt.want})
+			require.Equal(t, 1.0, m.GetCounter().GetValue())
+		})
+	}
 }
 
 func gather(t *testing.T, reg *prometheus.Registry, name string) *dto.MetricFamily {
