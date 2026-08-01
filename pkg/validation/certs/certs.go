@@ -1,6 +1,7 @@
 package certs
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/rsa"
 	"crypto/tls"
@@ -187,9 +188,17 @@ func IsCA() Check {
 // known-weak algorithms (SHA-1, MD5, MD2, DSA). When allowedSuites are provided
 // it additionally rejects certificates whose public key type is incompatible
 // with every suite in that list.
+//
+// Self-signed root certificates are exempt from the signature-algorithm check:
+// a root's self-signature is not part of chain verification (roots are trusted
+// because they appear in the trust store, not because their self-signature is
+// verified), and many still-valid public roots — used to sign SHA-256 chains
+// today — carry legacy SHA-1 self-signatures. Rejecting them would make the
+// system CA bundle unusable as a trust anchor. The key-type check still runs.
 func SecureAlgorithm(allowedSuites ...uint16) Check {
 	return func(cert *x509.Certificate) error {
-		if weakAlgorithms[cert.SignatureAlgorithm] {
+		selfSigned := bytes.Equal(cert.RawIssuer, cert.RawSubject)
+		if !selfSigned && weakAlgorithms[cert.SignatureAlgorithm] {
 			return validation.Error{
 				Subject: cert.Subject.CommonName,
 				Field:   "signature_algorithm",

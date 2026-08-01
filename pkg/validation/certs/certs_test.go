@@ -250,24 +250,85 @@ func TestSecureAlgorithm(t *testing.T) {
 func TestSecureAlgorithm_WeakAlgorithm(t *testing.T) {
 	t.Parallel()
 
-	// Go rejects SHA-1 signing by default, so we build a well-formed modern cert
-	// and patch its SignatureAlgorithm to a weak value after parsing to exercise
-	// the rejection path without relying on Go producing a SHA-1 signature.
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
+	// Go rejects SHA-1 signing by default, so we build well-formed modern certs
+	// and patch their SignatureAlgorithm to a weak value after parsing to
+	// exercise the rejection path without relying on Go producing a SHA-1
+	// signature.
 
-	tmpl := validTemplate()
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	require.NoError(t, err)
+	t.Run("non-self-signed cert with weak signature is rejected", func(t *testing.T) {
+		t.Parallel()
 
-	cert, err := x509.ParseCertificate(der)
-	require.NoError(t, err)
+		// Build a leaf whose Issuer differs from its Subject so it looks like a
+		// signed-by-someone-else certificate to SecureAlgorithm. Using distinct
+		// parent and child templates so x509.CreateCertificate uses the
+		// parent's Subject as the child's Issuer.
+		issuerKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
 
-	cert.SignatureAlgorithm = x509.SHA1WithRSA
+		issuerTmpl := caTemplate()
+		issuerTmpl.SerialNumber = big.NewInt(100)
+		issuerTmpl.Subject = pkix.Name{CommonName: "test-issuer"}
 
-	err = certs.SecureAlgorithm()(cert)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "weak signature algorithm")
+		leafKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+
+		leafTmpl := validTemplate()
+		leafTmpl.SerialNumber = big.NewInt(200)
+		leafTmpl.Subject = pkix.Name{CommonName: "test-leaf"}
+
+		der, err := x509.CreateCertificate(rand.Reader, leafTmpl, issuerTmpl, &leafKey.PublicKey, issuerKey)
+		require.NoError(t, err)
+
+		cert, err := x509.ParseCertificate(der)
+		require.NoError(t, err)
+		require.NotEqual(t, cert.RawIssuer, cert.RawSubject, "test setup: cert must not be self-signed")
+
+		cert.SignatureAlgorithm = x509.SHA1WithRSA
+
+		err = certs.SecureAlgorithm()(cert)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "weak signature algorithm")
+	})
+
+	t.Run("self-signed root with weak signature is accepted", func(t *testing.T) {
+		t.Parallel()
+
+		// Self-signed roots (RawIssuer == RawSubject) are exempt from the
+		// weak-signature check: the root's self-signature is not part of chain
+		// verification, and many still-valid public roots that sign SHA-256
+		// chains today are themselves self-signed with SHA-1. Rejecting them
+		// would make the system CA bundle unusable as a trust anchor.
+		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+
+		tmpl := caTemplate()
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+		require.NoError(t, err)
+
+		cert, err := x509.ParseCertificate(der)
+		require.NoError(t, err)
+		require.Equal(t, cert.RawIssuer, cert.RawSubject, "test setup: cert must be self-signed")
+
+		cert.SignatureAlgorithm = x509.SHA1WithRSA
+
+		require.NoError(t, certs.SecureAlgorithm()(cert))
+	})
+
+	t.Run("self-signed root still fails key-type check", func(t *testing.T) {
+		t.Parallel()
+
+		// The self-signed exemption applies only to the weak-signature check;
+		// the key-type check must still run. An RSA self-signed root fails a
+		// checker that only accepts ECDSA suites.
+		certPEM := testutil.RSACert(t, caTemplate())
+		ecdsaOnlySuites := []uint16{
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+		}
+		err := certs.ValidatePEM(certPEM, certs.SecureAlgorithm(ecdsaOnlySuites...))
+		require.Error(t, err)
+		require.Contains(t, err.Error(), `key type "rsa" incompatible`)
+	})
 }
 
 func TestSufficientKeySize(t *testing.T) {
