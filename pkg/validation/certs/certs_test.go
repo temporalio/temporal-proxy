@@ -320,12 +320,22 @@ func TestSecureAlgorithm_WeakAlgorithm(t *testing.T) {
 		// The self-signed exemption applies only to the weak-signature check;
 		// the key-type check must still run. An RSA self-signed root fails a
 		// checker that only accepts ECDSA suites.
-		certPEM := testutil.RSACert(t, caTemplate())
+		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+
+		tmpl := caTemplate()
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+		require.NoError(t, err)
+
+		cert, err := x509.ParseCertificate(der)
+		require.NoError(t, err)
+		require.Equal(t, cert.RawIssuer, cert.RawSubject, "test setup: cert must be self-signed")
+
 		ecdsaOnlySuites := []uint16{
 			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
 		}
-		err := certs.ValidatePEM(certPEM, certs.SecureAlgorithm(ecdsaOnlySuites...))
+		err = certs.SecureAlgorithm(ecdsaOnlySuites...)(cert)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), `key type "rsa" incompatible`)
 	})

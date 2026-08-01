@@ -189,16 +189,26 @@ func IsCA() Check {
 // it additionally rejects certificates whose public key type is incompatible
 // with every suite in that list.
 //
-// Self-signed root certificates are exempt from the signature-algorithm check:
-// a root's self-signature is not part of chain verification (roots are trusted
-// because they appear in the trust store, not because their self-signature is
-// verified), and many still-valid public roots — used to sign SHA-256 chains
-// today — carry legacy SHA-1 self-signatures. Rejecting them would make the
-// system CA bundle unusable as a trust anchor. The key-type check still runs.
+// Self-issued certificates (RawIssuer == RawSubject) are exempt from the
+// signature-algorithm check. This is a superset of self-signed: it also
+// admits CA key-rollover certs, which are self-issued but signed by a
+// different (older or newer) key than the one they certify. The exemption
+// holds regardless: a self-issued cert's own signature is never consulted
+// during chain verification — the cert is trusted (or not) based on its
+// presence in the trust store, or on its role elsewhere in the chain, not on
+// its self-attestation. Many still-valid public roots — used to sign SHA-256
+// chains today — carry legacy SHA-1 self-signatures; rejecting them would
+// make the system CA bundle unusable as a trust anchor.
+//
+// SecureAlgorithm is used both for trust-anchor validation and, via
+// leafChecks, for certificates presented in a peer's chain. The exemption
+// applies in both cases: a self-issued cert anywhere in a presented chain
+// skips the weak-signature check, for the same reason. The key-type check
+// still runs unconditionally.
 func SecureAlgorithm(allowedSuites ...uint16) Check {
 	return func(cert *x509.Certificate) error {
-		selfSigned := bytes.Equal(cert.RawIssuer, cert.RawSubject)
-		if !selfSigned && weakAlgorithms[cert.SignatureAlgorithm] {
+		selfIssued := bytes.Equal(cert.RawIssuer, cert.RawSubject)
+		if !selfIssued && weakAlgorithms[cert.SignatureAlgorithm] {
 			return validation.Error{
 				Subject: cert.Subject.CommonName,
 				Field:   "signature_algorithm",
