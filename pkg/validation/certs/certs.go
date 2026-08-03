@@ -1,6 +1,7 @@
 package certs
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/rsa"
 	"crypto/tls"
@@ -187,9 +188,27 @@ func IsCA() Check {
 // known-weak algorithms (SHA-1, MD5, MD2, DSA). When allowedSuites are provided
 // it additionally rejects certificates whose public key type is incompatible
 // with every suite in that list.
+//
+// Self-issued certificates (RawIssuer == RawSubject) are exempt from the
+// signature-algorithm check. This is a superset of self-signed: it also
+// admits CA key-rollover certs, which are self-issued but signed by a
+// different (older or newer) key than the one they certify. The exemption
+// holds regardless: a self-issued cert's own signature is never consulted
+// during chain verification — the cert is trusted (or not) based on its
+// presence in the trust store, or on its role elsewhere in the chain, not on
+// its self-attestation. Many still-valid public roots — used to sign SHA-256
+// chains today — carry legacy SHA-1 self-signatures; rejecting them would
+// make the system CA bundle unusable as a trust anchor.
+//
+// SecureAlgorithm is used both for trust-anchor validation and, via
+// leafChecks, for certificates presented in a peer's chain. The exemption
+// applies in both cases: a self-issued cert anywhere in a presented chain
+// skips the weak-signature check, for the same reason. The key-type check
+// still runs unconditionally.
 func SecureAlgorithm(allowedSuites ...uint16) Check {
 	return func(cert *x509.Certificate) error {
-		if weakAlgorithms[cert.SignatureAlgorithm] {
+		selfIssued := bytes.Equal(cert.RawIssuer, cert.RawSubject)
+		if !selfIssued && weakAlgorithms[cert.SignatureAlgorithm] {
 			return validation.Error{
 				Subject: cert.Subject.CommonName,
 				Field:   "signature_algorithm",
