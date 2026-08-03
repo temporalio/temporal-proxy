@@ -67,7 +67,8 @@ reaches a different upstream with no change to the Worker.
 - **Pluggable key management.** For a backend the proxy has no built-in support for, such as an on-prem HSM or an
   internal key service, point it at an extension server you run and it wraps DEKs through that instead. Only key
   material is exchanged; payloads never reach it.
-- **Inbound authentication.** Optional static-token or JWKS validation on the gateway; off by default.
+- **Inbound authentication.** Optional static-token or JWKS validation on the gateway; off by default. For an identity
+  system neither covers, delegate the decision to an extension server you run and it admits or refuses each caller.
 - **Codec-transparent.** The gateway never parses payloads. It peeks the Namespace, picks an upstream, and relays raw
   frames in both directions.
 - **Multiple deployment options.** Ship as a Go binary, a container image, or a Helm chart.

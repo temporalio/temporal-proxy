@@ -400,6 +400,52 @@ func TestConfig_Validate_RoutingReferences(t *testing.T) {
 	}
 }
 
+func TestConfig_Validate_ExternalAuthReferences(t *testing.T) {
+	t.Parallel()
+
+	base := func(ext *config.ExternalAuthConfig) *config.Config {
+		return &config.Config{
+			Listen:    config.ListenConfig{HostPort: ":8080"},
+			Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
+			ExtensionServers: config.ExtensionServerList{
+				{Name: "policy", Listen: config.ListenConfig{HostPort: "127.0.0.1:9000"}},
+			},
+			Auth: &config.AuthConfig{External: ext},
+		}
+	}
+
+	tests := []struct {
+		name       string
+		cfg        *config.Config
+		wantTuples [][2]string
+	}{
+		{
+			name: "names a configured extension server",
+			cfg:  base(&config.ExternalAuthConfig{Name: "policy"}),
+		},
+		{
+			name:       "names an extension server that does not exist",
+			cfg:        base(&config.ExternalAuthConfig{Name: "absent"}),
+			wantTuples: [][2]string{{"auth.external", "name"}},
+		},
+		{
+			name: "an empty name is required, not a bad reference",
+			cfg:  base(&config.ExternalAuthConfig{}),
+			// Reported once by the required check rather than twice, since an
+			// absent name gives the reference rule no server to report.
+			wantTuples: [][2]string{{"auth.external", "name"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assertTuples(t, tt.cfg.Validate(), tt.wantTuples)
+		})
+	}
+}
+
 func TestConfig_ValidateRejectsDuplicateHostPorts(t *testing.T) {
 	t.Parallel()
 

@@ -7,7 +7,7 @@ import (
 	"go.uber.org/fx"
 	"google.golang.org/grpc"
 
-	"github.com/temporalio/temporal-proxy/internal/auth"
+	"github.com/temporalio/temporal-proxy/internal/auth/outbound"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 )
@@ -107,13 +107,13 @@ type (
 func extensionConn(pool *connect.Pool, s *config.ExtensionServer) (*connect.Conn, error) {
 	var opts []grpc.DialOption
 
-	cp, err := auth.CredentialProviderFor(s.Credentials)
+	cp, err := outbound.CredentialProviderFor(s.Credentials)
 	if err != nil {
 		return nil, fmt.Errorf("invalid credentials for extension server %q: %w", s.Name, err)
 	}
 
 	if cp != nil {
-		opts = append(opts, auth.DialOptions(cp)...)
+		opts = append(opts, outbound.DialOptions(cp)...)
 	}
 
 	// A nil TLS block resolves to a plaintext dialer, so this is safe unset.

@@ -7,6 +7,8 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+
+	"github.com/temporalio/temporal-proxy/pkg/api"
 )
 
 // StaticTokenAuthenticator authenticates a request by comparing the bearer
@@ -37,17 +39,17 @@ func NewStaticTokenAuthenticator(token, header, scheme string) (*StaticTokenAuth
 func (a *StaticTokenAuthenticator) Authenticate(_ context.Context, md metadata.MD) error {
 	got, ok := extractToken(md, a.header, a.scheme)
 	if !ok {
-		return reject(codes.Unauthenticated, "missing or malformed credentials",
+		return api.Reject(codes.Unauthenticated, "missing or malformed credentials",
 			"static token: missing or malformed "+a.header+" header")
 	}
 
 	if subtle.ConstantTimeCompare([]byte(got), []byte(a.token)) != 1 {
-		return reject(codes.Unauthenticated, "invalid credentials", "static token: value mismatch")
+		return api.Reject(codes.Unauthenticated, "invalid credentials", "static token: value mismatch")
 	}
 
 	return nil
 }
 
-// Header reports the metadata header this authenticator consumes, so
-// StreamServerInterceptor can strip it before forwarding upstream.
-func (a *StaticTokenAuthenticator) Header() string { return a.header }
+// SecureHeaders reports the single metadata header this authenticator consumes,
+// so StreamServerInterceptor can strip it before forwarding upstream.
+func (a *StaticTokenAuthenticator) SecureHeaders() []string { return []string{a.header} }

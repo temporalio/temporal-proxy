@@ -25,7 +25,7 @@ func (f *fakeStream) Context() context.Context { return f.ctx }
 type fakeAuthenticator struct{ err error }
 
 func (f fakeAuthenticator) Authenticate(context.Context, metadata.MD) error { return f.err }
-func (fakeAuthenticator) Header() string                                    { return "" }
+func (fakeAuthenticator) SecureHeaders() []string                           { return nil }
 
 func TestStreamServerInterceptor(t *testing.T) {
 	t.Parallel()
