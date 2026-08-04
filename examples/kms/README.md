@@ -213,9 +213,11 @@ for reading history back, keyed by the encrypted DEK it already opened once. `re
 
 ## How the provider works
 
-The whole provider is the `server` command you ran in terminal 2. The crypto and the ciphertext framing live in
-`server/keyring.go`, the gRPC surface in `server/service.go`, and the bearer token check in `server/interceptor.go`.
-Start there if you are writing one of these against a real key service.
+The whole provider is the `server` command you ran in terminal 2, and almost all of it is one file. The crypto and the
+ciphertext framing live in `server/keyring.go`; the gRPC surface, the bearer token check, TLS, and graceful shutdown all
+come from `pkg/ext`. `keyring`'s `Wrap` and `Unwrap` are what satisfy `ext.KMS`, and `server/main.go` hands them to
+`ext.Serve` alongside the token check and the certificate. Start with `keyring.go` if you are writing one of these
+against a real key service: it is the part you have to replace.
 
 Every ciphertext the provider produces is a self-contained frame:
 
@@ -223,7 +225,7 @@ Every ciphertext the provider produces is a self-contained frame:
 [ version: 1 byte ][ namespace length: 2 bytes ][ namespace ][ nonce: 12 bytes ][ ciphertext + GCM tag ]
 ```
 
-`Decrypt` receives nothing but that ciphertext, no namespace and no other context, so `unwrap` has to read the namespace
+`Decrypt` receives nothing but that ciphertext, no namespace and no other context, so `Unwrap` has to read the namespace
 back out of the frame before it can derive the matching key. The namespace also doubles as the GCM additional data, so a
 ciphertext relabelled with a different namespace fails to open rather than silently decrypting under the wrong key. It
 is also why the `default` namespace's ciphertext above is 70 bytes while the `payments` namespace's, in the optional

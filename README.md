@@ -2,8 +2,9 @@
 
 [![ci](https://github.com/temporalio/temporal-proxy/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/temporalio/temporal-proxy/actions/workflows/ci.yaml)
 [![codecov](https://codecov.io/gh/temporalio/temporal-proxy/branch/main/graph/badge.svg)](https://codecov.io/gh/temporalio/temporal-proxy)
-[![Go Reference](https://pkg.go.dev/badge/github.com/temporalio/temporal-proxy.svg)](https://pkg.go.dev/github.com/temporalio/temporal-proxy)
 [![release](https://img.shields.io/github/v/release/temporalio/temporal-proxy)](https://github.com/temporalio/temporal-proxy/releases)
+[![Docs](https://img.shields.io/badge/proxy-docs-blue)](https://docs.temporal.io/production-deployment/temporal-proxy/)
+[![Go Reference](https://pkg.go.dev/badge/github.com/temporalio/temporal-proxy.svg)](https://pkg.go.dev/github.com/temporalio/temporal-proxy)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A gRPC proxy that sits between Temporal SDK Clients, Workers, and the Temporal UI on one side and one or more upstream
@@ -145,7 +146,9 @@ carry no Cloud configuration talk plaintext to `localhost:7233`, and the proxy a
 rewrite on the way to Cloud. Follow its README to run it end to end.
 
 The [KMS extension server example](examples/kms) shows the pluggable key management path end to end: a local dev server,
-a key provider you run, and workflow payloads that the Temporal Service only ever stores as ciphertext.
+a key provider you run, and workflow payloads that the Temporal Service only ever stores as ciphertext. It is built on
+[`pkg/ext`](pkg/ext), which supplies the gRPC surface, the credential check, TLS, and graceful shutdown, so writing your
+own extension server means implementing the key handling and little else.
 
 ## Terms
 
@@ -154,7 +157,7 @@ a key provider you run, and workflow payloads that the Temporal Service only eve
 | gateway          | The single inbound gRPC endpoint that every SDK Client, Worker, and the UI connects to. It routes each request to an upstream by Namespace and/or request metadata, and never parses payloads. |
 | upstream         | A configured destination the proxy forwards to: a Temporal Service (local dev, self-hosted, or Temporal Cloud), or another Temporal Proxy.                                                     |
 | system upstream  | The upstream that handles Namespace-less requests, such as the SDK's `GetSystemInfo` call on connect.                                                                                          |
-| extension server | A gRPC service you run that the proxy calls out to for a capability it has no built-in backend for. Today that means wrapping DEKs as a key management backend.                                |
+| extension server | A gRPC service you run that the proxy calls out to for a capability it has no built-in backend for: wrapping DEKs, or admitting inbound callers. Build one with [`pkg/ext`](pkg/ext).          |
 | Temporal Service | A Temporal frontend the proxy connects to.                                                                                                                                                     |
 
 ## Development

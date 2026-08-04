@@ -7,26 +7,33 @@
 // KMS_MASTER_SECRET is the secret every namespace's wrapping key is derived
 // from. Both are required.
 //
-// The provider it serves lives alongside it: keyring.go derives one AES-256-GCM
-// key per namespace from the master secret and frames the ciphertext, service.go
-// is the gRPC surface, and interceptor.go is the bearer token check. That is
-// enough to show the shape of the contract, and it is not a key manager: the
-// master secret sits in an environment variable, nothing is rotated, and losing
-// the secret loses every payload sealed under it. A real provider fronts an HSM
-// or a key service.
+// Only the provider itself lives here, in keyring.go, which derives one
+// AES-256-GCM key per namespace from the master secret and frames the
+// ciphertext. The gRPC surface and the bearer token check come from
+// [github.com/temporalio/temporal-proxy/pkg/ext]: keyring's Wrap and Unwrap
+// satisfy [ext.KMS], and [ext.Serve] registers them, serves TLS, and shuts down
+// on a signal. That split is the point of the example. The interesting part of
+// writing one of these is the key handling, not the server around it.
+//
+// This is enough to show the shape of the contract and it is not a key manager:
+// the master secret sits in an environment variable, nothing is rotated, and
+// losing the secret loses every payload sealed under it. A real provider fronts
+// an HSM or a key service.
 package main
 
 import (
+	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"flag"
-	"log"
-	"net"
 	"os"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/temporalio/temporal-proxy/pkg/api/kms/v1"
+	"github.com/temporalio/temporal-proxy/pkg/ext"
+	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
 
 func main() {
@@ -35,25 +42,18 @@ func main() {
 	keyFile := flag.String("key", "certs/server-key.pem", "PEM private key matching -cert")
 	flag.Parse()
 
-	// Fail loudly on a missing secret. A provider that started without a token
-	// would serve anyone who found the port, and one without a master secret has
-	// no key to wrap with.
-	token := requireEnv("KMS_API_KEY")
-	secret := requireEnv("KMS_MASTER_SECRET")
+	log := logger.Default().With(tag.Component("examples"))
+	secret := requireEnv("KMS_MASTER_SECRET", log)
+	expToken := []byte("Bearer " + requireEnv("KMS_API_KEY", log))
 
 	keys, err := newKeyring([]byte(secret))
 	if err != nil {
-		log.Fatalf("failed to build keyring: %v", err)
+		log.Fatal("Failed to build keyring", tag.Error(err))
 	}
 
 	cert, err := tls.LoadX509KeyPair(*certFile, *keyFile)
 	if err != nil {
-		log.Fatalf("failed to load key pair: %v (generate one with: go run ./gencerts)", err)
-	}
-
-	lis, err := net.Listen("tcp", *listen)
-	if err != nil {
-		log.Fatalf("failed to listen on %s: %v", *listen, err)
+		log.Fatal("Failed to load key pair (generate one with: go run ./gencerts)", tag.Error(err))
 	}
 
 	// TLS 1.2 is the floor the proxy's dialer enforces; two Go peers negotiate
@@ -63,22 +63,24 @@ func main() {
 		MinVersion:   tls.VersionTLS12,
 	})
 
-	srv := grpc.NewServer(
-		grpc.Creds(creds),
-		grpc.UnaryInterceptor(authInterceptor(token)),
-	)
-	kms.RegisterEncryptionServiceServer(srv, newService(keys))
-
-	log.Printf("extension server listening on %s over TLS", *listen)
-	if err := srv.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
+	if err := ext.Serve(
+		context.Background(),
+		ext.WithAddr(*listen),
+		ext.WithServerAuth("authorization", func(token string) bool {
+			return subtle.ConstantTimeCompare([]byte(token), expToken) == 1
+		}),
+		ext.WithKMS(keys),
+		ext.WithLogger(log),
+		ext.WithServerOption(grpc.Creds(creds)),
+	); err != nil {
+		log.Fatal("Failed to start server", tag.Error(err))
 	}
 }
 
-func requireEnv(name string) string {
+func requireEnv(name string, log logger.Logger) string {
 	v := os.Getenv(name)
 	if v == "" {
-		log.Fatalf("%s is required", name)
+		log.Fatal(name + " is required")
 	}
 
 	return v
