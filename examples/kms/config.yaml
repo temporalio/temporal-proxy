@@ -25,10 +25,11 @@ upstreams:
     hostPort: 127.0.0.1:7233 # temporal server start-dev
 
 # The pluggable key management backend. The proxy builds this connection when it
-# builds its key policies, so a malformed address, credentials without TLS, or an
-# unreadable ca file all fail at startup. Peer verification is later: gRPC connects
-# lazily, so a ca that simply does not match the server's certificate is not
-# discovered until the first payload needs a key.
+# builds its key policies and opens it while starting up, so a malformed address,
+# credentials without TLS, an unreadable ca file, a ca that does not match the
+# server's certificate, and an extension server that simply is not running all
+# fail at startup rather than surfacing once traffic arrives. Start the extension
+# server first.
 extensionServers:
   - name: kms
     hostPort: 127.0.0.1:9443

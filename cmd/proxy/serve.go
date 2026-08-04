@@ -7,6 +7,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/urfave/cli/v3"
 	"go.uber.org/fx"
+	"go.uber.org/fx/fxevent"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/temporalio/temporal-proxy/internal/api"
@@ -22,6 +23,18 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
+
+// appLogger reports the fx lifecycle failures worth an operator's attention
+// through the proxy's own logger.
+//
+// fx surfaces a failed start as an event rather than as [fx.App.Run]'s return
+// value, so an app running under [fx.NopLogger] exits non-zero having said
+// nothing: an unreachable upstream or extension server used to look like the
+// proxy simply quitting. Everything else fx emits is dropped, which keeps
+// startup quiet without hiding the one thing worth saying.
+type appLogger struct {
+	log logger.Logger
+}
 
 func serve() *cli.Command {
 	return &cli.Command{
@@ -83,7 +96,7 @@ func serve() *cli.Command {
 				proxy.Module,
 				router.Module,
 				server.Module,
-				fx.NopLogger,
+				fx.WithLogger(func(l logger.Logger) fxevent.Logger { return &appLogger{log: l} }),
 			)
 
 			if err := fxApp.Err(); err != nil {
@@ -91,8 +104,27 @@ func serve() *cli.Command {
 				return err
 			}
 
+			// Run exits the process itself on failure, with the code fx.Shutdowner
+			// was given, so a server that stops serving still exits non-zero for
+			// whatever supervises this. It returns only on a clean shutdown.
 			fxApp.Run()
 			return nil
 		},
+	}
+}
+
+// LogEvent implements [fxevent.Logger]. Both cases carry the outcome of a whole
+// lifecycle phase, so one line is logged per failed start or stop rather than one
+// per hook.
+func (l *appLogger) LogEvent(e fxevent.Event) {
+	switch e := e.(type) {
+	case *fxevent.Started:
+		if e.Err != nil {
+			l.log.Error("Failed to start", tag.Error(e.Err))
+		}
+	case *fxevent.Stopped:
+		if e.Err != nil {
+			l.log.Error("Failed to stop cleanly", tag.Error(e.Err))
+		}
 	}
 }

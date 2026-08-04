@@ -1,0 +1,54 @@
+# Proxy configuration for the inbound authentication example.
+#
+# Workers connect to the gateway in plaintext, presenting a JWT minted by the
+# example's identity provider. The proxy asks the extension server whether to
+# admit each stream, and forwards admitted ones to a local dev server with the
+# caller's credential removed.
+#
+# Nothing here needs an environment variable. The proxy runs from the repository
+# root, so start it with:
+#   go run ./cmd/proxy serve -c examples/auth/config.yaml
+hostPort: 127.0.0.1:7234 # the dev server holds 7233
+
+routing:
+  # One upstream serves everything, including the namespace-less calls the SDK
+  # makes on connect (GetSystemInfo): with no system upstream set they fall
+  # through to the default. That works because this upstream's hostPort is a
+  # literal address; a templated one would need its own system upstream, having
+  # no namespace to resolve the template from.
+  default: local
+
+upstreams:
+  - name: local
+    hostPort: 127.0.0.1:7233 # temporal server start-dev
+
+# The server that decides who gets in. Plaintext and unauthenticated, which is
+# not what a deployment should do: anything that can reach port 9500 can ask
+# this server to authenticate a caller. Adding TLS and a bearer token here is
+# what examples/kms shows, and it is a prerequisite rather than an extra, since
+# the proxy refuses to put a credential on a plaintext connection.
+#
+# The proxy opens this connection while starting up, so start the extension
+# server first. A proxy that cannot reach it fails to start rather than serving
+# a gateway that denies everything.
+extensionServers:
+  - name: tenantauth
+    hostPort: 127.0.0.1:9500
+
+# Delegate the inbound decision to that server.
+#
+# credentialHeaders is what makes the exchange unambiguous. The proxy lifts these
+# headers out of the caller's stream into the request body, so the extension
+# server reads the caller's credential from a field the proxy vouches for rather
+# than from metadata it would have to tell apart from the proxy's own. They are
+# also stripped from the stream forwarded upstream, so the dev server never sees
+# the caller's token.
+#
+# Leaving the list empty would not hide anything: the caller's metadata is
+# forwarded either way, so the token would still arrive, just as cargo nobody
+# vouched for, and it would continue upstream unstripped.
+auth:
+  external:
+    name: tenantauth
+    credentialHeaders:
+      - authorization
