@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hkdf"
@@ -51,15 +52,15 @@ func newKeyring(secret []byte) (*keyring, error) {
 	return &keyring{secret: secret}, nil
 }
 
-// wrap seals dek under the key derived for namespace.
+// Wrap seals dek under the key derived for namespace.
 //
-// The namespace is written into the frame in the clear because unwrap is handed
+// The namespace is written into the frame in the clear because Unwrap is handed
 // nothing but ciphertext and has to derive the same key again. It doubles as the
 // GCM additional data, so a ciphertext relabelled with another namespace fails
 // to open. A namespace is not a secret (it already travels in gRPC metadata),
 // but a provider that would rather not expose one should carry an opaque key
 // identifier here and resolve it internally.
-func (k *keyring) wrap(namespace string, dek []byte) ([]byte, error) {
+func (k *keyring) Wrap(_ context.Context, namespace string, dek []byte) ([]byte, error) {
 	if len(namespace) > math.MaxUint16 {
 		return nil, fmt.Errorf("server: namespace is too long to frame: %d bytes", len(namespace))
 	}
@@ -82,9 +83,9 @@ func (k *keyring) wrap(namespace string, dek []byte) ([]byte, error) {
 	return gcm.Seal(out, nonce, dek, []byte(namespace)), nil
 }
 
-// unwrap opens a ciphertext produced by wrap, deriving the key from the
+// Unwrap opens a ciphertext produced by Wrap, deriving the key from the
 // namespace the frame carries.
-func (k *keyring) unwrap(ciphertext []byte) ([]byte, error) {
+func (k *keyring) Unwrap(_ context.Context, ciphertext []byte) ([]byte, error) {
 	if len(ciphertext) < headerSize {
 		return nil, errors.New("server: ciphertext is too short to hold a header")
 	}
