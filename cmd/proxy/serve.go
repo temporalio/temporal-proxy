@@ -7,6 +7,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/urfave/cli/v3"
 	"go.uber.org/fx"
+	"go.uber.org/fx/fxevent"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/temporalio/temporal-proxy/internal/api"
@@ -22,6 +23,15 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
+
+// fxLogger swallows fx's event stream except for Started/Stopped failures,
+// which it forwards to the app logger. Configuration errors are caught
+// separately via app.Err() so they are visible at startup.
+//
+// The net effect is fx.NopLogger plus visible lifecycle hook failures.
+type fxLogger struct {
+	log logger.Logger
+}
 
 func serve() *cli.Command {
 	return &cli.Command{
@@ -83,7 +93,7 @@ func serve() *cli.Command {
 				proxy.Module,
 				router.Module,
 				server.Module,
-				fx.NopLogger,
+				fx.WithLogger(func(l logger.Logger) fxevent.Logger { return &fxLogger{log: l} }),
 			)
 
 			if err := fxApp.Err(); err != nil {
@@ -94,5 +104,18 @@ func serve() *cli.Command {
 			fxApp.Run()
 			return nil
 		},
+	}
+}
+
+func (l *fxLogger) LogEvent(e fxevent.Event) {
+	switch e := e.(type) {
+	case *fxevent.Started:
+		if e.Err != nil {
+			l.log.Error("Failed to start", tag.Error(e.Err))
+		}
+	case *fxevent.Stopped:
+		if e.Err != nil {
+			l.log.Error("Failed to stop cleanly", tag.Error(e.Err))
+		}
 	}
 }
