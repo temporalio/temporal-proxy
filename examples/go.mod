@@ -8,8 +8,12 @@ go 1.26.4
 replace github.com/temporalio/temporal-proxy => ../
 
 require (
+	github.com/MicahParks/jwkset v0.11.2
+	github.com/MicahParks/keyfunc/v3 v3.8.1
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/temporalio/temporal-proxy v0.4.0
 	go.temporal.io/sdk v1.47.0
+	golang.org/x/sync v0.22.0
 	google.golang.org/grpc v1.83.0
 )
 
@@ -32,7 +36,6 @@ require (
 	github.com/stretchr/testify v1.11.1 // indirect
 	go.temporal.io/api v1.63.4 // indirect
 	golang.org/x/net v0.57.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.15.0 // indirect

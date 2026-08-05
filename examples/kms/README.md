@@ -261,26 +261,32 @@ desc = invalid credentials
 The workflow never starts; no execution shows up in `temporal workflow list`. The error surfaces only on the starter's
 side. The proxy's own log stays silent about it.
 
-**Wrong certificate name.** Removing `serverName: localhost` from `config.yaml`'s extension server block does not stop
-the proxy from starting: nothing dials the extension server until the first payload needs a key, so a mismatched server
-name is invisible at boot. The first workflow start after that just hangs and times out, rather than failing with a
-clear error:
+**Wrong certificate name.** Removing `serverName: localhost` from `config.yaml`'s extension server block stops the proxy
+from starting at all. It opens its extension server connections while starting up rather than waiting for the first
+payload to need a key, so a name that does not match the certificate is caught at boot rather than in the middle of a
+workflow:
 
 ```text
-start workflow: context deadline exceeded
+{"level":"error","error":"extension server connection not ready: 127.0.0.1:9443: not ready (last state: TRANSIENT_FAILURE): context deadline exceeded","time":"2026-08-04T16:49:24-04:00","message":"Failed to start"}
 ```
 
-Again the proxy's log has nothing to say, and no execution is created either. The real problem only surfaces if you turn
-on gRPC's own logging (`GRPC_GO_LOG_SEVERITY_LEVEL=info GRPC_GO_LOG_VERBOSITY_LEVEL=2`), where the proxy retries every
-couple of seconds with:
+Nothing serves, so no workflow reaches the proxy and no execution is created. That message names the connection that
+failed but not why it failed, and the difference matters here: a refused connection and a rejected certificate look
+identical from this line. Turn on gRPC's own logging to separate them:
+
+```bash
+KMS_API_KEY=example-token GRPC_GO_LOG_SEVERITY_LEVEL=info GRPC_GO_LOG_VERBOSITY_LEVEL=2 \
+  go run ./cmd/proxy serve -c examples/kms/config.yaml
+```
 
 ```text
-x509: cannot validate certificate for 127.0.0.1 because it doesn't contain any IP SANs
+2026/08/04 16:49:43 WARNING: [core] [Channel #1 SubChannel #6] grpc: addrConn.createTransport failed to connect to {Addr: "127.0.0.1:9443", ServerName: "127.0.0.1:9443", }. Err: connection error: desc = "transport: authentication handshake failed: tls: failed to verify certificate: x509: cannot validate certificate for 127.0.0.1 because it doesn't contain any IP SANs"
 ```
 
-which is exactly the mismatch the comment above `serverName` in `config.yaml` describes: the certificate carries
-`DNS:localhost` and no IP address, so verifying the dialed `127.0.0.1` fails without that setting. Put the line back and
-restart the proxy to recover.
+Which is exactly the mismatch the comment above `serverName` in `config.yaml` describes: the certificate carries
+`DNS:localhost` and no IP address, so verifying the dialed `127.0.0.1` fails without that setting. Note the
+`ServerName: "127.0.0.1:9443"` in that line, gRPC having fallen back to the dialed address. Put the line back and start
+the proxy again to recover.
 
 ## What this is not
 
