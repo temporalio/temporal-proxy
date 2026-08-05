@@ -3,7 +3,7 @@ module github.com/temporalio/temporal-proxy
 go 1.26.4
 
 require (
-	github.com/MicahParks/jwkset v0.11.2
+	github.com/MicahParks/jwkset v0.11.3
 	github.com/MicahParks/keyfunc/v3 v3.8.1
 	github.com/goccy/go-yaml v1.19.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
