@@ -9,6 +9,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 
+	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
@@ -16,6 +17,7 @@ type (
 	// Config is the top-level proxy configuration.
 	Config struct {
 		Listen           ListenConfig        `yaml:",inline"`
+		AllowedServices  Services            `yaml:"allowedServices"`
 		Encryption       Encryption          `yaml:"encryption"`
 		ExtensionServers ExtensionServerList `yaml:"extensionServers"`
 		Routing          Routing             `yaml:"routing"`
@@ -25,7 +27,8 @@ type (
 )
 
 // Load reads and parses the YAML config specified in the Reader.
-// Values of the form ${VAR} are replaced with the corresponding environment variable.
+// Values of the form ${VAR} are replaced with the corresponding environment
+// variable. A config that names no allowed services gets the default set.
 func Load(r io.Reader) (*Config, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -37,6 +40,13 @@ func Load(r io.Reader) (*Config, error) {
 	var cfg Config
 	if err := yaml.UnmarshalWithOptions([]byte(expanded), &cfg, yaml.CustomUnmarshaler(unmarshalURL)); err != nil {
 		return nil, err
+	}
+
+	// The allowlist defaults here rather than in a Services unmarshaler because
+	// an absent key never reaches one, and an absent allowedServices is how most
+	// configs are written.
+	if len(cfg.AllowedServices) == 0 {
+		cfg.AllowedServices = services.Default()
 	}
 
 	return &cfg, nil
@@ -74,6 +84,7 @@ func (c *Config) Validate() error {
 			return nil
 		}),
 		validation.Nested("", &c.Listen),
+		validation.Nested("", &c.AllowedServices),
 		validation.Nested("encryption", &c.Encryption),
 		validation.Nested("extensionServers", &c.ExtensionServers),
 		validation.Nested("routing", &c.Routing),

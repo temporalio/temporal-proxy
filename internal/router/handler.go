@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/temporalio/temporal-proxy/internal/protoutil"
 	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 )
 
@@ -38,16 +39,26 @@ type (
 	Reflector interface {
 		Namespace(string, []byte) string
 	}
+
+	// Gate reports whether the proxy will forward the named service. Allows
+	// receives a service full name, never a full method; the Module wires a
+	// services.Allowlist built from the configured allowlist.
+	Gate interface {
+		Allows(string) bool
+	}
 )
 
 // Handler returns a grpc.StreamHandler suitable for grpc.UnknownServiceHandler,
 // reporting a stream_setup forwarding error via rep when opening the upstream
-// stream fails. It buffers the first request frame so r can peek the request
+// stream fails. A method whose service g does not allow is rejected with
+// Unimplemented before any upstream work, so the proxy answers as a server that
+// does not implement it rather than revealing that an upstream might.
+// It buffers the first request frame so r can peek the request
 // namespace, asks d for the upstream connection, then transparently forwards
 // the stream to that upstream using the same full method name: it replays the
 // buffered first frame, pumps raw frames in both directions, and propagates
 // header, trailer, and status verbatim.
-func Handler(d Director, r Reflector, rep *Reporter) grpc.StreamHandler {
+func Handler(d Director, r Reflector, g Gate, rep *Reporter) grpc.StreamHandler {
 	return func(_ any, serverStream grpc.ServerStream) error {
 		ctx := serverStream.Context()
 		sts := grpc.ServerTransportStreamFromContext(ctx)
@@ -55,8 +66,12 @@ func Handler(d Director, r Reflector, rep *Reporter) grpc.StreamHandler {
 			return status.Error(codes.Internal, "router: no server transport stream in context")
 		}
 
-		var md map[string][]string
 		method := sts.Method()
+		if svc := protoutil.ServiceName(method); !g.Allows(svc) {
+			return status.Errorf(codes.Unimplemented, "unknown service %q", svc)
+		}
+
+		var md map[string][]string
 		outCtx := ctx
 		if inMD, ok := metadata.FromIncomingContext(ctx); ok {
 			outCtx = metadata.NewOutgoingContext(ctx, inMD.Copy())

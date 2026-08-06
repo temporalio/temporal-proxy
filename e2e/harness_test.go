@@ -26,6 +26,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/proxy"
 	"github.com/temporalio/temporal-proxy/internal/router"
 	"github.com/temporalio/temporal-proxy/internal/server"
+	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
@@ -89,6 +90,14 @@ func newFullApp(t *testing.T, cfg *config.Config) *fx.App {
 	t.Helper()
 
 	reg := prometheus.NewRegistry()
+
+	// Load applies this default when parsing YAML, which these tests skip in
+	// favour of building a Config directly. Admit everything forwardable so
+	// admission never stands in for the behaviour under test; it has its own
+	// coverage in internal/services and internal/router.
+	if len(cfg.AllowedServices) == 0 {
+		cfg.AllowedServices = config.Services(services.Known())
+	}
 
 	return fx.New(
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),

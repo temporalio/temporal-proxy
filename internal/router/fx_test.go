@@ -37,7 +37,10 @@ func TestModule(t *testing.T) {
 
 		app := fx.New(
 			fx.Supply(&config.Config{
-				Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
+				// The module builds its Gate from this, so the stub service these
+				// tests forward has to be on it.
+				AllowedServices: config.Services{"test.v1.Echo"},
+				Upstreams:       []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
 			}),
 			fx.Provide(func() *metrics.Factory { return metrics.New("tmprl_proxy", promauto.With(prometheus.NewRegistry())) }),
 			connect.Module,
@@ -104,8 +107,9 @@ func TestModule(t *testing.T) {
 		)
 		app := fx.New(
 			fx.Supply(&config.Config{
-				Routing:   config.Routing{DefaultUpstream: "primary"},
-				Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: upstream}}},
+				AllowedServices: config.Services{"test.v1.Echo"},
+				Routing:         config.Routing{DefaultUpstream: "primary"},
+				Upstreams:       []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: upstream}}},
 			}),
 			fx.Provide(func() *metrics.Factory { return metrics.New("tmprl_proxy", promauto.With(prometheus.NewRegistry())) }),
 			connect.Module,
