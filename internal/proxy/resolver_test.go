@@ -14,6 +14,8 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/proxy"
 	"github.com/temporalio/temporal-proxy/internal/transport/meta"
+	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
 
 func TestDynamicResolverIsStatic(t *testing.T) {
@@ -133,6 +135,41 @@ func TestDynamicResolverRejectsInvalidAddresses(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestDynamicResolverLogsDebugEntry(t *testing.T) {
+	t.Parallel()
+
+	up := upstreamWith("cloud", "{{ .RemoteNamespace }}.acme.example:7233", "{{ .RemoteNamespace }}.sni.example")
+	log := logger.NewTestLogger()
+	res, err := proxy.NewDynamicResolver(
+		up,
+		proxy.WithRemoteNamespacer(func(s string) string { return s + "-remote" }),
+		proxy.WithResolverLogger(log),
+	)
+	require.NoError(t, err)
+
+	_, _, _, err = res.Resolve(meta.WithNamespace(t.Context(), "orders"))
+	require.NoError(t, err)
+
+	require.True(t, log.ContainsEntry(
+		logger.LevelDebug,
+		"resolved upstream target",
+		tag.String("upstream", "cloud"),
+		tag.String("localNamespace", "orders"),
+		tag.String("remoteNamespace", "orders-remote"),
+		tag.String("target", "orders-remote.acme.example:7233"),
+		tag.String("serverName", "orders-remote.sni.example"),
+	))
+}
+
+func TestDynamicResolverNoLoggerNoPanic(t *testing.T) {
+	t.Parallel()
+
+	res, err := proxy.NewDynamicResolver(upstreamWith("u", "host:7233", ""))
+	require.NoError(t, err)
+	_, _, _, err = res.Resolve(meta.WithNamespace(t.Context(), "orders"))
+	require.NoError(t, err)
 }
 
 func upstreamWith(name, hostPort, serverName string) *config.Upstream {

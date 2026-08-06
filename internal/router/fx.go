@@ -16,6 +16,8 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
+	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 	"github.com/temporalio/temporal-proxy/pkg/match"
 )
 
@@ -46,11 +48,17 @@ var Module = fx.Options(fx.Provide(
 			conns[upstream.Name] = conn
 		}
 
+		log := p.Logger
+		if log == nil {
+			log = logger.Default()
+		}
+
 		return Handler(
 			&director{
 				conns:    conns,
 				mux:      p.Mux,
 				reporter: p.Reporter,
+				logger:   log.With(tag.Component("router")),
 			},
 			p.Extractor,
 			p.Reporter,
@@ -123,6 +131,9 @@ type (
 		Mux       *Mux
 		Pool      *connect.Pool
 		Reporter  *Reporter
+
+		// Optional; falls back to [logger.Default].
+		Logger logger.Logger `optional:"true"`
 	}
 
 	// director is the [Director] used by the module's handler. It maps the
@@ -131,6 +142,7 @@ type (
 		conns    map[string]*grpc.ClientConn
 		mux      *Mux
 		reporter *Reporter
+		logger   logger.Logger
 	}
 )
 
@@ -142,7 +154,7 @@ type (
 // upstream has no connection.
 func (d *director) Resolve(
 	ctx context.Context,
-	_, namespace string,
+	method, namespace string,
 	md map[string][]string,
 ) (Target, error) {
 	upstream, outcome := d.mux.Switch(namespace, md)
@@ -157,6 +169,16 @@ func (d *director) Resolve(
 	if !ok {
 		d.reporter.ForwardingError(upstream, reasonNoConnection)
 		return Target{}, status.Errorf(codes.Unavailable, "router: no connection for upstream %q", upstream)
+	}
+
+	if d.logger != nil {
+		d.logger.Debug(
+			"routing request",
+			tag.String("method", method),
+			tag.String("namespace", namespace),
+			tag.String("upstream", upstream),
+			tag.Stringer("outcome", outcome),
+		)
 	}
 
 	return Target{Upstream: upstream, Conn: cc}, nil

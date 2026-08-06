@@ -13,6 +13,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/temporalio/temporal-proxy/internal/metrics"
+	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
 
 func TestDirectorResolve(t *testing.T) {
@@ -94,6 +96,45 @@ tmprl_proxy_router_decisions_total{outcome="system",upstream="primary"} 0
 tmprl_proxy_router_decisions_total{outcome="unroutable",upstream="unknown"} 1
 `)
 	})
+}
+
+func TestDirectorLogsRoutingDecision(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	log := logger.NewTestLogger()
+	d := &director{
+		conns:    map[string]*grpc.ClientConn{"primary": {}},
+		mux:      New("primary", ""),
+		reporter: testReporter(reg),
+		logger:   log,
+	}
+
+	_, err := d.Resolve(t.Context(), "/svc/M", "orders", nil)
+	require.NoError(t, err)
+
+	require.True(t, log.ContainsEntry(
+		logger.LevelDebug,
+		"routing request",
+		tag.String("method", "/svc/M"),
+		tag.String("namespace", "orders"),
+		tag.String("upstream", "primary"),
+		tag.Stringer("outcome", OutcomeDefault),
+	))
+}
+
+func TestDirectorLogsSkippedWhenLoggerUnset(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	d := &director{
+		conns:    map[string]*grpc.ClientConn{"primary": {}},
+		mux:      New("primary", ""),
+		reporter: testReporter(reg),
+	}
+
+	_, err := d.Resolve(t.Context(), "/svc/M", "orders", nil)
+	require.NoError(t, err)
 }
 
 // testReporter builds a Reporter over reg with the production namespace and
