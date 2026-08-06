@@ -7,8 +7,6 @@ import (
 	"net"
 	"os"
 
-	"go.temporal.io/api/proxy"
-	"go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/grpc"
 
 	"github.com/temporalio/temporal-proxy/internal/server"
@@ -18,7 +16,7 @@ import (
 )
 
 type (
-	// Server proxies the Temporal WorkflowService. It re-serves an upstream
+	// Server forwards every allowed Temporal service. It re-serves an upstream
 	// frontend on a local unix socket, letting local workers connect without TLS
 	// while the upstream hop stays secured. The upstream connection(s) it
 	// forwards to are owned by the shared [connect.Pool], not by this Server.
@@ -36,28 +34,23 @@ type (
 	Option func(*Options)
 )
 
-// New constructs a Server that forwards WorkflowService traffic to the
-// upstream reachable through cc. The local listener is a unix socket whose
-// path is derived from hostPort. cc is typically a resolvingConn; the
-// connection(s) it uses are owned by the shared pool, not by this Server.
-func New(hostPort string, cc grpc.ClientConnInterface, opts ...Option) (*Server, error) {
+// New constructs a Server that forwards traffic for the services named in
+// allowed to the upstream reachable through cc, refusing every other service
+// at this socket even though its descriptors may be linked in. The local
+// listener is a unix socket whose path is derived from hostPort. cc is
+// typically a resolvingConn; the connection(s) it uses are owned by the shared
+// pool, not by this Server.
+func New(hostPort string, cc grpc.ClientConnInterface, allowed []string, opts ...Option) (*Server, error) {
 	pops := &Options{logger: logger.Default()}
 	for _, opt := range opts {
 		opt(pops)
-	}
-
-	wfs, err := proxy.NewWorkflowServiceProxyServer(workflowProxyOptions(cc))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create workflowservice proxy: %w", err)
 	}
 
 	svr, err := server.New(
 		// NB: Hosting on local unix port, no need for TLS here.
 		server.WithCredentials(creds.NewListener(creds.Insecure())),
 		server.WithLogger(pops.logger),
-		server.WithService(func(sr grpc.ServiceRegistrar) {
-			workflowservice.RegisterWorkflowServiceServer(sr, wfs)
-		}),
+		server.WithUnknownServiceHandler(NewForwarder(cc, allowed).Handle),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create proxy: %s, %w", hostPort, err)
@@ -110,13 +103,4 @@ func (s *Server) Stop(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-// workflowProxyOptions builds the options for the WorkflowService proxy
-// server backed by cc. DisableHeaderForwarding is intentionally left false:
-// the upstream proxy must forward incoming metadata (including the
-// router-stamped namespace) onto the outbound call, since templated upstream
-// resolution and namespace translation both depend on it.
-func workflowProxyOptions(cc grpc.ClientConnInterface) proxy.WorkflowServiceProxyOptions {
-	return proxy.WorkflowServiceProxyOptions{Client: workflowservice.NewWorkflowServiceClient(cc)}
 }

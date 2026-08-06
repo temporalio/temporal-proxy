@@ -101,3 +101,17 @@ encrypted bytes in the Cloud UI).
 The block uses a `testing://` key, which holds its key material in the config itself with no cloud KMS. That is fine for
 this toy but never for real data; in production point the key at `awskms://`, `azurekeyvault://`, or `gcpkms://`
 instead.
+
+## Optional: explore the proxy with grpcurl
+
+By default the proxy forwards `WorkflowService` and `OperatorService`, the pair this example's worker and starter need,
+and refuses everything else, including gRPC server reflection. `config.yaml` ends with a commented-out
+`allowedServices` block; uncomment it (keeping both services and adding reflection) and restart the proxy to let
+[grpcurl](https://github.com/fullstorydev/grpcurl) list and describe what it forwards:
+
+```bash
+grpcurl -plaintext localhost:7233 list
+```
+
+An explicit `allowedServices` list replaces the default outright rather than extending it, so the block lists
+`WorkflowService` and `OperatorService` alongside reflection rather than in place of them.

@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/temporalio/temporal-proxy/internal/proxy"
+	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
@@ -23,7 +24,7 @@ func TestNew(t *testing.T) {
 	t.Run("returns a server with default options", func(t *testing.T) {
 		t.Parallel()
 
-		svr, err := proxy.New("127.0.0.1:7233", upstreamConn(t, "127.0.0.1:7233"))
+		svr, err := proxy.New("127.0.0.1:7233", upstreamConn(t, "127.0.0.1:7233"), services.Default())
 		require.NoError(t, err)
 		require.NotNil(t, svr)
 	})
@@ -38,7 +39,7 @@ func TestServerStartAndStop(t *testing.T) {
 	const upstream = "127.0.0.1:17233"
 
 	log := logger.NewTestLogger()
-	svr, err := proxy.New(upstream, upstreamConn(t, upstream), proxy.WithLogger(log))
+	svr, err := proxy.New(upstream, upstreamConn(t, upstream), services.Default(), proxy.WithLogger(log))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -87,7 +88,7 @@ func TestStartRemovesStaleSocket(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("stale"), 0o600))
 	t.Cleanup(func() { _ = os.Remove(path) })
 
-	svr, err := proxy.New(upstream, upstreamConn(t, upstream))
+	svr, err := proxy.New(upstream, upstreamConn(t, upstream), services.Default())
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -127,7 +128,7 @@ func TestListenReturnsErrorWhenStaleSocketCannotBeRemoved(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(path, "child"), nil, 0o600))
 	t.Cleanup(func() { _ = os.RemoveAll(path) })
 
-	svr, err := proxy.New(upstream, upstreamConn(t, upstream))
+	svr, err := proxy.New(upstream, upstreamConn(t, upstream), services.Default())
 	require.NoError(t, err)
 
 	_, err = svr.Listen(t.Context())

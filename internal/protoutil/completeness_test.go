@@ -5,16 +5,26 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	_ "go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
+
+	"github.com/temporalio/temporal-proxy/internal/services"
 )
 
-// completenessServices lists the gRPC services the guard checks. It should
-// cover every service the proxy translates (see cmd/proxy). Each service's
-// package must be blank-imported above so its descriptors resolve.
-var completenessServices = []protoreflect.FullName{
-	"temporal.api.workflowservice.v1.WorkflowService",
+// completenessServices returns the services the guard audits: every service the
+// proxy can forward, aliases included (grpc.reflection.v1alpha.ServerReflection
+// rides along with grpc.reflection.v1.ServerReflection). Deriving it from the
+// registry rather than restating it means a service added there cannot arrive
+// without its namespace fields being checked, and importing that package links
+// the descriptors this test resolves.
+func completenessServices() []protoreflect.FullName {
+	names := services.All()
+	out := make([]protoreflect.FullName, len(names))
+	for i, name := range names {
+		out[i] = protoreflect.FullName(name)
+	}
+
+	return out
 }
 
 func TestRuleSetCoversServices(t *testing.T) {
@@ -43,7 +53,7 @@ func TestRuleSetCoversServices(t *testing.T) {
 		}
 	}
 
-	for _, name := range completenessServices {
+	for _, name := range completenessServices() {
 		d, err := protoregistry.GlobalFiles.FindDescriptorByName(name)
 		require.NoError(t, err, "service %q not registered; add a blank import for its package", name)
 

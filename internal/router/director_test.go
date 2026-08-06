@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/temporalio/temporal-proxy/internal/metrics"
+	"github.com/temporalio/temporal-proxy/internal/services"
 )
 
 func TestDirectorResolve(t *testing.T) {
@@ -100,7 +101,11 @@ tmprl_proxy_router_decisions_total{outcome="unroutable",upstream="unknown"} 1
 // subsystem, so emitted series match the tmprl_proxy_router_* names asserted
 // below.
 func testReporter(reg *prometheus.Registry) *Reporter {
-	return NewReporter(metrics.New("tmprl_proxy", promauto.With(reg)).ForSubsystem("router"), []string{"primary"})
+	return NewReporter(
+		metrics.New("tmprl_proxy", promauto.With(reg)).ForSubsystem("router"),
+		[]string{"primary"},
+		services.Known(),
+	)
 }
 
 func requireDecisions(t *testing.T, g prometheus.Gatherer, want string) {

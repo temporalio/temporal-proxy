@@ -9,6 +9,7 @@ import (
 	"go.temporal.io/api/common/v1"
 	"go.temporal.io/api/proxy"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
@@ -26,12 +27,28 @@ const (
 	encryptionEncoding      = "binary/encrypted"
 )
 
-// Vault seals and opens payloads using envelope encryption scoped by namespace.
-// It is the subset of [crypto.Vault] the interceptor depends on.
-type Vault interface {
-	Seal(context.Context, string, []byte) (*crypto.Message, error)
-	Open(context.Context, *crypto.Message) ([]byte, error)
-}
+type (
+	// Vault seals and opens payloads using envelope encryption scoped by
+	// namespace. It is the subset of [crypto.Vault] the interceptor depends on.
+	Vault interface {
+		Seal(context.Context, string, []byte) (*crypto.Message, error)
+		Open(context.Context, *crypto.Message) ([]byte, error)
+	}
+
+	// encryptingClientStream seals each frame on the way out and opens each one
+	// on the way back, so a streamed payload gets the treatment a unary one
+	// already gets. ctx is the interceptor's own context, captured once at
+	// construction: [grpc.ClientStream.Context] must not be called from here,
+	// since it commits the RPC attempt and would disable gRPC's transparent
+	// retries for every proxied stream.
+	encryptingClientStream struct {
+		grpc.ClientStream
+
+		ctx      context.Context
+		outbound *proxy.VisitPayloadsOptions
+		inbound  *proxy.VisitPayloadsOptions
+	}
+)
 
 // EncryptionInterceptor returns a unary client interceptor that opens inbound
 // response payloads using v and, when enabled is true, seals outbound request
@@ -64,6 +81,85 @@ func EncryptionInterceptor(enabled bool, v Vault, r *Reporter) (grpc.UnaryClient
 		},
 		Outbound: outbound,
 	})
+}
+
+// EncryptionStreamInterceptor returns a stream client interceptor that opens
+// inbound frames using v and, when enabled is true, seals outbound frames as
+// well. It is the streaming counterpart of EncryptionInterceptor and gates
+// sealing the same way, so frames sealed earlier stay openable after
+// encryption is turned off for new traffic.
+//
+// It applies the same visitor to each frame that the unary interceptor
+// applies to a whole call, which means it inherits the same coverage: the
+// visitor only sees message types it was generated for, and silently skips
+// any other message type rather than erroring. Startup refuses a
+// configuration that enables encryption while exposing a service whose
+// payloads fall outside that set, but that check runs only when encryption
+// is enabled; it does not bound what RecvMsg's unconditional opening may see
+// when encryption is disabled.
+func EncryptionStreamInterceptor(enabled bool, v Vault, r *Reporter) grpc.StreamClientInterceptor {
+	inbound := &proxy.VisitPayloadsOptions{
+		ConcurrencyLimit:     runtime.NumCPU(),
+		SkipSearchAttributes: true,
+		Visitor:              decryptPayloads(v, r),
+	}
+
+	var outbound *proxy.VisitPayloadsOptions
+	if enabled {
+		outbound = &proxy.VisitPayloadsOptions{
+			ConcurrencyLimit:     runtime.NumCPU(),
+			SkipSearchAttributes: true,
+			Visitor:              encryptPayloads(v, r),
+		}
+	}
+
+	return func(
+		ctx context.Context,
+		desc *grpc.StreamDesc,
+		cc *grpc.ClientConn,
+		method string,
+		streamer grpc.Streamer,
+		opts ...grpc.CallOption,
+	) (grpc.ClientStream, error) {
+		cs, err := streamer(ctx, desc, cc, method, opts...)
+		if err != nil {
+			return nil, err
+		}
+
+		return &encryptingClientStream{ClientStream: cs, ctx: ctx, outbound: outbound, inbound: inbound}, nil
+	}
+}
+
+// SendMsg seals the frame's payloads before forwarding it, when sealing is
+// enabled. It visits using s.ctx, the interceptor's own context captured at
+// construction, rather than [grpc.ClientStream.Context], which must not be
+// called here (see encryptingClientStream).
+func (s *encryptingClientStream) SendMsg(m any) error {
+	if s.outbound != nil {
+		if pm, ok := m.(proto.Message); ok {
+			if err := proxy.VisitPayloads(s.ctx, pm, *s.outbound); err != nil {
+				return err
+			}
+		}
+	}
+
+	return s.ClientStream.SendMsg(m)
+}
+
+// RecvMsg opens the frame's payloads after receiving it. Opening always runs,
+// so data sealed while encryption was enabled stays readable after it is
+// turned off. Like SendMsg, it visits using s.ctx rather than
+// [grpc.ClientStream.Context].
+func (s *encryptingClientStream) RecvMsg(m any) error {
+	if err := s.ClientStream.RecvMsg(m); err != nil {
+		return err
+	}
+
+	if pm, ok := m.(proto.Message); ok {
+		return proxy.VisitPayloads(s.ctx, pm, *s.inbound)
+	}
+
+	return nil
 }
 
 // encryptPayloads returns a payload visitor that marshals each payload, seals

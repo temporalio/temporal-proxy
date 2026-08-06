@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"testing"
 
@@ -29,20 +30,40 @@ const (
 	sealPrefix = "sealed:"
 )
 
-// fakeVault is a reversible in-memory Vault. Seal prefixes the plaintext with
-// sealPrefix (so sealed data is observably distinct from cleartext) and records
-// the namespace it was called with; Open strips the prefix. Errors and a fixed
-// Open result can be injected to exercise the interceptor's failure paths. It is
-// safe for concurrent use because the payload visitor may seal/open payloads
-// from multiple goroutines within a single call.
-type fakeVault struct {
-	mu         sync.Mutex
-	namespaces []string // namespaces passed to Seal, in call order
-	opens      int      // number of Open calls
-	sealErr    error    // when set, Seal returns it
-	openErr    error    // when set, Open returns it
-	openReturn []byte   // when set, Open returns these bytes instead of the unsealed plaintext
-}
+type (
+	// fakeVault is a reversible in-memory Vault. Seal prefixes the plaintext with
+	// sealPrefix (so sealed data is observably distinct from cleartext) and records
+	// the namespace it was called with; Open strips the prefix. Errors and a fixed
+	// Open result can be injected to exercise the interceptor's failure paths. It is
+	// safe for concurrent use because the payload visitor may seal/open payloads
+	// from multiple goroutines within a single call.
+	fakeVault struct {
+		mu         sync.Mutex
+		namespaces []string // namespaces passed to Seal, in call order
+		opens      int      // number of Open calls
+		sealErr    error    // when set, Seal returns it
+		openErr    error    // when set, Open returns it
+		openReturn []byte   // when set, Open returns these bytes instead of the unsealed plaintext
+	}
+
+	// recordingStreamer is a grpc.Streamer whose stream records sent messages and
+	// replays the most recent one on Recv, so a test can inspect what went on the
+	// wire and what comes back.
+	recordingStreamer struct {
+		sent []any
+	}
+
+	// recordingStream is the grpc.ClientStream recordingStreamer hands back; it
+	// clones every SendMsg argument at the moment it is called (rather than
+	// keeping the live pointer) and replays the most recent one into RecvMsg,
+	// so what a test inspects is exactly what "went on the wire" at send time.
+	recordingStream struct {
+		grpc.ClientStream
+
+		parent *recordingStreamer
+		ctx    context.Context
+	}
+)
 
 func TestEncryptionInterceptorRoundtrip(t *testing.T) {
 	t.Parallel()
@@ -198,6 +219,82 @@ func TestEncryptionInterceptorSkipsMetricsForPassThrough(t *testing.T) {
 	require.NotNil(t, ops)
 	require.True(t, hasLabels(ops, map[string]string{"operation": "encrypt", "result": "success", "namespace": "ns1"}))
 	require.False(t, hasLabels(ops, map[string]string{"operation": "decrypt", "result": "success", "namespace": "ns1"}))
+}
+
+func TestEncryptionStreamInterceptorSealsAndOpensFrames(t *testing.T) {
+	t.Parallel()
+
+	vault := &fakeVault{}
+	rep := newTestReporter(t)
+
+	interceptor := EncryptionStreamInterceptor(true, vault, rep)
+
+	// The fake streamer stands in for the upstream: it records what was sent
+	// (which must be ciphertext) and replays it back (which must come back as
+	// the original plaintext).
+	fake := &recordingStreamer{}
+	cs, err := interceptor(
+		metadata.NewOutgoingContext(t.Context(), metadata.Pairs(meta.NamespaceHeader, "ns-1")),
+		&grpc.StreamDesc{ServerStreams: true, ClientStreams: true},
+		nil,
+		"/test.Service/Method",
+		fake.stream,
+	)
+	require.NoError(t, err)
+
+	sent := &common.Payloads{Payloads: []*common.Payload{{
+		Metadata: map[string][]byte{"encoding": []byte("json/plain")},
+		Data:     []byte(`"hello"`),
+	}}}
+	require.NoError(t, cs.SendMsg(sent))
+
+	onWire := fake.sent[0].(*common.Payloads).GetPayloads()[0]
+	require.Equal(t, "binary/encrypted", string(onWire.GetMetadata()["encoding"]),
+		"a streamed payload must be sealed like a unary one")
+	require.NotEqual(t, []byte(`"hello"`), onWire.GetData())
+	require.True(t, bytes.HasPrefix(onWire.GetData(), []byte(sealPrefix)),
+		"the payload sent upstream must actually be ciphertext, not merely different bytes")
+
+	got := &common.Payloads{}
+	require.NoError(t, cs.RecvMsg(got))
+	require.Equal(t, []byte(`"hello"`), got.GetPayloads()[0].GetData(),
+		"the sealed frame must open again on the way back")
+}
+
+func TestEncryptionStreamInterceptorDisabledStillOpens(t *testing.T) {
+	t.Parallel()
+
+	vault := &fakeVault{}
+	interceptor := EncryptionStreamInterceptor(false, vault, newTestReporter(t))
+
+	fake := &recordingStreamer{}
+	cs, err := interceptor(t.Context(), &grpc.StreamDesc{}, nil, "/test.Service/Method", fake.stream)
+	require.NoError(t, err)
+
+	sent := &common.Payloads{Payloads: []*common.Payload{{
+		Metadata: map[string][]byte{"encoding": []byte("json/plain")},
+		Data:     []byte(`"hello"`),
+	}}}
+	require.NoError(t, cs.SendMsg(sent))
+
+	onWire := fake.sent[0].(*common.Payloads).GetPayloads()[0]
+	require.Equal(t, []byte(`"hello"`), onWire.GetData(),
+		"sealing is gated, so a disabled interceptor forwards cleartext")
+
+	// Simulate a frame that was sealed earlier, while encryption was still
+	// enabled for that data, arriving from upstream now that sealing is
+	// disabled for new traffic. Opening must still run regardless.
+	sealed, err := encryptPayloads(vault, newTestReporter(t))(
+		visitCtx(meta.WithNamespace(t.Context(), "ns-1")),
+		[]*common.Payload{testPayload("json/plain", `"already-sealed"`)},
+	)
+	require.NoError(t, err)
+	fake.sent = append(fake.sent, &common.Payloads{Payloads: sealed})
+
+	got := &common.Payloads{}
+	require.NoError(t, cs.RecvMsg(got))
+	require.Equal(t, []byte(`"already-sealed"`), got.GetPayloads()[0].GetData(),
+		"opening must still run even though sealing is disabled for new traffic")
 }
 
 func TestEncryptDecryptPayloadsRoundtrip(t *testing.T) {
@@ -363,6 +460,39 @@ func (f *fakeVault) Open(_ context.Context, msg *crypto.Message) ([]byte, error)
 	}
 
 	return bytes.TrimPrefix(msg.Ciphertext, []byte(sealPrefix)), nil
+}
+
+func (r *recordingStreamer) stream(
+	ctx context.Context, _ *grpc.StreamDesc, _ *grpc.ClientConn, _ string, _ ...grpc.CallOption,
+) (grpc.ClientStream, error) {
+	return &recordingStream{parent: r, ctx: ctx}, nil
+}
+
+func (s *recordingStream) Context() context.Context { return s.ctx }
+
+func (s *recordingStream) SendMsg(m any) error {
+	// Record a clone taken at this exact call, not the live pointer: a real
+	// gRPC transport marshals the message to bytes at send time, so what went
+	// "on the wire" is whatever m held the instant SendMsg was invoked here.
+	// Recording the pointer instead would let a caller who seals m only
+	// after delegating to SendMsg still show sealed data if inspected later,
+	// since the caller's own in-place mutation would apply to the same
+	// object this fake is holding.
+	s.parent.sent = append(s.parent.sent, proto.Clone(m.(proto.Message)))
+	return nil
+}
+
+func (s *recordingStream) RecvMsg(m any) error {
+	// Replay the last sent message into m, which is how a frame sealed on the
+	// way out gets opened on the way back.
+	last, ok := s.parent.sent[len(s.parent.sent)-1].(proto.Message)
+	if !ok {
+		return io.EOF
+	}
+
+	proto.Reset(m.(proto.Message))
+	proto.Merge(m.(proto.Message), last)
+	return nil
 }
 
 func testPayload(encoding, data string) *common.Payload {

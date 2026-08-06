@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
+	"go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -28,8 +29,20 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/router"
 	"github.com/temporalio/temporal-proxy/internal/server"
+	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 )
+
+// gateAdmitsTestServices admits every fake service the package's forwarding
+// tests register on their stand-in upstreams. Those tests exercise framing and
+// routing mechanics, not admission, so they use a gate that never refuses
+// them.
+var gateAdmitsTestServices = router.NewGate([]string{
+	"grpc.health.v1.Health",
+	"test.v1.Echo",
+	"test.v1.Count",
+	"test.v1.Stream",
+})
 
 type (
 	// recordingDirector captures what Resolve was called with and returns a fixed
@@ -62,6 +75,13 @@ type (
 	}
 
 	stubReflector struct{}
+
+	// stubWorkflowService lets a test register a real WorkflowService on a
+	// stand-in upstream. Its methods are never expected to run: a request the
+	// gate refuses never reaches the upstream.
+	stubWorkflowService struct {
+		workflowservice.UnimplementedWorkflowServiceServer
+	}
 )
 
 func TestHandlerForwardsUnary(t *testing.T) {
@@ -343,7 +363,7 @@ func TestHandlerCoHostsLocalHealthWithForwarding(t *testing.T) {
 
 	m, _ := newTestReporter(t)
 	svr, err := server.New(
-		server.WithUnknownServiceHandler(router.Handler(stubDirector{cc: upstreamConn}, stubReflector{}, m)),
+		server.WithUnknownServiceHandler(router.Handler(stubDirector{cc: upstreamConn}, stubReflector{}, gateAdmitsTestServices, m)),
 		server.WithServerCodec(router.Codec()),
 	)
 	require.NoError(t, err)
@@ -397,7 +417,7 @@ func TestHandlerRecordsStreamSetupError(t *testing.T) {
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: brokenConn}, stubReflector{}, m)),
+		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: brokenConn}, stubReflector{}, gateAdmitsTestServices, m)),
 	)
 	serve(t, relay, relayLis)
 
@@ -430,7 +450,7 @@ func TestHandlerRelayedUpstreamErrorIsNotAForwardingError(t *testing.T) {
 
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: upstreamConn}, stubReflector{}, m)),
+		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: upstreamConn}, stubReflector{}, gateAdmitsTestServices, m)),
 	)
 	serve(t, relay, relayLis)
 
@@ -459,7 +479,7 @@ func TestHandlerStampsNamespace(t *testing.T) {
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "u", cc: upstream}, &recordingReflector{ns: "orders"}, m)),
+		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "u", cc: upstream}, &recordingReflector{ns: "orders"}, gateAdmitsTestServices, m)),
 	)
 	serve(t, relay, relayLis)
 
@@ -476,6 +496,49 @@ func TestHandlerStampsNamespace(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("upstream never received a request")
 	}
+}
+
+func TestHandlerRejectsDisallowedService(t *testing.T) {
+	t.Parallel()
+
+	rep, reg := newTestReporter(t, "upstream")
+	conn := newRelayWithGate(
+		t,
+		func(s *grpc.Server) { workflowservice.RegisterWorkflowServiceServer(s, &stubWorkflowService{}) },
+		router.NewGate([]string{services.OperatorService}),
+		rep,
+	)
+
+	_, err := workflowservice.NewWorkflowServiceClient(conn).GetSystemInfo(
+		t.Context(), &workflowservice.GetSystemInfoRequest{},
+	)
+	require.Equal(t, codes.Unimplemented, status.Code(err))
+	require.Contains(t, status.Convert(err).Message(), "unknown service "+services.WorkflowService)
+
+	requireRejections(t, reg, `
+# HELP tmprl_proxy_router_service_rejections_total Total requests refused because the proxy does not expose the service.
+# TYPE tmprl_proxy_router_service_rejections_total counter
+tmprl_proxy_router_service_rejections_total{service="grpc.reflection.v1.ServerReflection"} 0
+tmprl_proxy_router_service_rejections_total{service="other"} 0
+tmprl_proxy_router_service_rejections_total{service="temporal.api.operatorservice.v1.OperatorService"} 0
+tmprl_proxy_router_service_rejections_total{service="temporal.api.workflowservice.v1.WorkflowService"} 1
+`)
+}
+
+func TestHandlerRejectionLabelIsBounded(t *testing.T) {
+	t.Parallel()
+
+	rep, reg := newTestReporter(t, "upstream")
+	rep.ServiceRejected("attacker.controlled.Service")
+
+	requireRejections(t, reg, `
+# HELP tmprl_proxy_router_service_rejections_total Total requests refused because the proxy does not expose the service.
+# TYPE tmprl_proxy_router_service_rejections_total counter
+tmprl_proxy_router_service_rejections_total{service="grpc.reflection.v1.ServerReflection"} 0
+tmprl_proxy_router_service_rejections_total{service="other"} 1
+tmprl_proxy_router_service_rejections_total{service="temporal.api.operatorservice.v1.OperatorService"} 0
+tmprl_proxy_router_service_rejections_total{service="temporal.api.workflowservice.v1.WorkflowService"} 0
+`)
 }
 
 func TestStatusError(t *testing.T) {
@@ -594,7 +657,14 @@ func newTestReporter(t *testing.T, upstreams ...string) (*router.Reporter, *prom
 	t.Helper()
 	reg := prometheus.NewRegistry()
 	factory := metrics.New("tmprl_proxy", promauto.With(reg)).ForSubsystem("router")
-	return router.NewReporter(factory, upstreams), reg
+	return router.NewReporter(factory, upstreams, services.Known()), reg
+}
+
+// requireRejections asserts that reg's service-rejection series match want,
+// given in Prometheus exposition format.
+func requireRejections(t *testing.T, g prometheus.Gatherer, want string) {
+	t.Helper()
+	require.NoError(t, testutil.GatherAndCompare(g, strings.NewReader(want), "tmprl_proxy_router_service_rejections_total"))
 }
 
 // newRelayToUpstream stands up a fake upstream (configured by registerUpstream),
@@ -635,7 +705,39 @@ func newRelayWith(
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(makeDirector(upstreamConn), reflector, reporter)),
+		grpc.UnknownServiceHandler(router.Handler(makeDirector(upstreamConn), reflector, gateAdmitsTestServices, reporter)),
+	)
+	serve(t, relay, relayLis)
+
+	relayConn := dialBufconn(t, relayLis)
+	t.Cleanup(func() { _ = relayConn.Close() })
+	return relayConn
+}
+
+// newRelayWithGate is newRelayToUpstream with a caller-supplied gate and
+// reporter, so a test can observe what the handler refuses and records.
+func newRelayWithGate(
+	t *testing.T,
+	registerUpstream func(*grpc.Server),
+	gate router.Gate,
+	reporter *router.Reporter,
+) *grpc.ClientConn {
+	t.Helper()
+
+	upstreamLis := bufconn.Listen(1024 * 1024)
+	upstream := grpc.NewServer()
+	registerUpstream(upstream)
+	serve(t, upstream, upstreamLis)
+
+	upstreamConn := dialBufconn(t, upstreamLis)
+	t.Cleanup(func() { _ = upstreamConn.Close() })
+
+	relayLis := bufconn.Listen(1024 * 1024)
+	relay := grpc.NewServer(
+		grpc.ForceServerCodecV2(router.Codec()),
+		grpc.UnknownServiceHandler(
+			router.Handler(stubDirector{cc: upstreamConn}, stubReflector{}, gate, reporter),
+		),
 	)
 	serve(t, relay, relayLis)
 

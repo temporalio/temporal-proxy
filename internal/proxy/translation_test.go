@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
+	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
 )
 
@@ -36,15 +37,6 @@ type (
 		recv proto.Message
 	}
 )
-
-func TestWorkflowProxyOptionsForwardsHeaders(t *testing.T) {
-	t.Parallel()
-
-	// Guard: New must not disable header forwarding, or the upstream proxy would
-	// drop the router-stamped namespace header and templated resolution would
-	// break.
-	require.False(t, workflowProxyOptions(nil).DisableHeaderForwarding)
-}
 
 func TestUnaryClientInterceptorTranslatesBothDirections(t *testing.T) {
 	t.Parallel()
@@ -157,7 +149,7 @@ func TestOutboundNamespaceTranslation(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cc.Close() })
 
-	svr, err := New(lis.Addr().String(), cc)
+	svr, err := New(lis.Addr().String(), cc, []string{services.WorkflowService})
 	require.NoError(t, err)
 
 	ctx := t.Context()

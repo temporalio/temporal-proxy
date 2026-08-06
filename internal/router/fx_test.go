@@ -106,6 +106,9 @@ func TestModule(t *testing.T) {
 			fx.Supply(&config.Config{
 				Routing:   config.Routing{DefaultUpstream: "primary"},
 				Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: upstream}}},
+				// The wired gate only admits configured services; name the
+				// stand-in service here so the module's handler forwards it.
+				AllowedServices: []string{"test.v1.Echo"},
 			}),
 			fx.Provide(func() *metrics.Factory { return metrics.New("tmprl_proxy", promauto.With(prometheus.NewRegistry())) }),
 			connect.Module,

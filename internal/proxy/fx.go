@@ -64,15 +64,21 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 		// Enabled so sealing is gated while inbound decryption always runs. This
 		// keeps payloads sealed earlier openable after encryption is turned off
 		// for new traffic. Added after translation so it is the innermost unary
-		// interceptor, sealing outbound payloads last and opening inbound
-		// payloads first.
+		// and stream interceptor, sealing outbound payloads last and opening
+		// inbound payloads first.
 		if p.Vault != nil {
 			enc, err := EncryptionInterceptor(p.Config.Encryption.Enabled, p.Vault, encReporter)
 			if err != nil {
 				return fmt.Errorf("failed to build encryption interceptor for upstream %q: %w", up.Name, err)
 			}
 
-			dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(enc))
+			dialOpts = append(
+				dialOpts,
+				grpc.WithChainUnaryInterceptor(enc),
+				grpc.WithChainStreamInterceptor(
+					EncryptionStreamInterceptor(p.Config.Encryption.Enabled, p.Vault, encReporter),
+				),
+			)
 		}
 
 		res, err := upstreamResolver(up, dialOpts)
@@ -92,7 +98,7 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 			opts = append(opts, WithLogger(p.Logger))
 		}
 
-		svr, err := New(up.Listen.HostPort, conn, opts...)
+		svr, err := New(up.Listen.HostPort, conn, p.Config.EnabledServices(), opts...)
 		if err != nil {
 			return fmt.Errorf("failed to create proxy for upstream %q: %w", up.Name, err)
 		}

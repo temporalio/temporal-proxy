@@ -16,6 +16,7 @@ type (
 	// Config is the top-level proxy configuration.
 	Config struct {
 		Listen           ListenConfig        `yaml:",inline"`
+		AllowedServices  []string            `yaml:"allowedServices"`
 		Encryption       Encryption          `yaml:"encryption"`
 		ExtensionServers ExtensionServerList `yaml:"extensionServers"`
 		Routing          Routing             `yaml:"routing"`
@@ -58,8 +59,12 @@ func LoadFile(path string) (*Config, error) {
 // every upstream, requires upstream names to be unique, and checks that every
 // cross-reference names something configured: routing references an upstream,
 // while encryption key URIs and external authentication reference an extension
-// server. A missing upstream surfaces on the "upstreams" field. Failures are
-// stamped with the failing node's YAML path as the subject (e.g.
+// server. allowedServices names must be unique and must each name a
+// forwardable service, not merely one whose descriptors happen to be linked in
+// (grpc.health.v1.Health is linked in for the proxy's own health server but is
+// never forwardable). A missing upstream
+// surfaces on the "upstreams" field. Failures are stamped with the failing
+// node's YAML path as the subject (e.g.
 // "upstreams[0].namespaces.rules.overrides[1]"). A duplicate name surfaces on the
 // "upstreams[name]" field, an unknown routing reference on the
 // "routing"/"routing.rules[i]" subject, and an unknown extension server on the
@@ -91,6 +96,7 @@ func (c *Config) Validate() error {
 		knownExtensions[c.ExtensionServers[i].Name] = struct{}{}
 	}
 
+	rules = append(rules, c.serviceRules()...)
 	rules = append(rules, c.Auth.referentialRules(knownExtensions)...)
 	rules = append(rules, c.Routing.referentialRules(known)...)
 	rules = append(rules, c.Encryption.referentialRules(knownExtensions)...)

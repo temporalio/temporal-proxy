@@ -23,8 +23,9 @@ type (
 		grpcSvr   *grpc.Server
 		healthSvr *health.Server
 
-		creds       Credentials
-		healthCheck HealthCheck
+		creds          Credentials
+		healthCheck    HealthCheck
+		healthServices []string
 
 		// mu guards logger and cancelFunc, which Start writes from its own
 		// goroutine while Stop reads them from the caller's goroutine.
@@ -49,6 +50,7 @@ type (
 	options struct {
 		creds              Credentials
 		healthCheck        HealthCheck
+		healthServices     []string
 		logger             logger.Logger
 		unaryInterceptors  []grpc.UnaryServerInterceptor
 		streamInterceptors []grpc.StreamServerInterceptor
@@ -89,11 +91,12 @@ func New(sopts ...Option) (*Server, error) {
 	}
 
 	return &Server{
-		grpcSvr:     svr,
-		healthSvr:   hc,
-		creds:       opts.creds,
-		healthCheck: opts.healthCheck,
-		logger:      opts.logger,
+		grpcSvr:        svr,
+		healthSvr:      hc,
+		creds:          opts.creds,
+		healthCheck:    opts.healthCheck,
+		healthServices: opts.healthServices,
+		logger:         opts.logger,
 	}, nil
 }
 
@@ -139,6 +142,13 @@ func WithServerCodec(c encoding.CodecV2) Option {
 // service's serving status.
 func WithHealthCheck(hc HealthCheck) Option {
 	return optFunc(func(o *options) { o.healthCheck = hc })
+}
+
+// WithHealthServices names the gRPC services the health service reports a
+// status for, alongside the overall "" status. A probe for a service not named
+// here gets NotFound, which is what a frontend that does not serve it returns.
+func WithHealthServices(names []string) Option {
+	return optFunc(func(o *options) { o.healthServices = names })
 }
 
 // WithLogger sets the logger used by the server.
@@ -199,6 +209,9 @@ func (s *Server) runHealthCheck(ctx context.Context) {
 
 	for {
 		s.healthSvr.SetServingStatus("", next)
+		for _, name := range s.healthServices {
+			s.healthSvr.SetServingStatus(name, next)
+		}
 
 		select {
 		case <-ctx.Done():

@@ -65,3 +65,14 @@ upstreams:
 #     uri: testing://KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=
 #     duration: 1h
 #     renewBefore: 15m
+
+# Optional: expose gRPC server reflection, so tools like grpcurl can list and
+# describe the services this proxy forwards without a local copy of Temporal's
+# proto files. Off by default. An explicit list here REPLACES the default
+# (WorkflowService + OperatorService) rather than extending it, so reflection
+# must be listed alongside them, not instead of them.
+#
+# allowedServices:
+#   - temporal.api.workflowservice.v1.WorkflowService
+#   - temporal.api.operatorservice.v1.OperatorService
+#   - grpc.reflection.v1.ServerReflection

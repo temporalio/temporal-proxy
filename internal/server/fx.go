@@ -12,6 +12,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
+	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
 
@@ -26,11 +27,16 @@ var Module = fx.Options(
 			return fmt.Errorf("invalid configuration: %w", err)
 		}
 
-		opts := make([]Option, 0, 6)
+		opts := make([]Option, 0, 7)
 		opts = append(
 			opts,
 			WithCredentials(p.creds()),
 			WithServerCodec(p.Codec),
+			// Every exposed service gets a health entry, reflection included even
+			// though a real Temporal frontend does not register one for it. The
+			// status the proxy would give is accurate either way, so special-casing
+			// reflection out would only add a divergence for no benefit.
+			WithHealthServices(services.Expand(p.Config.EnabledServices())),
 			WithStreamInterceptor(p.Reporter.StreamInterceptor()),
 			WithStreamInterceptor(auth.StreamServerInterceptor(p.Authenticator, p.Logger)),
 			WithUnknownServiceHandler(p.Handler),

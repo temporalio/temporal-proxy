@@ -14,6 +14,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
+	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
 	"github.com/temporalio/temporal-proxy/pkg/match"
@@ -53,6 +54,7 @@ var Module = fx.Options(fx.Provide(
 				reporter: p.Reporter,
 			},
 			p.Extractor,
+			NewGate(p.Config.EnabledServices()),
 			p.Reporter,
 		), nil
 	},
@@ -62,7 +64,7 @@ var Module = fx.Options(fx.Provide(
 			names = append(names, c.Upstreams[i].Name)
 		}
 
-		return NewReporter(f.ForSubsystem("router"), names)
+		return NewReporter(f.ForSubsystem("router"), names, services.All())
 	},
 	func(c *config.Config) (*Mux, error) {
 		rules := make([]Rule, 0, len(c.Routing.Rules))

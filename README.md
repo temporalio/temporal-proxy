@@ -72,6 +72,9 @@ reaches a different upstream with no change to the Worker.
   system neither covers, delegate the decision to an extension server you run and it admits or refuses each caller.
 - **Codec-transparent.** The gateway never parses payloads. It peeks the Namespace, picks an upstream, and relays raw
   frames in both directions.
+- **Configurable service exposure.** By default the proxy forwards `WorkflowService` and `OperatorService`, the pair a
+  normal Client, Worker, CLI, or UI needs, and answers named health checks for exactly that set. `allowedServices` makes
+  the exposed set explicit, including opting in to gRPC server reflection.
 - **Multiple deployment options.** Ship as a Go binary, a container image, or a Helm chart.
 
 ## Installation
@@ -122,6 +125,14 @@ Supply the proxy config under the `config:` key in a values file and pass it wit
 # values.yaml
 config:
   hostPort: :7233
+  # Optional. Omit this key for the default: WorkflowService and OperatorService,
+  # the pair a normal Client, Worker, CLI, or UI needs. An explicit list REPLACES
+  # that default rather than extending it, so listing only OperatorService here
+  # would refuse WorkflowService too. gRPC server reflection is opt-in; add
+  # grpc.reflection.v1.ServerReflection to expose it.
+  # allowedServices:
+  #   - temporal.api.workflowservice.v1.WorkflowService
+  #   - temporal.api.operatorservice.v1.OperatorService
   upstreams:
     - name: local
       hostPort: localhost:7234

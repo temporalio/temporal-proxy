@@ -42,12 +42,15 @@ type (
 
 // Handler returns a grpc.StreamHandler suitable for grpc.UnknownServiceHandler,
 // reporting a stream_setup forwarding error via rep when opening the upstream
-// stream fails. It buffers the first request frame so r can peek the request
-// namespace, asks d for the upstream connection, then transparently forwards
-// the stream to that upstream using the same full method name: it replays the
-// buffered first frame, pumps raw frames in both directions, and propagates
-// header, trailer, and status verbatim.
-func Handler(d Director, r Reflector, rep *Reporter) grpc.StreamHandler {
+// stream fails. It first refuses a service g does not admit, with the message
+// gRPC itself produces for an unregistered service, so the caller cannot
+// distinguish the proxy from a frontend that lacks it. Otherwise it buffers the
+// first request frame so r can peek the request namespace, asks d for the
+// upstream connection, then transparently forwards the stream to that upstream
+// using the same full method name: it replays the buffered first frame, pumps
+// raw frames in both directions, and propagates header, trailer, and status
+// verbatim.
+func Handler(d Director, r Reflector, g Gate, rep *Reporter) grpc.StreamHandler {
 	return func(_ any, serverStream grpc.ServerStream) error {
 		ctx := serverStream.Context()
 		sts := grpc.ServerTransportStreamFromContext(ctx)
@@ -55,8 +58,19 @@ func Handler(d Director, r Reflector, rep *Reporter) grpc.StreamHandler {
 			return status.Error(codes.Internal, "router: no server transport stream in context")
 		}
 
-		var md map[string][]string
 		method := sts.Method()
+
+		// Refuse a service the proxy does not expose before touching the
+		// request, so a refused call costs nothing.
+		if service := ServiceOf(method); !g.Allows(service) {
+			if rep != nil {
+				rep.ServiceRejected(service)
+			}
+
+			return status.Errorf(codes.Unimplemented, "unknown service %s", service)
+		}
+
+		var md map[string][]string
 		outCtx := ctx
 		if inMD, ok := metadata.FromIncomingContext(ctx); ok {
 			outCtx = metadata.NewOutgoingContext(ctx, inMD.Copy())
