@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/pkg/api"
+	"github.com/temporalio/temporal-proxy/internal/rpc"
 	"github.com/temporalio/temporal-proxy/pkg/api/auth/v1"
 )
 
@@ -51,7 +51,7 @@ func NewAuth(cc grpc.ClientConnInterface, secureHeaders []string) *Auth {
 // or cannot reach its own backend fails the request closed rather than opening
 // the gateway to everyone for as long as it is unhealthy.
 //
-// A denial reaches the caller as an [api.Reject]: the provider's status code
+// A denial reaches the caller as an [rpc.Reject]: the provider's status code
 // is kept, since it tells a worker whether to fix its credential or retry, but
 // its message is demoted to the server-side detail. A provider writes that
 // message for whoever operates it, not for the caller it just turned away.
@@ -93,7 +93,7 @@ func (a *Auth) Authenticate(ctx context.Context, md metadata.MD) error {
 		// reason this rejection exists to keep server-side.
 		st := status.Convert(err)
 
-		return api.Reject(st.Code(), clientMessageFor(st.Code()), "external auth: "+st.Message())
+		return rpc.Reject(st.Code(), clientMessageFor(st.Code()), "external auth: "+st.Message())
 	}
 
 	return nil

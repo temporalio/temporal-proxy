@@ -1,7 +1,6 @@
 ignore:
   - cmd/
-  - pkg/api/auth
-  - pkg/api/kms
+  - pkg/api
 
 coverage:
   status:

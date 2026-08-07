@@ -3,7 +3,6 @@ package router_test
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"net"
 	"strings"
@@ -521,35 +520,6 @@ func TestHandlerStampsNamespace(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("upstream never received a request")
 	}
-}
-
-func TestStatusError(t *testing.T) {
-	t.Parallel()
-
-	statusErr := status.Error(codes.NotFound, "nope")
-
-	tests := []struct {
-		name string
-		err  error
-		want codes.Code
-	}{
-		{name: "preserves existing gRPC status", err: statusErr, want: codes.NotFound},
-		{name: "maps context cancellation", err: context.Canceled, want: codes.Canceled},
-		{name: "maps context deadline", err: context.DeadlineExceeded, want: codes.DeadlineExceeded},
-		{name: "wraps unknown error as internal", err: errors.New("boom"), want: codes.Internal},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, tt.want, status.Code(router.StatusError(tt.err)))
-		})
-	}
-
-	t.Run("returns the existing status error verbatim", func(t *testing.T) {
-		t.Parallel()
-		require.ErrorIs(t, router.StatusError(statusErr), statusErr)
-	})
 }
 
 func (s stubDirector) Resolve(context.Context, string, string, map[string][]string) (router.Target, error) {

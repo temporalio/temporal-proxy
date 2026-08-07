@@ -2,9 +2,7 @@ package proxy
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -15,6 +13,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
+	"github.com/temporalio/temporal-proxy/internal/rpc"
 	"github.com/temporalio/temporal-proxy/internal/services"
 )
 
@@ -98,13 +97,12 @@ func WithProtoTypes(t protoutil.Types) ForwarderOption {
 // descriptors can be forwarded; anything else is Unimplemented too.
 func (f *Forwarder) Handle(_ any, ss grpc.ServerStream) error {
 	ctx := ss.Context()
-	sts := grpc.ServerTransportStreamFromContext(ctx)
-	if sts == nil {
-		return status.Error(codes.Internal, "proxy: no server transport stream in context")
+	method, err := rpc.FullMethod(ctx)
+	if err != nil {
+		return err
 	}
 
-	method := sts.Method()
-	if service := protoutil.ServiceName(method); !f.gate.Allows(service) {
+	if service := rpc.Service(method); !f.gate.Allows(service) {
 		return status.Errorf(codes.Unimplemented, "unknown service %s", service)
 	}
 
@@ -128,7 +126,7 @@ func (f *Forwarder) unary(ctx context.Context, method string, mi *methodInfo, ss
 	if err := ss.RecvMsg(req); err != nil {
 		// io.EOF here means the caller half-closed without sending a request, which
 		// is a client error rather than a clean end of stream.
-		return statusError("reading the request failed", err)
+		return rpc.StatusError("proxy: reading the request failed", err)
 	}
 
 	// Invoke discards the upstream's response metadata unless it is asked for it,
@@ -149,12 +147,12 @@ func (f *Forwarder) unary(ctx context.Context, method string, mi *methodInfo, ss
 
 	if len(header) > 0 {
 		if err := ss.SetHeader(header); err != nil {
-			return statusError("relaying the response header failed", err)
+			return rpc.StatusError("proxy: relaying the response header failed", err)
 		}
 	}
 
 	if err := ss.SendMsg(resp); err != nil {
-		return statusError("sending the response failed", err)
+		return rpc.StatusError("proxy: sending the response failed", err)
 	}
 
 	return nil
@@ -175,30 +173,10 @@ func (f *Forwarder) stream(ctx context.Context, method string, mi *methodInfo, s
 		return err
 	}
 
-	reqErr := pumpRequests(ss, cs, mi.in)
-	respErr := pumpResponses(cs, ss, mi.out)
-
-	for range 2 {
-		select {
-		case err := <-reqErr:
-			if errors.Is(err, io.EOF) {
-				_ = cs.CloseSend()
-				continue
-			}
-
-			return statusError("forwarding the request stream failed", err)
-		case err := <-respErr:
-			ss.SetTrailer(cs.Trailer())
-			if !errors.Is(err, io.EOF) {
-				return statusError("forwarding response stream failed", err)
-			}
-
-			return nil
-		}
-	}
-
-	// Defensive: pumpResponses always returns above; unreachable in normal flow.
-	return status.Error(codes.Internal, "proxy: forwarding ended without completion")
+	return rpc.NewPump(cs, ss).Forward(
+		func() any { return mi.in.New().Interface() },
+		func() any { return mi.out.New().Interface() },
+	)
 }
 
 // lookup returns the cached methodInfo for fullMethod, resolving and caching it
@@ -222,7 +200,7 @@ func (f *Forwarder) lookup(fullMethod string) *methodInfo {
 // when the service is not linked into the binary, the service has no such
 // method, or either message type is missing from the registry.
 func (f *Forwarder) resolveMethod(fullMethod string) *methodInfo {
-	service, method, ok := protoutil.SplitMethod(fullMethod)
+	service, method, ok := rpc.ServiceMethod(fullMethod)
 	if !ok {
 		return nil
 	}
@@ -270,89 +248,11 @@ func forwardContext(ctx context.Context) context.Context {
 		return ctx
 	}
 
-	outgoing, ok := metadata.FromOutgoingContext(ctx)
-	if !ok {
-		outgoing = metadata.MD{}
-	} else {
-		outgoing = outgoing.Copy()
-	}
-
-	for k, v := range incoming {
-		if len(outgoing.Get(k)) == 0 {
-			outgoing.Set(k, v...)
-		}
-	}
-
-	return metadata.NewOutgoingContext(ctx, outgoing)
-}
-
-// pumpRequests forwards request messages from the caller to the upstream.
-func pumpRequests(src grpc.ServerStream, dst grpc.ClientStream, in protoreflect.MessageType) <-chan error {
-	ret := make(chan error, 1)
-	go func() {
-		for {
-			msg := in.New().Interface()
-			if err := src.RecvMsg(msg); err != nil {
-				ret <- err // io.EOF on clean half-close.
-				return
-			}
-			if err := dst.SendMsg(msg); err != nil {
-				ret <- err
-				return
+	return rpc.WithOutgoing(ctx, func(outgoing metadata.MD) {
+		for k, v := range incoming {
+			if len(outgoing.Get(k)) == 0 {
+				outgoing.Set(k, v...)
 			}
 		}
-	}()
-
-	return ret
-}
-
-// pumpResponses forwards response messages from the upstream to the caller. It
-// forwards the response header once up front: Header() blocks until the upstream
-// sends headers or the stream completes, so header-only and immediately-failing
-// responses still propagate their metadata.
-func pumpResponses(src grpc.ClientStream, dst grpc.ServerStream, out protoreflect.MessageType) <-chan error {
-	ret := make(chan error, 1)
-	go func() {
-		md, err := src.Header()
-		if err != nil {
-			ret <- err
-			return
-		}
-
-		if err := dst.SendHeader(md); err != nil {
-			ret <- err
-			return
-		}
-
-		for {
-			msg := out.New().Interface()
-			if err := src.RecvMsg(msg); err != nil {
-				ret <- err // io.EOF on clean completion, else the upstream status.
-				return
-			}
-
-			if err := dst.SendMsg(msg); err != nil {
-				ret <- err
-				return
-			}
-		}
-	}()
-
-	return ret
-}
-
-// statusError maps a forwarding error to the gRPC status returned to the caller,
-// naming the step that failed as what. It forwards an error already carrying a
-// status verbatim, maps a raw context error to its status, and otherwise reports
-// Internal.
-func statusError(what string, err error) error {
-	if _, ok := status.FromError(err); ok {
-		return err
-	}
-
-	if st := status.FromContextError(err); st.Code() != codes.Unknown {
-		return st.Err()
-	}
-
-	return status.Errorf(codes.Internal, "proxy: %s: %v", what, err)
+	})
 }

@@ -15,7 +15,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/temporalio/temporal-proxy/pkg/api"
+	"github.com/temporalio/temporal-proxy/internal/rpc"
 )
 
 const (
@@ -113,7 +113,7 @@ func newJWKSAuthenticator(keyfn jwt.Keyfunc, audiences []string, issuer, header,
 func (a *JWKSAuthenticator) Authenticate(_ context.Context, md metadata.MD) error {
 	raw, ok := extractToken(md, a.header, a.scheme)
 	if !ok {
-		return api.Reject(codes.Unauthenticated, "missing or malformed credentials",
+		return rpc.Reject(codes.Unauthenticated, "missing or malformed credentials",
 			"jwks: missing or malformed "+a.header+" header")
 	}
 
@@ -128,14 +128,14 @@ func (a *JWKSAuthenticator) Authenticate(_ context.Context, md metadata.MD) erro
 	claims := jwt.MapClaims{}
 	if _, err := jwt.ParseWithClaims(raw, claims, a.keyfn, opts...); err != nil {
 		if errors.Is(err, errKeysUnavailable) {
-			return api.Reject(codes.Unavailable, "authentication temporarily unavailable", "jwks: "+err.Error())
+			return rpc.Reject(codes.Unavailable, "authentication temporarily unavailable", "jwks: "+err.Error())
 		}
 
-		return api.Reject(codes.Unauthenticated, "invalid credentials", "jwks: token verification failed: "+err.Error())
+		return rpc.Reject(codes.Unauthenticated, "invalid credentials", "jwks: token verification failed: "+err.Error())
 	}
 
 	if len(a.audiences) > 0 && !audienceMatches(claims, a.audiences) {
-		return api.Reject(codes.Unauthenticated, "invalid credentials", "jwks: audience not allowed")
+		return rpc.Reject(codes.Unauthenticated, "invalid credentials", "jwks: audience not allowed")
 	}
 
 	return nil

@@ -1,4 +1,4 @@
-package api
+package rpc
 
 import (
 	"google.golang.org/grpc/codes"
@@ -23,6 +23,23 @@ type rejection struct {
 // context in the detail instead.
 func Reject(code codes.Code, clientMsg, detail string) error {
 	return &rejection{st: status.New(code, clientMsg), detail: detail}
+}
+
+// StatusError maps a forwarding error to the gRPC status returned to the caller,
+// naming the step that failed as what. It forwards an error already carrying a
+// status verbatim, maps a raw context error to its status, and otherwise reports
+// Internal. Callers own the whole message, so what carries their own package
+// prefix.
+func StatusError(what string, err error) error {
+	if _, ok := status.FromError(err); ok {
+		return err
+	}
+
+	if st := status.FromContextError(err); st.Code() != codes.Unknown {
+		return st.Err()
+	}
+
+	return status.Errorf(codes.Internal, "%s: %v", what, err)
 }
 
 // Error returns the detailed, server-side rejection reason. It must never be
