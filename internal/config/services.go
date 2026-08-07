@@ -14,6 +14,26 @@ import (
 // "temporal.api.workflowservice.v1.WorkflowService").
 type Services []string
 
+// NewAllowlist builds the [services.Allowlist] admitting the services c allows.
+// It is the fx provider [Module] registers, and is exported so an application
+// that assembles a partial graph (supplying a *Config rather than loading one)
+// can provide the allowlist the same way rather than rebuilding it.
+func NewAllowlist(c *Config) services.Allowlist {
+	return services.NewAllowlist(c.AllowedServices.Allowed())
+}
+
+// Allowed returns the services to forward: the configured names, or the default
+// set when none were configured. Callers build their allowlist from this rather
+// than from the raw field, so a Config assembled in code rather than through
+// Load forwards the defaults instead of denying everything.
+func (s Services) Allowed() []string {
+	if len(s) == 0 {
+		return services.Default()
+	}
+
+	return s
+}
+
 // Validate rejects duplicate entries and any name the proxy cannot forward. An
 // empty list is valid. Failures carry the "allowedServices" field and no
 // subject, so Config nests this under an empty subject rather than restating

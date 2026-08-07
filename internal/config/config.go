@@ -9,7 +9,6 @@ import (
 
 	"github.com/goccy/go-yaml"
 
-	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
@@ -45,9 +44,7 @@ func Load(r io.Reader) (*Config, error) {
 	// The allowlist defaults here rather than in a Services unmarshaler because
 	// an absent key never reaches one, and an absent allowedServices is how most
 	// configs are written.
-	if len(cfg.AllowedServices) == 0 {
-		cfg.AllowedServices = services.Default()
-	}
+	cfg.AllowedServices = cfg.AllowedServices.Allowed()
 
 	return &cfg, nil
 }
