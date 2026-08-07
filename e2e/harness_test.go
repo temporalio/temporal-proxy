@@ -118,6 +118,7 @@ func newFullApp(t *testing.T, cfg *config.Config) *fx.App {
 		proxy.Module,
 		router.Module,
 		server.Module,
+		fx.Provide(config.NewAllowlist),
 		fx.NopLogger,
 	)
 }
@@ -140,6 +141,7 @@ func newProxyApp(t *testing.T, cfg *config.Config) *fx.App {
 		connect.Module,
 		protoutil.Module,
 		proxy.Module,
+		fx.Provide(config.NewAllowlist),
 		fx.NopLogger,
 	)
 }

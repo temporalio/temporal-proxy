@@ -12,6 +12,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
+	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
@@ -93,7 +94,12 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 			opts = append(opts, WithLogger(p.Logger))
 		}
 
-		svr, err := New(up.Listen.HostPort, conn, opts...)
+		fw, err := NewForwarder(conn, p.Allowlist, WithProtoTypes(p.Types))
+		if err != nil {
+			return err
+		}
+
+		svr, err := New(up.Listen.HostPort, fw, opts...)
 		if err != nil {
 			return fmt.Errorf("failed to create proxy for upstream %q: %w", up.Name, err)
 		}
@@ -143,10 +149,11 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 }))
 
 // ProxyParams collects the fx-provided dependencies needed to construct and run
-// the proxy [Server]. Context, Config, Translator, and Pool are required;
-// Logger is optional and falls back to the default used by [New] when not
-// supplied. [protoutil.Module] provides the Translator and [connect.Module]
-// provides the Pool in the assembled application.
+// the proxy [Server]. Context, Config, Translator, Pool, and Allowlist are
+// required. Logger falls back to the default used by [New] and Types to the
+// global proto registry, so neither has to be supplied. [protoutil.Module]
+// provides the Translator, [connect.Module] the Pool, and [config.Module] the
+// Allowlist in the assembled application.
 type ProxyParams struct {
 	fx.In
 	Lifecycle  fx.Lifecycle
@@ -159,9 +166,11 @@ type ProxyParams struct {
 	Pool       *connect.Pool
 	Vault      *crypto.Vault
 	Factory    *metrics.Factory
+	Allowlist  services.Allowlist
 
 	// Optional values
-	Logger logger.Logger `optional:"true"`
+	Logger logger.Logger   `optional:"true"`
+	Types  protoutil.Types `optional:"true"`
 }
 
 // upstreamResolver builds the [connect.Resolver] for an upstream. When neither

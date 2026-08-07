@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"io"
 	"maps"
 
@@ -83,7 +84,7 @@ func Handler(d Director, r Reflector, g Gate, rep *Reporter) grpc.StreamHandler 
 		// sending a message (namespace is empty).
 		first := &frame{}
 		firstErr := serverStream.RecvMsg(first)
-		eof := firstErr == io.EOF
+		eof := errors.Is(firstErr, io.EOF)
 		if firstErr != nil && !eof {
 			return StatusError(firstErr)
 		}
@@ -131,7 +132,7 @@ func Handler(d Director, r Reflector, g Gate, rep *Reporter) grpc.StreamHandler 
 		for range 2 {
 			select {
 			case err := <-reqErr:
-				if err == io.EOF {
+				if errors.Is(err, io.EOF) {
 					_ = stream.CloseSend()
 					continue
 				}
@@ -140,7 +141,7 @@ func Handler(d Director, r Reflector, g Gate, rep *Reporter) grpc.StreamHandler 
 				return StatusError(err)
 			case err := <-respErr:
 				serverStream.SetTrailer(stream.Trailer())
-				if err != io.EOF {
+				if !errors.Is(err, io.EOF) {
 					return err
 				}
 

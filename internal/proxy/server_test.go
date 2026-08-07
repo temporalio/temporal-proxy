@@ -2,6 +2,7 @@ package proxy_test
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/temporalio/temporal-proxy/internal/proxy"
+	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
@@ -23,7 +25,7 @@ func TestNew(t *testing.T) {
 	t.Run("returns a server with default options", func(t *testing.T) {
 		t.Parallel()
 
-		svr, err := proxy.New("127.0.0.1:7233", upstreamConn(t, "127.0.0.1:7233"))
+		svr, err := proxy.New("127.0.0.1:7233", forwarder(t, "127.0.0.1:7233"))
 		require.NoError(t, err)
 		require.NotNil(t, svr)
 	})
@@ -38,7 +40,7 @@ func TestServerStartAndStop(t *testing.T) {
 	const upstream = "127.0.0.1:17233"
 
 	log := logger.NewTestLogger()
-	svr, err := proxy.New(upstream, upstreamConn(t, upstream), proxy.WithLogger(log))
+	svr, err := proxy.New(upstream, forwarder(t, upstream), proxy.WithLogger(log))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -77,17 +79,32 @@ func TestServerStartAndStop(t *testing.T) {
 func TestStartRemovesStaleSocket(t *testing.T) {
 	t.Parallel()
 
-	const upstream = "127.0.0.1:27233"
+	// An ephemeral port gives this test its own socket path. A fixed one is shared
+	// with every past run on the machine, so a socket left behind by a run that was
+	// killed before it could shut down would occupy the path and make planting the
+	// stale socket below fail with "operation not supported on socket".
+	upstream := deadUpstream(t)
 
 	path, err := socket.UnixPath(upstream)
 	require.NoError(t, err)
 
-	// Leave a file behind where the listener wants to bind. Without removal the
-	// bind would fail with "address already in use" and the Check never succeeds.
-	require.NoError(t, os.WriteFile(path, []byte("stale"), 0o600))
-	t.Cleanup(func() { _ = os.Remove(path) })
+	// Clear the path first: a run killed before its cleanup leaves its own socket
+	// or directory behind, and planting over either fails.
+	require.NoError(t, os.RemoveAll(path))
 
-	svr, err := proxy.New(upstream, upstreamConn(t, upstream))
+	// Leave a real socket behind, which is what a killed process leaves. Without
+	// removal the bind would fail with "address already in use" and the Check never
+	// succeeds.
+	stale, err := net.Listen("unix", path)
+	require.NoError(t, err)
+	unix, ok := stale.(*net.UnixListener)
+	require.True(t, ok)
+	unix.SetUnlinkOnClose(false)
+	require.NoError(t, unix.Close())
+	t.Cleanup(func() { _ = os.Remove(path) })
+	require.FileExists(t, path, "expected a stale socket to be planted")
+
+	svr, err := proxy.New(upstream, forwarder(t, upstream))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -116,10 +133,15 @@ func TestStartRemovesStaleSocket(t *testing.T) {
 func TestListenReturnsErrorWhenStaleSocketCannotBeRemoved(t *testing.T) {
 	t.Parallel()
 
-	const upstream = "127.0.0.1:37233"
+	// As above, an ephemeral port keeps the path this test's own, so a leftover
+	// socket cannot make the Mkdir below fail with "file exists".
+	upstream := deadUpstream(t)
 
 	path, err := socket.UnixPath(upstream)
 	require.NoError(t, err)
+
+	// Clear the path first, as above.
+	require.NoError(t, os.RemoveAll(path))
 
 	// A non-empty directory at the socket path makes os.Remove fail, so Listen
 	// returns before it ever binds.
@@ -127,7 +149,7 @@ func TestListenReturnsErrorWhenStaleSocketCannotBeRemoved(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(path, "child"), nil, 0o600))
 	t.Cleanup(func() { _ = os.RemoveAll(path) })
 
-	svr, err := proxy.New(upstream, upstreamConn(t, upstream))
+	svr, err := proxy.New(upstream, forwarder(t, upstream))
 	require.NoError(t, err)
 
 	_, err = svr.Listen(t.Context())
@@ -135,16 +157,46 @@ func TestListenReturnsErrorWhenStaleSocketCannotBeRemoved(t *testing.T) {
 	require.ErrorContains(t, err, "failed to remove stale socket")
 }
 
-// upstreamConn returns a grpc.ClientConnInterface for New's cc argument. gRPC
-// dials lazily, so this never opens a socket to upstream; the tests in this
-// file never make an outbound RPC through it (they only exercise the local
-// unix listener), so a plain client conn stands in for the pool-backed
-// resolvingConn used in production.
-func upstreamConn(t *testing.T, upstream string) grpc.ClientConnInterface {
+// forwarder returns the Forwarder for New's fw argument, allowing the services
+// named or the default set when none are. gRPC dials lazily, so the underlying
+// client conn opens no socket to upstream until a request needs it, which lets
+// the tests that only exercise the local unix listener pass an upstream that was
+// never started. A plain client conn stands in for the pool-backed resolvingConn
+// used in production.
+func forwarder(t *testing.T, upstream string, allowed ...string) *proxy.Forwarder {
 	t.Helper()
+
+	if len(allowed) == 0 {
+		allowed = services.Default()
+	}
 
 	conn, err := grpc.NewClient(upstream, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	fw, err := proxy.NewForwarder(conn, services.NewAllowlist(allowed))
+	require.NoError(t, err)
+
+	return fw
+}
+
+// startProxy runs a proxy forwarding the named services to upstream and returns a
+// client connection to its local unix socket. Stop takes a fresh context because
+// the test's own is already cancelled by the time cleanups run.
+func startProxy(t *testing.T, upstream string, allowed ...string) *grpc.ClientConn {
+	t.Helper()
+
+	svr, err := proxy.New(upstream, forwarder(t, upstream, allowed...))
+	require.NoError(t, err)
+
+	ctx := t.Context()
+	lis, err := svr.Listen(ctx)
+	require.NoError(t, err)
+
+	go func() { _ = svr.Start(ctx, lis) }()
+	t.Cleanup(func() { _ = svr.Stop(context.Background()) })
+
+	conn := dialUnix(t, upstream)
 	t.Cleanup(func() { _ = conn.Close() })
 
 	return conn

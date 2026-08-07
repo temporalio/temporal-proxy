@@ -257,24 +257,52 @@ func TestModuleRequiresTranslator(t *testing.T) {
 		fx.Provide(func() *metrics.Factory { return metrics.New("tmprl_proxy", promauto.With(prometheus.NewRegistry())) }),
 		connect.Module,
 		proxy.Module,
+		fx.Provide(config.NewAllowlist),
 		fx.NopLogger,
 	)
 
-	require.Error(t, app.Err())
+	// Naming the missing type keeps this from passing for any other absent
+	// dependency, which is how it would silently stop testing the Translator.
+	require.ErrorContains(t, app.Err(), "protoutil.Translator")
 }
 
-// serveUpstream starts a plaintext gRPC server on a loopback port and returns
-// its address, for use as an upstream hostPort. A static upstream's connection
-// is opened on start, so an upstream pointing at nothing fails the lifecycle.
-// The ephemeral port also keeps the proxy's derived socket path unique across
-// parallel tests.
-func serveUpstream(t *testing.T) string {
+func TestModuleRequiresAllowlist(t *testing.T) {
+	t.Parallel()
+
+	// Deliberately without config.NewAllowlist: the gate is required so missing
+	// wiring fails here, rather than degrading to a proxy that forwards nothing.
+	app := fx.New(
+		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
+		fx.Supply(&config.Config{
+			Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:47244"}}},
+		}),
+		fx.Provide(func() *crypto.Vault { return nil }),
+		fx.Provide(func() *metrics.Factory { return metrics.New("tmprl_proxy", promauto.With(prometheus.NewRegistry())) }),
+		connect.Module,
+		protoutil.Module,
+		proxy.Module,
+		fx.NopLogger,
+	)
+
+	require.ErrorContains(t, app.Err(), "services.Allowlist")
+}
+
+// serveUpstream starts a plaintext gRPC server on a loopback port, registers any
+// services supplied, and returns its address for use as an upstream hostPort. A
+// static upstream's connection is opened on start, so an upstream pointing at
+// nothing fails the lifecycle. The ephemeral port also keeps the proxy's derived
+// socket path unique across parallel tests.
+func serveUpstream(t *testing.T, register ...func(*grpc.Server)) string {
 	t.Helper()
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
 	svr := grpc.NewServer()
+	for _, reg := range register {
+		reg(svr)
+	}
+
 	go func() { _ = svr.Serve(lis) }()
 	t.Cleanup(svr.Stop)
 
@@ -309,6 +337,7 @@ func newProxyApp(t *testing.T, cfg *config.Config, opts ...fx.Option) *fx.App {
 		connect.Module,
 		protoutil.Module,
 		proxy.Module,
+		fx.Provide(config.NewAllowlist),
 		fx.NopLogger,
 	}
 

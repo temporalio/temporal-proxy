@@ -46,6 +46,7 @@ func TestModule(t *testing.T) {
 			connect.Module,
 			protoutil.Module,
 			router.Module,
+			fx.Provide(config.NewAllowlist),
 			fx.Populate(&codec, &handler),
 			fx.NopLogger,
 		)
@@ -115,6 +116,7 @@ func TestModule(t *testing.T) {
 			connect.Module,
 			protoutil.Module,
 			router.Module,
+			fx.Provide(config.NewAllowlist),
 			fx.Populate(&codec, &handler),
 			fx.NopLogger,
 		)

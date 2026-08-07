@@ -9,6 +9,7 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"github.com/temporalio/temporal-proxy/internal/api"
 	"github.com/temporalio/temporal-proxy/internal/auth"
@@ -74,6 +75,8 @@ func serve() *cli.Command {
 					fx.Annotate(cmd.String("config"), config.ConfigFileTag),
 					fx.Annotate(cmd.String("metrics-addr"), metrics.AddrTag),
 					fx.Annotate(cmd.String("metrics-namespace"), metrics.NamespaceTag),
+					fx.Annotate(protoregistry.GlobalFiles, fx.As(new(protoutil.Files))),
+					fx.Annotate(protoregistry.GlobalTypes, fx.As(new(protoutil.Types))),
 					// Services whose request and response types have their namespace
 					// translation plans warmed at startup.
 					[]protoreflect.FullName{"temporal.api.workflowservice.v1.WorkflowService"},
