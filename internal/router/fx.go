@@ -14,6 +14,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
+	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
@@ -27,9 +28,13 @@ import (
 // handler dials one connection per configured upstream from the shared
 // [connect.Pool] (each unix socket path derived from that upstream's
 // host:port), then routes every request to an upstream by matching it with the
-// Mux.
+// Mux. Requests are admitted through a [Gate] built from the configured
+// allowlist before any of that happens.
 var Module = fx.Options(fx.Provide(
 	Codec,
+	func(c *config.Config) Gate {
+		return services.NewAllowlist(c.AllowedServices)
+	},
 	func(p RouterParams) (grpc.StreamHandler, error) {
 		conns := make(map[string]*grpc.ClientConn, len(p.Config.Upstreams))
 		for i := range p.Config.Upstreams {
@@ -61,6 +66,7 @@ var Module = fx.Options(fx.Provide(
 				logger:   log.With(tag.Component("router")),
 			},
 			p.Extractor,
+			p.Gate,
 			p.Reporter,
 		), nil
 	},
@@ -128,6 +134,7 @@ type (
 
 		Config    *config.Config
 		Extractor *protoutil.Extractor
+		Gate      Gate
 		Mux       *Mux
 		Pool      *connect.Pool
 		Reporter  *Reporter

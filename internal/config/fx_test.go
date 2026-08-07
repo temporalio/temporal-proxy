@@ -9,6 +9,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/services"
 )
 
 func TestModule_ProvidesConfig(t *testing.T) {
@@ -26,7 +27,10 @@ func TestModule_ProvidesConfig(t *testing.T) {
 	)
 
 	require.NoError(t, app.Err())
-	require.Equal(t, &config.Config{Listen: config.ListenConfig{HostPort: ":7233"}}, got)
+	require.Equal(t, &config.Config{
+		Listen:          config.ListenConfig{HostPort: ":7233"},
+		AllowedServices: config.Services(services.Default()),
+	}, got)
 }
 
 func TestModule_ErrorPropagates(t *testing.T) {

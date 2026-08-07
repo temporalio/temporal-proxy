@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
@@ -29,7 +30,10 @@ func TestLoad(t *testing.T) {
 		{
 			name: "valid config",
 			yaml: "hostPort: :8080\n",
-			want: &config.Config{Listen: config.ListenConfig{HostPort: ":8080"}},
+			want: &config.Config{
+				Listen:          config.ListenConfig{HostPort: ":8080"},
+				AllowedServices: config.Services(services.Default()),
+			},
 		},
 		{
 			name:    "invalid YAML",
@@ -39,7 +43,7 @@ func TestLoad(t *testing.T) {
 		{
 			name: "empty hostPort",
 			yaml: "hostPort: \"\"\n",
-			want: &config.Config{},
+			want: &config.Config{AllowedServices: config.Services(services.Default())},
 		},
 	}
 
@@ -136,7 +140,10 @@ func TestLoadFile(t *testing.T) {
 		{
 			name:    "valid file",
 			content: "hostPort: :7233\n",
-			want:    &config.Config{Listen: config.ListenConfig{HostPort: ":7233"}},
+			want: &config.Config{
+				Listen:          config.ListenConfig{HostPort: ":7233"},
+				AllowedServices: config.Services(services.Default()),
+			},
 		},
 		{
 			name:    "invalid YAML in file",

@@ -28,6 +28,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/router"
 	"github.com/temporalio/temporal-proxy/internal/server"
+	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 )
 
@@ -62,6 +63,12 @@ type (
 	}
 
 	stubReflector struct{}
+
+	// stubGate admits everything. The handler tests dial a mix of stub services
+	// and the generated health client, so enumerating them here would silently
+	// deny a test the day someone adds another. Admission has its own test, and
+	// the real gate is covered in the services package.
+	stubGate struct{}
 )
 
 func TestHandlerForwardsUnary(t *testing.T) {
@@ -107,6 +114,44 @@ func TestHandlerPropagatesError(t *testing.T) {
 	)
 	require.Error(t, err)
 	require.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestHandlerRejectsDisallowedService(t *testing.T) {
+	t.Parallel()
+
+	// Admission runs before any routing work, so a denied method never reaches
+	// the Director and the client is told the service is not implemented rather
+	// than that it could not be routed.
+	director := &recordingDirector{}
+	m, _ := newTestReporter(t)
+
+	relayLis := bufconn.Listen(1024 * 1024)
+	relay := grpc.NewServer(
+		grpc.ForceServerCodecV2(router.Codec()),
+		grpc.UnknownServiceHandler(router.Handler(
+			director,
+			stubReflector{},
+			services.NewAllowlist([]string{services.WorkflowService}),
+			m,
+		)),
+	)
+	serve(t, relay, relayLis)
+
+	relayConn := dialBufconn(t, relayLis)
+	t.Cleanup(func() { _ = relayConn.Close() })
+
+	err := relayConn.Invoke(
+		t.Context(),
+		"/test.v1.Echo/Ping",
+		&grpc_health_v1.HealthCheckRequest{},
+		new(grpc_health_v1.HealthCheckResponse),
+	)
+	require.Error(t, err)
+	require.Equal(t, codes.Unimplemented, status.Code(err))
+	require.Contains(t, status.Convert(err).Message(), "test.v1.Echo")
+
+	calls, _, _, _ := director.snapshot()
+	require.Zero(t, calls, "a denied method must not reach the Director")
 }
 
 func TestHandlerRoutesUsingReflectorAndDirector(t *testing.T) {
@@ -343,7 +388,7 @@ func TestHandlerCoHostsLocalHealthWithForwarding(t *testing.T) {
 
 	m, _ := newTestReporter(t)
 	svr, err := server.New(
-		server.WithUnknownServiceHandler(router.Handler(stubDirector{cc: upstreamConn}, stubReflector{}, m)),
+		server.WithUnknownServiceHandler(router.Handler(stubDirector{cc: upstreamConn}, stubReflector{}, stubGate{}, m)),
 		server.WithServerCodec(router.Codec()),
 	)
 	require.NoError(t, err)
@@ -397,7 +442,7 @@ func TestHandlerRecordsStreamSetupError(t *testing.T) {
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: brokenConn}, stubReflector{}, m)),
+		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: brokenConn}, stubReflector{}, stubGate{}, m)),
 	)
 	serve(t, relay, relayLis)
 
@@ -430,7 +475,7 @@ func TestHandlerRelayedUpstreamErrorIsNotAForwardingError(t *testing.T) {
 
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: upstreamConn}, stubReflector{}, m)),
+		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: upstreamConn}, stubReflector{}, stubGate{}, m)),
 	)
 	serve(t, relay, relayLis)
 
@@ -459,7 +504,7 @@ func TestHandlerStampsNamespace(t *testing.T) {
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "u", cc: upstream}, &recordingReflector{ns: "orders"}, m)),
+		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "u", cc: upstream}, &recordingReflector{ns: "orders"}, stubGate{}, m)),
 	)
 	serve(t, relay, relayLis)
 
@@ -512,6 +557,8 @@ func (s stubDirector) Resolve(context.Context, string, string, map[string][]stri
 }
 
 func (stubReflector) Namespace(string, []byte) string { return "" }
+
+func (stubGate) Allows(string) bool { return true }
 
 func (r *recordingReflector) Namespace(method string, payload []byte) string {
 	r.mu.Lock()
@@ -635,7 +682,7 @@ func newRelayWith(
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(makeDirector(upstreamConn), reflector, reporter)),
+		grpc.UnknownServiceHandler(router.Handler(makeDirector(upstreamConn), reflector, stubGate{}, reporter)),
 	)
 	serve(t, relay, relayLis)
 
