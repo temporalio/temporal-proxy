@@ -15,6 +15,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
 
 // Module is the fx module that constructs the proxy [Server] from [ProxyParams]
@@ -75,7 +76,7 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 			dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(enc))
 		}
 
-		res, err := upstreamResolver(up, dialOpts)
+		res, err := upstreamResolver(up, dialOpts, p.Logger)
 		if err != nil {
 			return err
 		}
@@ -169,8 +170,9 @@ type ProxyParams struct {
 // start, and reused for every request; otherwise it returns a DynamicResolver
 // that renders the target and server name, and rebuilds credentials, per request.
 // opts holds the request-independent dial options (namespace translation and
-// outbound credentials).
-func upstreamResolver(upstream *config.Upstream, opts []grpc.DialOption) (connect.Resolver, error) {
+// outbound credentials). log, when non-nil, is threaded into the DynamicResolver
+// for per-request debug entries.
+func upstreamResolver(upstream *config.Upstream, opts []grpc.DialOption, log logger.Logger) (connect.Resolver, error) {
 	// One Dialer per upstream owns the TLS-mode decision and parses its
 	// certificate material once, so a templated upstream reuses it across every
 	// per-request dial (only the rendered server name varies).
@@ -182,8 +184,7 @@ func upstreamResolver(upstream *config.Upstream, opts []grpc.DialOption) (connec
 			translator = upstream.Namespaces.Rules.Remote
 		}
 
-		return NewDynamicResolver(
-			upstream,
+		resolverOpts := []ResolverOption{
 			WithRemoteNamespacer(translator),
 			WithOptionsFactory(func(data RouteData) ([]grpc.DialOption, error) {
 				cred, err := dialer.DialOption(data.ResolvedServerName)
@@ -193,7 +194,12 @@ func upstreamResolver(upstream *config.Upstream, opts []grpc.DialOption) (connec
 
 				return append(slices.Clone(opts), cred), nil
 			}),
-		)
+		}
+		if log != nil {
+			resolverOpts = append(resolverOpts, WithResolverLogger(log.With(tag.Component("resolver"))))
+		}
+
+		return NewDynamicResolver(upstream, resolverOpts...)
 	}
 
 	serverName := ""

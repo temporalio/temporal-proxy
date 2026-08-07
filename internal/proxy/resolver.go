@@ -15,6 +15,8 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/template"
 	"github.com/temporalio/temporal-proxy/internal/transport/meta"
+	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
 
 type (
@@ -30,6 +32,7 @@ type (
 		serverName *template.Template[template.UpstreamContext]
 		remote     func(string) string
 		opts       func(d RouteData) ([]grpc.DialOption, error)
+		logger     logger.Logger
 	}
 
 	// RouteData is passed to the options factory once a request has been
@@ -90,6 +93,12 @@ func WithRemoteNamespacer(f func(string) string) ResolverOption {
 // resolved request. It receives the rendered host and server name via RouteData.
 func WithOptionsFactory(f func(RouteData) ([]grpc.DialOption, error)) ResolverOption {
 	return func(r *DynamicResolver) { r.opts = f }
+}
+
+// WithResolverLogger sets the logger used to emit a per-request debug entry
+// after a successful resolve. Unset: no entry is emitted.
+func WithResolverLogger(l logger.Logger) ResolverOption {
+	return func(r *DynamicResolver) { r.logger = l }
 }
 
 // IsStatic reports that a DynamicResolver always resolves per request.
@@ -154,6 +163,17 @@ func (r *DynamicResolver) Resolve(ctx context.Context) (string, string, []grpc.D
 			"proxy: upstream %q failed to build dial options: %v",
 			r.name,
 			err,
+		)
+	}
+
+	if r.logger != nil {
+		r.logger.Debug(
+			"resolved upstream target",
+			tag.String("upstream", r.name),
+			tag.String("localNamespace", localNS),
+			tag.String("remoteNamespace", data.RemoteNamespace),
+			tag.String("target", target),
+			tag.String("serverName", svrName),
 		)
 	}
 
