@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/rpc"
 )
 
 // CredentialProvider supplies per-RPC metadata for outbound calls to an
@@ -57,16 +58,13 @@ func DialOptions(cp CredentialProvider) []grpc.DialOption {
 }
 
 // stripOutgoingHeader returns ctx with header removed from its outgoing
-// metadata (a copy; the caller's metadata is not mutated).
+// metadata, and ctx unchanged when it carries none.
 func stripOutgoingHeader(ctx context.Context, header string) context.Context {
-	md, ok := metadata.FromOutgoingContext(ctx)
-	if !ok {
+	if _, ok := metadata.FromOutgoingContext(ctx); !ok {
 		return ctx
 	}
 
-	md = md.Copy()
-	md.Delete(header)
-	return metadata.NewOutgoingContext(ctx, md)
+	return rpc.WithOutgoing(ctx, func(md metadata.MD) { md.Delete(header) })
 }
 
 func stripOutgoingUnary(header string) grpc.UnaryClientInterceptor {

@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/internal/protoutil"
+	"github.com/temporalio/temporal-proxy/internal/rpc"
 	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 )
 
@@ -62,13 +62,12 @@ type (
 func Handler(d Director, r Reflector, g Gate, rep *Reporter) grpc.StreamHandler {
 	return func(_ any, serverStream grpc.ServerStream) error {
 		ctx := serverStream.Context()
-		sts := grpc.ServerTransportStreamFromContext(ctx)
-		if sts == nil {
-			return status.Error(codes.Internal, "router: no server transport stream in context")
+		method, err := rpc.FullMethod(ctx)
+		if err != nil {
+			return err
 		}
 
-		method := sts.Method()
-		if svc := protoutil.ServiceName(method); !g.Allows(svc) {
+		if svc := rpc.Service(method); !g.Allows(svc) {
 			return status.Errorf(codes.Unimplemented, "unknown service %q", svc)
 		}
 
@@ -86,7 +85,7 @@ func Handler(d Director, r Reflector, g Gate, rep *Reporter) grpc.StreamHandler 
 		firstErr := serverStream.RecvMsg(first)
 		eof := errors.Is(firstErr, io.EOF)
 		if firstErr != nil && !eof {
-			return StatusError(firstErr)
+			return rpc.StatusError("router: reading the first request failed", firstErr)
 		}
 
 		namespace := ""
@@ -120,102 +119,15 @@ func Handler(d Director, r Reflector, g Gate, rep *Reporter) grpc.StreamHandler 
 
 		if eof {
 			if err := stream.CloseSend(); err != nil {
-				return StatusError(err)
+				return rpc.StatusError("router: closing the upstream send side failed", err)
 			}
 		} else if err := stream.SendMsg(first); err != nil {
-			return StatusError(err)
+			return rpc.StatusError("router: forwarding the first request failed", err)
 		}
 
-		reqErr := pumpServerToClient(serverStream, stream)
-		respErr := pumpClientToServer(stream, serverStream)
-
-		for range 2 {
-			select {
-			case err := <-reqErr:
-				if errors.Is(err, io.EOF) {
-					_ = stream.CloseSend()
-					continue
-				}
-
-				// Preserve the caller's gRPC/context status instead of masking it as Internal.
-				return StatusError(err)
-			case err := <-respErr:
-				serverStream.SetTrailer(stream.Trailer())
-				if !errors.Is(err, io.EOF) {
-					return err
-				}
-
-				return nil
-			}
-		}
-
-		// Defensive: respErr always returns above; this is unreachable in normal flow.
-		return status.Error(codes.Internal, "router: forwarding ended without completion")
+		return rpc.NewPump(stream, serverStream).Forward(
+			func() any { return &frame{} },
+			func() any { return &frame{} },
+		)
 	}
-}
-
-// StatusError maps a request-pump error to the gRPC status returned to the
-// caller. It forwards an error that already carries a gRPC status verbatim, maps a
-// raw context error to its status, and otherwise reports Internal.
-func StatusError(err error) error {
-	if _, ok := status.FromError(err); ok {
-		return err
-	}
-
-	if st := status.FromContextError(err); st.Code() != codes.Unknown {
-		return st.Err()
-	}
-
-	return status.Errorf(codes.Internal, "router: request stream failed: %v", err)
-}
-
-// pumpServerToClient forwards request frames from the caller to the upstream.
-func pumpServerToClient(src grpc.ServerStream, dst grpc.ClientStream) <-chan error {
-	ret := make(chan error, 1)
-	go func() {
-		f := &frame{}
-		for {
-			if err := src.RecvMsg(f); err != nil {
-				ret <- err // io.EOF on clean half-close.
-				return
-			}
-			if err := dst.SendMsg(f); err != nil {
-				ret <- err
-				return
-			}
-		}
-	}()
-	return ret
-}
-
-// pumpClientToServer forwards response frames from the upstream to the caller.
-// It forwards the response header once up front: Header() blocks until the
-// upstream sends headers or the stream completes, so header-only and
-// immediately-failing responses still propagate their metadata.
-func pumpClientToServer(src grpc.ClientStream, dst grpc.ServerStream) <-chan error {
-	ret := make(chan error, 1)
-	go func() {
-		md, err := src.Header()
-		if err != nil {
-			ret <- err
-			return
-		}
-		if err := dst.SendHeader(md); err != nil {
-			ret <- err
-			return
-		}
-
-		f := &frame{}
-		for {
-			if err := src.RecvMsg(f); err != nil {
-				ret <- err // io.EOF on clean completion, else the upstream status.
-				return
-			}
-			if err := dst.SendMsg(f); err != nil {
-				ret <- err
-				return
-			}
-		}
-	}()
-	return ret
 }

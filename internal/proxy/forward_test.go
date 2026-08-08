@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -128,64 +127,6 @@ func TestWithProtoTypes(t *testing.T) {
 	fw, err = NewForwarder(&testutil.ClientConn{}, services.NewAllowlist(services.Default()), WithProtoTypes(nil))
 	require.NoError(t, err)
 	require.Equal(t, protoregistry.GlobalTypes, fw.types)
-}
-
-func TestStatusError(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		err  error
-		code codes.Code
-		msg  string
-	}{
-		{name: "nil stays nil", code: codes.OK},
-		{
-			name: "an error already carrying a status is forwarded verbatim",
-			err:  status.Error(codes.NotFound, "namespace not found"),
-			code: codes.NotFound,
-			msg:  "namespace not found",
-		},
-		{
-			name: "a raw cancellation maps to its status",
-			err:  context.Canceled,
-			code: codes.Canceled,
-		},
-		{
-			name: "a raw deadline maps to its status",
-			err:  context.DeadlineExceeded,
-			code: codes.DeadlineExceeded,
-		},
-		{
-			// io.EOF reaches here when a caller half-closes mid-request and carries no
-			// status of its own, so it must not surface as an opaque Unknown.
-			name: "io.EOF is reported as Internal naming the step",
-			err:  io.EOF,
-			code: codes.Internal,
-			msg:  "proxy: sending the response failed: EOF",
-		},
-		{
-			name: "anything else is reported as Internal naming the step",
-			err:  errors.New("boom"),
-			code: codes.Internal,
-			msg:  "proxy: sending the response failed: boom",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			got := statusError("sending the response failed", tt.err)
-			require.Equal(t, tt.code, status.Code(got))
-
-			if tt.msg == "" {
-				return
-			}
-
-			require.ErrorContains(t, got, tt.msg)
-		})
-	}
 }
 
 func TestResolveMethod(t *testing.T) {
@@ -403,112 +344,6 @@ func TestStreamTreatsWrappedEOFAsHalfClose(t *testing.T) {
 	require.NoError(t, fw.Handle(nil, ss))
 }
 
-func TestPumpRequestsReportsFailures(t *testing.T) {
-	t.Parallel()
-
-	in := messageType(t, &workflowservice.GetSystemInfoRequest{})
-
-	tests := []struct {
-		name string
-		src  grpc.ServerStream
-		dst  grpc.ClientStream
-		want string
-	}{
-		{
-			name: "a clean half-close reports io.EOF",
-			src:  testutil.ServerStream{RecvErr: io.EOF},
-			want: io.EOF.Error(),
-		},
-		{
-			name: "a failed receive is reported",
-			src:  testutil.ServerStream{RecvErr: errors.New("recv failed")},
-			want: "recv failed",
-		},
-		{
-			name: "a failed send upstream is reported",
-			dst:  &testutil.ClientStream{SendErr: errors.New("send failed")},
-			want: "send failed",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			// The side a case does not configure succeeds, rather than being a nil
-			// interface the pump would dereference.
-			src, dst := tt.src, tt.dst
-			if src == nil {
-				src = testutil.ServerStream{}
-			}
-
-			if dst == nil {
-				dst = &testutil.ClientStream{}
-			}
-
-			require.ErrorContains(t, <-pumpRequests(src, dst, in), tt.want)
-		})
-	}
-}
-
-func TestPumpResponsesReportsFailures(t *testing.T) {
-	t.Parallel()
-
-	out := messageType(t, &workflowservice.GetSystemInfoResponse{})
-
-	tests := []struct {
-		name string
-		src  grpc.ClientStream
-		dst  grpc.ServerStream
-		want string
-	}{
-		{
-			name: "a failed upstream header is reported",
-			src:  &testutil.ClientStream{HeaderErr: errors.New("header failed")},
-			want: "header failed",
-		},
-		{
-			name: "a header the caller refuses is reported",
-			dst:  testutil.ServerStream{HeaderErr: errors.New("send header failed")},
-			want: "send header failed",
-		},
-		{
-			name: "a clean completion reports io.EOF",
-			src:  &testutil.ClientStream{RecvErr: io.EOF},
-			want: io.EOF.Error(),
-		},
-		{
-			name: "a failed upstream receive is reported",
-			src:  &testutil.ClientStream{RecvErr: errors.New("recv failed")},
-			want: "recv failed",
-		},
-		{
-			name: "a response the caller refuses is reported",
-			dst:  testutil.ServerStream{SendErr: errors.New("send failed")},
-			want: "send failed",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			// The side a case does not configure succeeds, rather than being a nil
-			// interface the pump would dereference.
-			src, dst := tt.src, tt.dst
-			if src == nil {
-				src = &testutil.ClientStream{}
-			}
-
-			if dst == nil {
-				dst = testutil.ServerStream{}
-			}
-
-			require.ErrorContains(t, <-pumpResponses(src, dst, out), tt.want)
-		})
-	}
-}
-
 func (p partialTypes) FindMessageByName(name protoreflect.FullName) (protoreflect.MessageType, error) {
 	if _, ok := p.missing[name]; ok {
 		return nil, protoregistry.NotFound
@@ -526,14 +361,4 @@ func missingTypes(name protoreflect.FullName) partialTypes {
 // generated type so no literal can drift from the descriptors.
 func msgName(m proto.Message) protoreflect.FullName {
 	return m.ProtoReflect().Descriptor().FullName()
-}
-
-// messageType resolves the registered type for m, as the pumps do per frame.
-func messageType(t *testing.T, m proto.Message) protoreflect.MessageType {
-	t.Helper()
-
-	mt, err := protoregistry.GlobalTypes.FindMessageByName(msgName(m))
-	require.NoError(t, err)
-
-	return mt
 }

@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
+	"github.com/temporalio/temporal-proxy/internal/rpc"
 )
 
 // temporalNamespaceHeader is the gRPC metadata key the Temporal SDK sets to the
@@ -130,14 +131,14 @@ func rewriteNamespaceHeader(ctx context.Context, fn func(string) string) context
 		return ctx
 	}
 
-	md = md.Copy()
-	mapped := make([]string, len(vals))
-	for i, v := range vals {
-		mapped[i] = fn(v)
-	}
-	md.Set(temporalNamespaceHeader, mapped...)
+	return rpc.WithOutgoing(ctx, func(out metadata.MD) {
+		mapped := make([]string, len(vals))
+		for i, v := range vals {
+			mapped[i] = fn(v)
+		}
 
-	return metadata.NewOutgoingContext(ctx, md)
+		out.Set(temporalNamespaceHeader, mapped...)
+	})
 }
 
 // translateStatusError rewrites namespace names carried in the typed status
