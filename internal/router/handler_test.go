@@ -63,11 +63,11 @@ type (
 
 	stubReflector struct{}
 
-	// stubGate admits everything. The handler tests dial a mix of stub services
+	// stubAllowlist admits everything. The handler tests dial a mix of stub services
 	// and the generated health client, so enumerating them here would silently
 	// deny a test the day someone adds another. Admission has its own test, and
-	// the real gate is covered in the services package.
-	stubGate struct{}
+	// the real allowlist is covered in the services package.
+	stubAllowlist struct{}
 )
 
 func TestHandlerForwardsUnary(t *testing.T) {
@@ -387,7 +387,7 @@ func TestHandlerCoHostsLocalHealthWithForwarding(t *testing.T) {
 
 	m, _ := newTestReporter(t)
 	svr, err := server.New(
-		server.WithUnknownServiceHandler(router.Handler(stubDirector{cc: upstreamConn}, stubReflector{}, stubGate{}, m)),
+		server.WithUnknownServiceHandler(router.Handler(stubDirector{cc: upstreamConn}, stubReflector{}, stubAllowlist{}, m)),
 		server.WithServerCodec(router.Codec()),
 	)
 	require.NoError(t, err)
@@ -441,7 +441,7 @@ func TestHandlerRecordsStreamSetupError(t *testing.T) {
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: brokenConn}, stubReflector{}, stubGate{}, m)),
+		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: brokenConn}, stubReflector{}, stubAllowlist{}, m)),
 	)
 	serve(t, relay, relayLis)
 
@@ -474,7 +474,7 @@ func TestHandlerRelayedUpstreamErrorIsNotAForwardingError(t *testing.T) {
 
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: upstreamConn}, stubReflector{}, stubGate{}, m)),
+		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: upstreamConn}, stubReflector{}, stubAllowlist{}, m)),
 	)
 	serve(t, relay, relayLis)
 
@@ -503,7 +503,7 @@ func TestHandlerStampsNamespace(t *testing.T) {
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "u", cc: upstream}, &recordingReflector{ns: "orders"}, stubGate{}, m)),
+		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "u", cc: upstream}, &recordingReflector{ns: "orders"}, stubAllowlist{}, m)),
 	)
 	serve(t, relay, relayLis)
 
@@ -528,7 +528,7 @@ func (s stubDirector) Resolve(context.Context, string, string, map[string][]stri
 
 func (stubReflector) Namespace(string, []byte) string { return "" }
 
-func (stubGate) Allows(string) bool { return true }
+func (stubAllowlist) Allows(string) bool { return true }
 
 func (r *recordingReflector) Namespace(method string, payload []byte) string {
 	r.mu.Lock()
@@ -652,7 +652,7 @@ func newRelayWith(
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(makeDirector(upstreamConn), reflector, stubGate{}, reporter)),
+		grpc.UnknownServiceHandler(router.Handler(makeDirector(upstreamConn), reflector, stubAllowlist{}, reporter)),
 	)
 	serve(t, relay, relayLis)
 

@@ -28,11 +28,10 @@ import (
 // handler dials one connection per configured upstream from the shared
 // [connect.Pool] (each unix socket path derived from that upstream's
 // host:port), then routes every request to an upstream by matching it with the
-// Mux. Requests are admitted through a [Gate] adapted from the allowlist
-// [config.Module] provides before any of that happens.
+// Mux. Requests are admitted through the [services.Allowlist] [config.Module]
+// provides before any of that happens.
 var Module = fx.Options(fx.Provide(
 	Codec,
-	func(a services.Allowlist) Gate { return a },
 	func(p RouterParams) (grpc.StreamHandler, error) {
 		conns := make(map[string]*grpc.ClientConn, len(p.Config.Upstreams))
 		for i := range p.Config.Upstreams {
@@ -64,7 +63,7 @@ var Module = fx.Options(fx.Provide(
 				logger:   log.With(tag.Component("router")),
 			},
 			p.Extractor,
-			p.Gate,
+			p.Allowlist,
 			p.Reporter,
 		), nil
 	},
@@ -130,9 +129,9 @@ type (
 	RouterParams struct {
 		fx.In
 
+		Allowlist services.Allowlist
 		Config    *config.Config
 		Extractor *protoutil.Extractor
-		Gate      Gate
 		Mux       *Mux
 		Pool      *connect.Pool
 		Reporter  *Reporter
