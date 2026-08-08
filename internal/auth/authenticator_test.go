@@ -15,17 +15,23 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
 
-type fakeStream struct {
-	grpc.ServerStream
-	ctx context.Context
+type (
+	fakeStream struct {
+		grpc.ServerStream
+		ctx context.Context
+	}
+
+	fakeAuthenticator struct{ err error }
+)
+
+func TestAdmitAll(t *testing.T) {
+	t.Parallel()
+
+	a := auth.AdmitAll()
+
+	require.NoError(t, a.Authenticate(t.Context(), metadata.MD{}))
+	require.Nil(t, a.SecureHeaders(), "admitting every request must strip no header")
 }
-
-func (f *fakeStream) Context() context.Context { return f.ctx }
-
-type fakeAuthenticator struct{ err error }
-
-func (f fakeAuthenticator) Authenticate(context.Context, metadata.MD) error { return f.err }
-func (fakeAuthenticator) SecureHeaders() []string                           { return nil }
 
 func TestStreamServerInterceptor(t *testing.T) {
 	t.Parallel()
@@ -123,3 +129,8 @@ func TestStreamServerInterceptorLogsReason(t *testing.T) {
 	require.NotContains(t, logged, "s3cret")
 	require.NotContains(t, logged, "wrong")
 }
+
+func (f *fakeStream) Context() context.Context { return f.ctx }
+
+func (f fakeAuthenticator) Authenticate(context.Context, metadata.MD) error { return f.err }
+func (fakeAuthenticator) SecureHeaders() []string                           { return nil }

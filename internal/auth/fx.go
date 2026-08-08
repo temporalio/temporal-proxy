@@ -26,7 +26,7 @@ import (
 var Module = fx.Options(fx.Provide(func(cfg *config.Config, conns api.Connections) (Authenticator, error) {
 	ac := cfg.Auth
 	if ac == nil {
-		return &defaultAuthenticator{}, nil
+		return AdmitAll(), nil
 	}
 
 	selected := 0
