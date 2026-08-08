@@ -49,6 +49,32 @@ func TestModule_Enabled_ProvidesVaultAndRunsCleanly(t *testing.T) {
 	require.NotNil(t, v)
 }
 
+func TestModule_EnabledWithoutKeys_DoesNotScheduleRotation(t *testing.T) {
+	t.Parallel()
+
+	// Encryption enabled with no key policy yields a nil vault. Rotation must
+	// not be scheduled against it.
+	cfg := &config.Config{Encryption: config.Encryption{Enabled: true}}
+
+	var v *crypto.Vault
+	app := fx.New(append(
+		moduleOptions(t, cfg, logger.NewNoopLogger(), api.Connections{}),
+		fx.Populate(&v),
+		fx.NopLogger,
+	)...)
+
+	require.NoError(t, app.Err())
+	require.Nil(t, v)
+
+	startCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, app.Start(startCtx))
+
+	stopCtx, stop := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+	defer stop()
+	require.NoError(t, app.Stop(stopCtx))
+}
+
 func TestModule_Enabled_InvalidURI_FailsConstruction(t *testing.T) {
 	t.Parallel()
 
