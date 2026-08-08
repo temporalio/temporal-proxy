@@ -25,7 +25,8 @@ type (
 
 	// Options configures a [Server] at construction time.
 	Options struct {
-		logger logger.Logger
+		logger     logger.Logger
+		socketPath string
 	}
 
 	// Option configures a [Server] via [New].
@@ -52,9 +53,16 @@ func New(hostPort string, fw *Forwarder, opts ...Option) (*Server, error) {
 		return nil, fmt.Errorf("failed to create proxy: %s, %w", hostPort, err)
 	}
 
-	path, err := socket.UnixPath(hostPort)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve socket path: %w", err)
+	path := pops.socketPath
+	if path == "" {
+		p, err := socket.UnixPath(hostPort)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve socket path: %w", err)
+		}
+
+		path = p
+	} else if err := socket.ValidatePath(path); err != nil {
+		return nil, fmt.Errorf("invalid socket path: %w", err)
 	}
 
 	return &Server{svr: svr, path: path}, nil
@@ -63,6 +71,14 @@ func New(hostPort string, fw *Forwarder, opts ...Option) (*Server, error) {
 // WithLogger sets the logger used by the proxy.
 func WithLogger(log logger.Logger) Option {
 	return Option(func(o *Options) { o.logger = log })
+}
+
+// WithSocketPath sets the unix socket path the proxy binds, overriding the one
+// derived from hostPort. A caller that also dials this socket passes the same
+// value to both sides so the two cannot disagree. [New] rejects a path that
+// exceeds the platform's sun_path limit.
+func WithSocketPath(path string) Option {
+	return Option(func(o *Options) { o.socketPath = path })
 }
 
 // Listen removes any socket left behind by a prior run and binds the proxy's

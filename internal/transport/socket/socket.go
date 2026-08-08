@@ -35,9 +35,20 @@ func UnixPath(hostPort string) (string, error) {
 	}, hostPort)
 
 	path := filepath.Join(os.TempDir(), fmt.Sprintf("%s-%s.sock", slug[:min(32, len(slug))], hash))
-	if len(path) > maxUnixPath {
-		return "", fmt.Errorf("unix socket path %q (%d bytes) exceeds limit of %d", path, len(path), maxUnixPath)
+	if err := ValidatePath(path); err != nil {
+		return "", err
 	}
 
 	return path, nil
+}
+
+// ValidatePath returns an error when path would exceed the platform's sun_path
+// limit. Callers that supply their own socket path instead of deriving one with
+// [UnixPath] use it to fail fast rather than at bind time.
+func ValidatePath(path string) error {
+	if len(path) > maxUnixPath {
+		return fmt.Errorf("unix socket path %q (%d bytes) exceeds limit of %d", path, len(path), maxUnixPath)
+	}
+
+	return nil
 }

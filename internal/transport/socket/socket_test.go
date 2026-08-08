@@ -46,6 +46,34 @@ func TestUnixPath(t *testing.T) {
 	})
 }
 
+func TestValidatePath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		path    string
+		wantErr bool
+	}{
+		{name: "short path", path: "/tmp/proxy.sock"},
+		{name: "at the limit", path: "/" + strings.Repeat("d", 102)},
+		{name: "one byte over the limit", path: "/" + strings.Repeat("d", 103), wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := socket.ValidatePath(tt.path)
+			if !tt.wantErr {
+				require.NoError(t, err)
+				return
+			}
+
+			require.ErrorContains(t, err, "exceeds limit")
+		})
+	}
+}
+
 func TestUnixPathRejectsOverlongPath(t *testing.T) {
 	// Not parallel: mutates TMPDIR, which os.TempDir reads.
 	t.Setenv("TMPDIR", "/"+strings.Repeat("d", 200))

@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,6 +129,38 @@ func TestStartRemovesStaleSocket(t *testing.T) {
 
 	require.NoError(t, svr.Stop(t.Context()))
 	require.NoError(t, <-errCh)
+}
+
+func TestNewWithSocketPathOverridesDerivedPath(t *testing.T) {
+	t.Parallel()
+
+	// A directory under os.TempDir() rather than t.TempDir() keeps the path
+	// short: t.TempDir() embeds the full test name, which here would push the
+	// socket path past the sun_path limit socket.UnixPath enforces.
+	dir, err := os.MkdirTemp("", "socket-override")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	want := filepath.Join(dir, "override.sock")
+
+	svr, err := proxy.New("127.0.0.1:7233", forwarder(t, "127.0.0.1:7233"), proxy.WithSocketPath(want))
+	require.NoError(t, err)
+
+	lis, err := svr.Listen(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = lis.Close() })
+
+	require.Equal(t, want, lis.Addr().String())
+}
+
+func TestNewRejectsOverlongSocketPath(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(os.TempDir(), strings.Repeat("d", 120)+".sock")
+
+	_, err := proxy.New("127.0.0.1:7233", forwarder(t, "127.0.0.1:7233"), proxy.WithSocketPath(path))
+	require.ErrorContains(t, err, "invalid socket path")
+	require.ErrorContains(t, err, "exceeds limit")
 }
 
 func TestListenReturnsErrorWhenStaleSocketCannotBeRemoved(t *testing.T) {
