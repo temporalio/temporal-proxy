@@ -1,10 +1,7 @@
 package e2e
 
 import (
-	"context"
-	"net"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/workflowservice/v1"
@@ -12,6 +9,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/dataplane/dataplanetest"
 )
 
 // TestEndToEndTemplatedUpstreamRoutesByRenderedAddress drives the full stack
@@ -23,61 +21,28 @@ import (
 func TestEndToEndTemplatedUpstreamRoutesByRenderedAddress(t *testing.T) {
 	t.Parallel()
 
-	svcA, addrA := newFakeUpstream(t)
-	svcB, addrB := newFakeUpstream(t)
+	upA := dataplanetest.NewUpstream(t)
+	upB := dataplanetest.NewUpstream(t)
 
-	inboundAddr := freeTCPAddr(t)
-	app := newFullApp(t, &config.Config{
-		Listen:  config.ListenConfig{HostPort: inboundAddr},
+	f := dataplanetest.StartApp(t, &config.Config{
 		Routing: config.Routing{DefaultUpstream: "dynamic"},
-		Upstreams: []config.Upstream{{
+		Upstreams: config.UpstreamList{{
 			Name:   "dynamic",
 			Listen: config.ListenConfig{HostPort: `{{ index .Metadata "x-upstream" }}`},
 		}},
 	})
-	require.NoError(t, app.Err())
-
-	startCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	require.NoError(t, app.Start(startCtx))
-	t.Cleanup(func() {
-		stopCtx, stopCancel := context.WithTimeout(t.Context(), 5*time.Second)
-		defer stopCancel()
-		_ = app.Stop(stopCtx)
-	})
-
-	conn := dialInbound(t, inboundAddr)
-	defer func() { _ = conn.Close() }()
-	client := workflowservice.NewWorkflowServiceClient(conn)
 
 	call := func(target string) {
-		ctx := metadata.AppendToOutgoingContext(startCtx, "x-upstream", target)
-		_, err := client.GetSystemInfo(ctx, &workflowservice.GetSystemInfoRequest{}, grpc.WaitForReady(true))
+		ctx := metadata.AppendToOutgoingContext(f.Context(), "x-upstream", target)
+		_, err := f.Client().GetSystemInfo(ctx, &workflowservice.GetSystemInfoRequest{}, grpc.WaitForReady(true))
 		require.NoError(t, err)
 	}
 
-	call(addrA)
-	call(addrB)
+	call(upA.Addr())
+	call(upB.Addr())
 
-	require.NotNil(t, svcA.received(), "the request naming upstream A must reach A")
-	require.NotNil(t, svcB.received(), "the request naming upstream B must reach B")
-	require.Equal(t, []string{addrA}, svcA.received().Get("x-upstream"))
-	require.Equal(t, []string{addrB}, svcB.received().Get("x-upstream"))
-}
-
-// newFakeUpstream stands up a plaintext fake WorkflowService frontend and
-// returns it with its dial address.
-func newFakeUpstream(t *testing.T) (*capturingWorkflowService, string) {
-	t.Helper()
-
-	svc := &capturingWorkflowService{}
-	srv := grpc.NewServer()
-	workflowservice.RegisterWorkflowServiceServer(srv, svc)
-
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	go func() { _ = srv.Serve(lis) }()
-	t.Cleanup(srv.Stop)
-
-	return svc, lis.Addr().String()
+	require.NotNil(t, upA.Metadata(), "the request naming upstream A must reach A")
+	require.NotNil(t, upB.Metadata(), "the request naming upstream B must reach B")
+	require.Equal(t, []string{upA.Addr()}, upA.Metadata().Get("x-upstream"))
+	require.Equal(t, []string{upB.Addr()}, upB.Metadata().Get("x-upstream"))
 }

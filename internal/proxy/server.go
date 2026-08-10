@@ -101,9 +101,10 @@ func (s *Server) Listen(ctx context.Context) (net.Listener, error) {
 	return lis, nil
 }
 
-// Start serves on lis until the proxy is stopped or ctx is cancelled. It
-// blocks, so callers typically run it in its own goroutine after binding the
-// listener with Listen.
+// Start serves on lis until Stop is called; ctx is not what stops it, and is
+// used only to drive the periodic health check. It blocks, so callers
+// typically run it in its own goroutine after binding the listener with
+// Listen.
 func (s *Server) Start(ctx context.Context, lis net.Listener) error {
 	return s.svr.Start(ctx, lis)
 }
