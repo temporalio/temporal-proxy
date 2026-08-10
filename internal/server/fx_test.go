@@ -26,11 +26,6 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
-// stubAuthenticator is a local admit-all stand-in for tests in this package,
-// which (being package server_test) cannot see the unexported
-// defaultAuthenticator that auth.Module supplies in production.
-type stubAuthenticator struct{}
-
 func TestModule(t *testing.T) {
 	t.Parallel()
 
@@ -183,7 +178,7 @@ func TestModuleWiresInjectedCodecAndHandler(t *testing.T) {
 		fx.Provide(
 			func() encoding.CodecV2 { return rec },
 			func() grpc.StreamHandler { return handler },
-			func() auth.Authenticator { return stubAuthenticator{} },
+			func() auth.Authenticator { return auth.AdmitAll() },
 		),
 		server.Module,
 		fx.NopLogger,
@@ -248,7 +243,7 @@ func TestModuleWiresMetricsInterceptor(t *testing.T) {
 		fx.Provide(
 			func() encoding.CodecV2 { return encoding.GetCodecV2("proto") },
 			func() grpc.StreamHandler { return handler },
-			func() auth.Authenticator { return stubAuthenticator{} },
+			func() auth.Authenticator { return auth.AdmitAll() },
 		),
 		server.Module,
 		fx.NopLogger,
@@ -290,9 +285,10 @@ func TestModuleWiresMetricsInterceptor(t *testing.T) {
 func TestServerEndToEndAuth(t *testing.T) {
 	t.Parallel()
 
-	// This wires the real auth.Module (not the nil-Authenticator stub used by the
-	// tests above) alongside server.Module over a real TCP listener, proving the
-	// two modules compose the way cmd/proxy/serve.go wires them.
+	// This wires the real auth.Module with a configured token (the tests above
+	// inject auth.AdmitAll() directly) alongside server.Module over a real TCP
+	// listener, proving the two modules compose the way cmd/proxy/serve.go wires
+	// them.
 	//
 	// The target is an unregistered method routed to the injected
 	// grpc.StreamHandler, the same shape router.Handler is installed as in
@@ -387,9 +383,6 @@ func TestServerEndToEndAuth(t *testing.T) {
 	require.NoError(t, app.Stop(stopCtx))
 }
 
-func (stubAuthenticator) Authenticate(context.Context, metadata.MD) error { return nil }
-func (stubAuthenticator) SecureHeaders() []string                         { return nil }
-
 func newTestApp(t *testing.T, opts ...fx.Option) *fx.App {
 	t.Helper()
 
@@ -406,7 +399,7 @@ func newTestApp(t *testing.T, opts ...fx.Option) *fx.App {
 					return status.Error(codes.Unimplemented, "stub handler")
 				}
 			},
-			func() auth.Authenticator { return stubAuthenticator{} },
+			func() auth.Authenticator { return auth.AdmitAll() },
 		),
 		server.Module,
 		fx.NopLogger,

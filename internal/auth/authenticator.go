@@ -30,7 +30,7 @@ type (
 		SecureHeaders() []string
 	}
 
-	defaultAuthenticator struct{}
+	admitAll struct{}
 
 	// strippedStream overrides Context so a downstream handler sees metadata with a
 	// consumed credential header removed.
@@ -39,6 +39,12 @@ type (
 		ctx context.Context
 	}
 )
+
+// AdmitAll returns the Authenticator used when no inbound authentication is
+// configured. It admits every request and consumes no header.
+func AdmitAll() Authenticator {
+	return &admitAll{}
+}
 
 // StreamServerInterceptor adapts an Authenticator to a gRPC stream server
 // interceptor, logging each rejection's detailed reason (never the token) via
@@ -83,14 +89,14 @@ func StreamServerInterceptor(a Authenticator, log logger.Logger) grpc.StreamServ
 	}
 }
 
-func (a *defaultAuthenticator) Authenticate(_ context.Context, _ metadata.MD) error {
+func (a *admitAll) Authenticate(_ context.Context, _ metadata.MD) error {
 	return nil
 }
 
-// SecureHeaders reports that the admit-all default consumes no header, so
+// SecureHeaders reports that admitAll consumes no header, so
 // StreamServerInterceptor strips nothing and the transparent relay is
 // preserved.
-func (a *defaultAuthenticator) SecureHeaders() []string { return nil }
+func (a *admitAll) SecureHeaders() []string { return nil }
 
 // Context returns the context carrying the stripped incoming metadata.
 func (s *strippedStream) Context() context.Context { return s.ctx }
