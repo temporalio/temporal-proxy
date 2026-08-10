@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/temporalio/temporal-proxy/internal/rpc"
+	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 )
 
@@ -40,18 +41,11 @@ type (
 	Reflector interface {
 		Namespace(string, []byte) string
 	}
-
-	// Gate reports whether the proxy will forward the named service. Allows
-	// receives a service full name, never a full method; the Module wires a
-	// services.Allowlist built from the configured allowlist.
-	Gate interface {
-		Allows(string) bool
-	}
 )
 
 // Handler returns a grpc.StreamHandler suitable for grpc.UnknownServiceHandler,
 // reporting a stream_setup forwarding error via rep when opening the upstream
-// stream fails. A method whose service g does not allow is rejected with
+// stream fails. A method whose service a does not allow is rejected with
 // Unimplemented before any upstream work, so the proxy answers as a server that
 // does not implement it rather than revealing that an upstream might.
 // It buffers the first request frame so r can peek the request
@@ -59,7 +53,7 @@ type (
 // the stream to that upstream using the same full method name: it replays the
 // buffered first frame, pumps raw frames in both directions, and propagates
 // header, trailer, and status verbatim.
-func Handler(d Director, r Reflector, g Gate, rep *Reporter) grpc.StreamHandler {
+func Handler(d Director, r Reflector, a services.Allowlist, rep *Reporter) grpc.StreamHandler {
 	return func(_ any, serverStream grpc.ServerStream) error {
 		ctx := serverStream.Context()
 		method, err := rpc.FullMethod(ctx)
@@ -67,7 +61,7 @@ func Handler(d Director, r Reflector, g Gate, rep *Reporter) grpc.StreamHandler 
 			return err
 		}
 
-		if svc := rpc.Service(method); !g.Allows(svc) {
+		if svc := rpc.Service(method); !a.Allows(svc) {
 			return status.Errorf(codes.Unimplemented, "unknown service %q", svc)
 		}
 

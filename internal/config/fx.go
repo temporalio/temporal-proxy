@@ -6,7 +6,7 @@ var ConfigFileTag = fx.ResultTags(`name:"configFile"`)
 
 // Module is an fx module that provides *Config by loading the file path supplied
 // as the named value "configFile", along with the allowlist derived from it via
-// [NewAllowlist], which is the single owner of how the forwarding gate is built.
+// [NewAllowlist], which is the single owner of how the allowlist is built.
 var Module = fx.Option(fx.Provide(
 	func(p ConfigParams) (*Config, error) {
 		return LoadFile(p.File)

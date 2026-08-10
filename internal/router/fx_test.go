@@ -37,7 +37,7 @@ func TestModule(t *testing.T) {
 
 		app := fx.New(
 			fx.Supply(&config.Config{
-				// The module builds its Gate from this, so the stub service these
+				// The module builds its allowlist from this, so the stub service these
 				// tests forward has to be on it.
 				AllowedServices: config.Services{"test.v1.Echo"},
 				Upstreams:       []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},

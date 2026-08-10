@@ -104,14 +104,13 @@ func TestAllowlistAllows(t *testing.T) {
 	}
 }
 
-func TestNewAllowlistCollapsesDuplicates(t *testing.T) {
+func TestNewAllowlistToleratesDuplicates(t *testing.T) {
 	t.Parallel()
 
 	// Validation rejects a duplicated allowlist, but one is also constructible
-	// in code, so collapsing duplicates must not change what it admits.
-	allowlist := services.NewAllowlist([]string{services.WorkflowService, services.WorkflowService})
+	// in code, so a repeated name must not change what is admitted.
+	a := services.NewAllowlist([]string{services.WorkflowService, services.WorkflowService})
 
-	require.Len(t, allowlist, 1)
-	require.True(t, allowlist.Allows(services.WorkflowService))
-	require.False(t, allowlist.Allows(services.OperatorService))
+	require.True(t, a.Allows(services.WorkflowService))
+	require.False(t, a.Allows(services.OperatorService))
 }

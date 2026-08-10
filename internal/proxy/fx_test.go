@@ -269,7 +269,7 @@ func TestModuleRequiresTranslator(t *testing.T) {
 func TestModuleRequiresAllowlist(t *testing.T) {
 	t.Parallel()
 
-	// Deliberately without config.NewAllowlist: the gate is required so missing
+	// Deliberately without config.NewAllowlist: the allowlist is required so missing
 	// wiring fails here, rather than degrading to a proxy that forwards nothing.
 	app := fx.New(
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),

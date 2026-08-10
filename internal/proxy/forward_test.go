@@ -82,25 +82,25 @@ func TestForwardContextWithoutIncomingMetadata(t *testing.T) {
 func TestNewForwarderValidation(t *testing.T) {
 	t.Parallel()
 
-	gate := services.NewAllowlist(services.Default())
+	allowed := services.NewAllowlist(services.Default())
 
 	tests := []struct {
-		name string
-		cc   grpc.ClientConnInterface
-		gate Gate
-		err  string
+		name    string
+		cc      grpc.ClientConnInterface
+		allowed services.Allowlist
+		err     string
 	}{
-		{name: "nil client connection", gate: gate, err: "nil client connection"},
-		{name: "nil gate", cc: &testutil.ClientConn{}, err: "nil gate"},
+		{name: "nil client connection", allowed: allowed, err: "nil client connection"},
+		{name: "nil allowlist", cc: &testutil.ClientConn{}, err: "nil allowlist"},
 		{name: "both nil reports the connection first", err: "nil client connection"},
-		{name: "a connection and a gate is enough", cc: &testutil.ClientConn{}, gate: gate},
+		{name: "a connection and an allowlist is enough", cc: &testutil.ClientConn{}, allowed: allowed},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			fw, err := NewForwarder(tt.cc, tt.gate)
+			fw, err := NewForwarder(tt.cc, tt.allowed)
 			if tt.err != "" {
 				require.ErrorContains(t, err, tt.err)
 				require.Nil(t, fw)
