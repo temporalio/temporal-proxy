@@ -72,7 +72,9 @@ var Module = fx.Options(
 		},
 	),
 	fx.Invoke(func(p KMSParams, v *crypto.Vault) {
-		if !p.Config.Encryption.Enabled {
+		// A vault is built from key presence, not from Enabled, so Enabled with no
+		// configured key yields no vault and nothing to rotate.
+		if !p.Config.Encryption.Enabled || v == nil {
 			return
 		}
 
