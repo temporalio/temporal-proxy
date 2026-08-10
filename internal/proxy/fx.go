@@ -3,7 +3,6 @@ package proxy
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	"go.uber.org/fx"
 	"google.golang.org/grpc"
@@ -16,7 +15,6 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
 
 // Module is the fx module that constructs the proxy [Server] from [ProxyParams]
@@ -77,7 +75,7 @@ var Module = fx.Options(fx.Invoke(func(p ProxyParams) error {
 			dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(enc))
 		}
 
-		res, err := upstreamResolver(up, dialOpts, p.Logger)
+		res, err := ResolverFor(up, dialOpts, p.Logger)
 		if err != nil {
 			return err
 		}
@@ -171,55 +169,4 @@ type ProxyParams struct {
 	// Optional values
 	Logger logger.Logger   `optional:"true"`
 	Types  protoutil.Types `optional:"true"`
-}
-
-// upstreamResolver builds the [connect.Resolver] for an upstream. When neither
-// the hostPort nor the TLS server name is templated it returns a static
-// resolver, whose connection is constructed while the graph is built, opened on
-// start, and reused for every request; otherwise it returns a DynamicResolver
-// that renders the target and server name, and rebuilds credentials, per request.
-// opts holds the request-independent dial options (namespace translation and
-// outbound credentials). log, when non-nil, is threaded into the DynamicResolver
-// for per-request debug entries.
-func upstreamResolver(upstream *config.Upstream, opts []grpc.DialOption, log logger.Logger) (connect.Resolver, error) {
-	// One Dialer per upstream owns the TLS-mode decision and parses its
-	// certificate material once, so a templated upstream reuses it across every
-	// per-request dial (only the rendered server name varies).
-	dialer := upstream.Listen.TLS.Dialer()
-
-	if upstream.IsTemplated() {
-		translator := func(s string) string { return s }
-		if upstream.Namespaces.Rules.Configured() {
-			translator = upstream.Namespaces.Rules.Remote
-		}
-
-		resolverOpts := []ResolverOption{
-			WithRemoteNamespacer(translator),
-			WithOptionsFactory(func(data RouteData) ([]grpc.DialOption, error) {
-				cred, err := dialer.DialOption(data.ResolvedServerName)
-				if err != nil {
-					return nil, err
-				}
-
-				return append(slices.Clone(opts), cred), nil
-			}),
-		}
-		if log != nil {
-			resolverOpts = append(resolverOpts, WithResolverLogger(log.With(tag.Component("resolver"))))
-		}
-
-		return NewDynamicResolver(upstream, resolverOpts...)
-	}
-
-	serverName := ""
-	if upstream.Listen.TLS != nil {
-		serverName = upstream.Listen.TLS.ServerName
-	}
-
-	cred, err := dialer.DialOption(serverName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build credentials for upstream %q: %w", upstream.Name, err)
-	}
-
-	return connect.StaticResolver(upstream.Listen.HostPort, append(slices.Clone(opts), cred)...), nil
 }
