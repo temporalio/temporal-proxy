@@ -1,7 +1,6 @@
 package router
 
 import (
-	"context"
 	"errors"
 	"io"
 	"maps"
@@ -23,16 +22,7 @@ type (
 	// its fields.
 	Target struct {
 		Upstream string
-		Conn     *grpc.ClientConn
-	}
-
-	// Director selects the upstream for a request. Resolve receives the full
-	// method, the namespace peeked from the first request message (empty when the
-	// client sent no message), and the incoming metadata, and returns the Target to
-	// forward over. A non-nil error aborts the stream and is returned to the caller
-	// verbatim, so implementations should return a gRPC status error.
-	Director interface {
-		Resolve(ctx context.Context, method, namespace string, md map[string][]string) (Target, error)
+		Conn     grpc.ClientConnInterface
 	}
 
 	// Reflector extracts the Temporal namespace from a request. Namespace

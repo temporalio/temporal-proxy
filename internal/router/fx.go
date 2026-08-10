@@ -1,15 +1,11 @@
 package router
 
 import (
-	"context"
 	"fmt"
-	"strings"
 
 	"go.uber.org/fx"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/status"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
@@ -18,8 +14,6 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
-	"github.com/temporalio/temporal-proxy/pkg/match"
 )
 
 // Module is the fx module that provides the routing-and-forwarding pieces: a
@@ -33,7 +27,7 @@ import (
 var Module = fx.Options(fx.Provide(
 	Codec,
 	func(p RouterParams) (grpc.StreamHandler, error) {
-		conns := make(map[string]*grpc.ClientConn, len(p.Config.Upstreams))
+		conns := make(map[string]grpc.ClientConnInterface, len(p.Config.Upstreams))
 		for i := range p.Config.Upstreams {
 			upstream := &p.Config.Upstreams[i]
 			sockPath, err := socket.UnixPath(upstream.Listen.HostPort)
@@ -50,18 +44,8 @@ var Module = fx.Options(fx.Provide(
 			conns[upstream.Name] = conn
 		}
 
-		log := p.Logger
-		if log == nil {
-			log = logger.Default()
-		}
-
 		return Handler(
-			&director{
-				conns:    conns,
-				mux:      p.Mux,
-				reporter: p.Reporter,
-				logger:   log.With(tag.Component("router")),
-			},
+			NewDirector(p.Mux, conns, p.Reporter, p.Logger),
 			p.Extractor,
 			p.Allowlist,
 			p.Reporter,
@@ -75,52 +59,7 @@ var Module = fx.Options(fx.Provide(
 
 		return NewReporter(f.ForSubsystem("router"), names)
 	},
-	func(c *config.Config) (*Mux, error) {
-		rules := make([]Rule, 0, len(c.Routing.Rules))
-		for i, r := range c.Routing.Rules {
-			p := r.Match.Namespace
-			if p == "" {
-				p = "*"
-			}
-
-			ns, err := match.Compile(p)
-			if err != nil {
-				return nil, fmt.Errorf("routing: rules[%d].match.namespace: %w", i, err)
-			}
-
-			meta := make(map[string]Matcher, len(r.Match.Metadata))
-			seen := make(map[string]string, len(r.Match.Metadata))
-			for k, v := range r.Match.Metadata {
-				lk := strings.ToLower(k)
-				if prev, ok := seen[lk]; ok {
-					return nil, fmt.Errorf(
-						"routing: rules[%d].match.metadata: keys %q and %q both map to %q when lowercased",
-						i, prev, k, lk,
-					)
-				}
-
-				seen[lk] = k
-				m, err := match.Compile(v)
-				if err != nil {
-					return nil, fmt.Errorf("routing: rules[%d].match.metadata[%q]: %w", i, k, err)
-				}
-
-				meta[lk] = m
-			}
-
-			rules = append(rules, Rule{
-				upstream: r.Upstream,
-				ns:       ns,
-				meta:     meta,
-			})
-		}
-
-		return New(
-			c.Routing.DefaultUpstream,
-			c.Routing.SystemUpstream,
-			rules...,
-		), nil
-	},
+	func(c *config.Config) (*Mux, error) { return CompileMux(c.Routing) },
 ))
 
 type (
@@ -139,51 +78,4 @@ type (
 		// Optional; falls back to [logger.Default].
 		Logger logger.Logger `optional:"true"`
 	}
-
-	// director is the [Director] used by the module's handler. It maps the
-	// upstream name chosen by the Mux to that upstream's pooled connection.
-	director struct {
-		conns    map[string]*grpc.ClientConn
-		mux      *Mux
-		reporter *Reporter
-		logger   logger.Logger
-	}
 )
-
-// Resolve routes a request by matching it against the Mux and returning the
-// Target for the resulting upstream. It fails with FailedPrecondition when
-// no upstream matches (and no default is configured) and with Unavailable when
-// the matched upstream has no connection. It records a decision metric on
-// every call, plus a no_connection forwarding-error metric when the chosen
-// upstream has no connection.
-func (d *director) Resolve(
-	ctx context.Context,
-	method, namespace string,
-	md map[string][]string,
-) (Target, error) {
-	upstream, outcome := d.mux.Switch(namespace, md)
-	if outcome == OutcomeUnroutable {
-		d.reporter.Decision(upstreamUnknown, OutcomeUnroutable)
-		return Target{}, status.Error(codes.FailedPrecondition, "no upstream matched the request and no default is configured")
-	}
-
-	d.reporter.Decision(upstream, outcome)
-
-	cc, ok := d.conns[upstream]
-	if !ok {
-		d.reporter.ForwardingError(upstream, reasonNoConnection)
-		return Target{}, status.Errorf(codes.Unavailable, "router: no connection for upstream %q", upstream)
-	}
-
-	if d.logger != nil {
-		d.logger.Debug(
-			"routing request",
-			tag.String("method", method),
-			tag.String("namespace", namespace),
-			tag.String("upstream", upstream),
-			tag.Stringer("outcome", outcome),
-		)
-	}
-
-	return Target{Upstream: upstream, Conn: cc}, nil
-}
