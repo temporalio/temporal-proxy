@@ -1,9 +1,7 @@
 package e2e
 
 import (
-	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/workflowservice/v1"
@@ -13,6 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/dataplane/dataplanetest"
 )
 
 // TestEndToEndInboundAuthStrippedOutboundCredentialAttached drives a request
@@ -29,58 +28,30 @@ import (
 func TestEndToEndInboundAuthStrippedOutboundCredentialAttached(t *testing.T) {
 	t.Parallel()
 
-	up := newFakeTLSUpstream(t)
+	up := dataplanetest.NewTLSUpstream(t)
 
-	inboundAddr := freeTCPAddr(t)
-	app := newFullApp(t, &config.Config{
-		Listen:  config.ListenConfig{HostPort: inboundAddr},
-		Auth:    &config.AuthConfig{StaticToken: &config.StaticTokenConfig{Token: "worker-secret"}},
-		Routing: config.Routing{DefaultUpstream: "workers"},
-		Upstreams: []config.Upstream{{
-			Name: "workers",
-			Listen: config.ListenConfig{
-				HostPort: up.addr,
-				TLS: &config.TLSConfig{
-					CA:         up.caFile,
-					Cert:       up.clientCertFile,
-					Key:        up.clientKeyFile,
-					ServerName: "localhost",
-				},
-			},
-			Credentials: &config.CredentialConfig{Static: &config.StaticCredentialConfig{APIKey: "k3y"}},
-		}},
-	})
-	require.NoError(t, app.Err())
+	cfg := dataplanetest.Config(up)
+	cfg.Auth = &config.AuthConfig{StaticToken: &config.StaticTokenConfig{Token: "worker-secret"}}
+	cfg.Upstreams[0].Credentials = &config.CredentialConfig{
+		Static: &config.StaticCredentialConfig{APIKey: "k3y"},
+	}
 
-	startCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	require.NoError(t, app.Start(startCtx))
-	t.Cleanup(func() {
-		stopCtx, stopCancel := context.WithTimeout(t.Context(), 5*time.Second)
-		defer stopCancel()
-		_ = app.Stop(stopCtx)
-	})
-
-	conn := dialInbound(t, inboundAddr)
-	defer func() { _ = conn.Close() }()
+	f := dataplanetest.StartApp(t, cfg)
 
 	// The client presents the worker's own token. The inbound authenticator
 	// consumes it (proving inbound auth is wired end to end); the router then
-	// forwards to the "workers" upstream, whose static credential provider
-	// replaces whatever authorization header survives forwarding.
-	ctx := metadata.AppendToOutgoingContext(startCtx, "authorization", "Bearer worker-secret")
-	_, err := workflowservice.NewWorkflowServiceClient(conn).GetSystemInfo(
-		ctx, &workflowservice.GetSystemInfoRequest{}, grpc.WaitForReady(true),
-	)
+	// forwards to the upstream, whose static credential provider replaces
+	// whatever authorization header survives forwarding.
+	ctx := metadata.AppendToOutgoingContext(f.Context(), "authorization", "Bearer worker-secret")
+	_, err := f.Client().GetSystemInfo(ctx, &workflowservice.GetSystemInfoRequest{}, grpc.WaitForReady(true))
 	require.NoError(t, err, "inbound auth must accept the correct worker token")
 
-	got := up.svc.received().Get("authorization")
-	require.Equal(t, []string{"Bearer k3y"}, got,
+	require.Equal(t, []string{"Bearer k3y"}, up.Metadata().Get("authorization"),
 		"upstream must see only the API key; the worker token must be stripped, not forwarded or duplicated")
 
 	// Negative check: a wrong worker token never gets past the inbound
 	// authenticator, so it never reaches the router or upstream at all.
-	badCtx := metadata.AppendToOutgoingContext(startCtx, "authorization", "Bearer wrong")
-	_, err = workflowservice.NewWorkflowServiceClient(conn).GetSystemInfo(badCtx, &workflowservice.GetSystemInfoRequest{})
+	badCtx := metadata.AppendToOutgoingContext(f.Context(), "authorization", "Bearer wrong")
+	_, err = f.Client().GetSystemInfo(badCtx, &workflowservice.GetSystemInfoRequest{})
 	require.Equal(t, codes.Unauthenticated, status.Code(err))
 }

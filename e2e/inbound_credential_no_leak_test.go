@@ -1,9 +1,7 @@
 package e2e
 
 import (
-	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/workflowservice/v1"
@@ -11,6 +9,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/dataplane/dataplanetest"
 )
 
 // TestEndToEndInboundHeaderStrippedNotLeakedUpstream isolates the inbound
@@ -26,49 +25,25 @@ import (
 func TestEndToEndInboundHeaderStrippedNotLeakedUpstream(t *testing.T) {
 	t.Parallel()
 
-	up := newFakeTLSUpstream(t)
-	inboundAddr := freeTCPAddr(t)
+	up := dataplanetest.NewTLSUpstream(t)
 
-	cfg := &config.Config{
-		Listen: config.ListenConfig{HostPort: inboundAddr},
-		// Inbound auth consumes a custom header, distinct from the outbound credential's.
-		Auth:    &config.AuthConfig{StaticToken: &config.StaticTokenConfig{Token: "worker-secret", Header: "x-worker-auth"}},
-		Routing: config.Routing{DefaultUpstream: "workers"},
-		Upstreams: []config.Upstream{{
-			Name: "workers",
-			Listen: config.ListenConfig{
-				HostPort: up.addr,
-				TLS: &config.TLSConfig{
-					CA:         up.caFile,
-					Cert:       up.clientCertFile,
-					Key:        up.clientKeyFile,
-					ServerName: "localhost",
-				},
-			},
-			Credentials: &config.CredentialConfig{Static: &config.StaticCredentialConfig{APIKey: "k3y"}}, // header defaults to authorization
-		}},
+	cfg := dataplanetest.Config(up)
+	// Inbound auth consumes a custom header, distinct from the outbound credential's.
+	cfg.Auth = &config.AuthConfig{
+		StaticToken: &config.StaticTokenConfig{Token: "worker-secret", Header: "x-worker-auth"},
+	}
+	// The outbound credential's header defaults to authorization.
+	cfg.Upstreams[0].Credentials = &config.CredentialConfig{
+		Static: &config.StaticCredentialConfig{APIKey: "k3y"},
 	}
 
-	app := newFullApp(t, cfg)
-	require.NoError(t, app.Err())
+	f := dataplanetest.StartApp(t, cfg)
 
-	startCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	require.NoError(t, app.Start(startCtx))
-	t.Cleanup(func() {
-		stopCtx, stopCancel := context.WithTimeout(t.Context(), 5*time.Second)
-		defer stopCancel()
-		_ = app.Stop(stopCtx)
-	})
-
-	conn := dialInbound(t, inboundAddr)
-	defer func() { _ = conn.Close() }()
-
-	ctx := metadata.AppendToOutgoingContext(startCtx, "x-worker-auth", "Bearer worker-secret")
-	_, err := workflowservice.NewWorkflowServiceClient(conn).GetSystemInfo(ctx, &workflowservice.GetSystemInfoRequest{}, grpc.WaitForReady(true))
+	ctx := metadata.AppendToOutgoingContext(f.Context(), "x-worker-auth", "Bearer worker-secret")
+	_, err := f.Client().GetSystemInfo(ctx, &workflowservice.GetSystemInfoRequest{}, grpc.WaitForReady(true))
 	require.NoError(t, err)
 
-	got := up.svc.received()
+	got := up.Metadata()
 	require.Empty(t, got.Get("x-worker-auth"), "the worker credential (on its own header) must not leak upstream")
 	require.Equal(t, []string{"Bearer k3y"}, got.Get("authorization"), "the upstream must see exactly the API key")
 }

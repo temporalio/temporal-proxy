@@ -134,12 +134,12 @@ func TestOutboundNamespaceTranslation(t *testing.T) {
 	t.Cleanup(upstream.Stop)
 
 	// Dial the fake upstream directly, wrapping "local" -> "remote-local"; this
-	// mirrors how fx folds translationDialOptions into a plan's dial options
+	// mirrors how fx folds TranslationDialOptions into a plan's dial options
 	// before the pool dials them.
 	translator := protoutil.NewTranslator(protoregistry.GlobalFiles)
 	dialOpts := append(
 		[]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
-		translationDialOptions(
+		TranslationDialOptions(
 			translator,
 			func(s string) string { return "remote-" + s },
 			func(s string) string { return "local-" + s },

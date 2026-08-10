@@ -13,12 +13,9 @@
 //     directions, propagating header, trailer, and status verbatim.
 //
 // Together they let the server forward any method it does not handle locally,
-// with no knowledge of the underlying protobuf messages. The name anticipates
-// selecting the upstream connection per request; today [Handler] targets a
-// single connection.
+// with no knowledge of the underlying protobuf messages, selecting the
+// upstream connection per request from the routing table CompileMux compiles.
 //
-// [Module] wires both into an fx application, providing the codec and the
-// handler (with the upstream connection to the proxy socket built from
-// configuration and closed on shutdown). Consumers depend on the provided
-// types rather than importing this package directly.
+// internal/dataplane assembles these pieces directly: it calls CompileMux,
+// Codec, NewDirector, NewReporter, and Handler to build the request path.
 package router

@@ -151,7 +151,7 @@ func TestModuleGivesEachServerADistinctConn(t *testing.T) {
 func TestModuleRejectsInvalidExtensionServers(t *testing.T) {
 	t.Parallel()
 
-	// api.Module is wired ahead of server.Module, so it cannot assume the
+	// api.Module is wired ahead of dataplane.Module, so it cannot assume the
 	// config has been validated; a bad entry must fail here rather than be
 	// dialed as-is.
 	tests := []struct {

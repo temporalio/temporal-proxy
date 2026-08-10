@@ -14,12 +14,10 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/api"
 	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/dataplane"
 	"github.com/temporalio/temporal-proxy/internal/kms"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
-	"github.com/temporalio/temporal-proxy/internal/proxy"
-	"github.com/temporalio/temporal-proxy/internal/router"
-	"github.com/temporalio/temporal-proxy/internal/server"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
@@ -90,12 +88,10 @@ func serve() *cli.Command {
 				auth.Module,
 				config.Module,
 				connect.Module,
+				dataplane.Module,
 				kms.Module,
 				metrics.Module,
 				protoutil.Module,
-				proxy.Module,
-				router.Module,
-				server.Module,
 				fx.WithLogger(func(l logger.Logger) fxevent.Logger { return &fxLogger{log: l} }),
 			)
 

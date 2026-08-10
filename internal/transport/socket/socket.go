@@ -1,7 +1,7 @@
 // Package socket defines the addressing contract for the proxy's local unix
-// socket. The proxy listens on it and the inbound server dials it, both
-// deriving the same path from the upstream host:port. It depends on no other
-// internal packages.
+// socket. UnixPath derives the path once, from the upstream host:port, and the
+// caller hands that same value to both the proxy, which listens on it, and the
+// dialer, which connects to it. It depends on no other internal packages.
 package socket
 
 import (
@@ -19,11 +19,11 @@ import (
 const maxUnixPath = 103
 
 // UnixPath derives a stable, absolute unix socket path for hostPort, placed
-// under os.TempDir(). It is deterministic for a given hostPort within a process
-// so the proxy (which listens) and the inbound server (which dials) compute the
-// same value. It returns an error when the resulting path would exceed the
-// platform's sun_path limit, rather than letting the OS silently truncate it
-// (which would break the proxy/server agreement).
+// under os.TempDir(). It is deterministic for a given hostPort within a
+// process, so a caller that derives it once and passes the same string to both
+// the listener and the dialer never has the two disagree. It returns an error
+// when the resulting path would exceed the platform's sun_path limit, rather
+// than letting the OS silently truncate it (which would break that agreement).
 func UnixPath(hostPort string) (string, error) {
 	sum := sha256.Sum256([]byte(hostPort))
 	hash := hex.EncodeToString(sum[:])[:8]

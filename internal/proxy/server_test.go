@@ -213,6 +213,42 @@ func forwarder(t *testing.T, upstream string, allowed ...string) *proxy.Forwarde
 	return fw
 }
 
+// serveUpstream starts a plaintext gRPC server on a loopback port, registers any
+// services supplied, and returns its address for use as an upstream hostPort. A
+// static upstream's connection is opened on start, so an upstream pointing at
+// nothing fails the lifecycle. The ephemeral port also keeps the proxy's derived
+// socket path unique across parallel tests.
+func serveUpstream(t *testing.T, register ...func(*grpc.Server)) string {
+	t.Helper()
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	svr := grpc.NewServer()
+	for _, reg := range register {
+		reg(svr)
+	}
+
+	go func() { _ = svr.Serve(lis) }()
+	t.Cleanup(svr.Stop)
+
+	return lis.Addr().String()
+}
+
+// deadUpstream returns a loopback address with nothing behind it, by taking a
+// port from the kernel and immediately giving it back.
+func deadUpstream(t *testing.T) string {
+	t.Helper()
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	addr := lis.Addr().String()
+	require.NoError(t, lis.Close())
+
+	return addr
+}
+
 // startProxy runs a proxy forwarding the named services to upstream and returns a
 // client connection to its local unix socket. Stop takes a fresh context because
 // the test's own is already cancelled by the time cleanups run.
