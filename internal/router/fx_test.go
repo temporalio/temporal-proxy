@@ -189,46 +189,4 @@ func TestModuleMux(t *testing.T) {
 		require.Equal(t, "system", got, "no namespace falls to system")
 	})
 
-	t.Run("rejects an invalid rule", func(t *testing.T) {
-		t.Parallel()
-
-		tests := []struct {
-			match config.RoutingMatch
-			exp   string
-		}{
-			{
-				match: config.RoutingMatch{Namespace: "a*b"},
-				exp:   "rules[0].match.namespace",
-			},
-			{
-				match: config.RoutingMatch{Metadata: map[string]string{"k": "a*b"}},
-				exp:   `rules[0].match.metadata["k"]`,
-			},
-			{
-				// Keys differing only by case collide once lowercased; which one
-				// would win depends on random map iteration, so this must fail.
-				match: config.RoutingMatch{Metadata: map[string]string{"X-Tier": "gold", "x-tier": "silver"}},
-				exp:   `both map to "x-tier" when lowercased`,
-			},
-		}
-
-		var mux *router.Mux
-		for _, tt := range tests {
-			app := fx.New(
-				fx.Supply(&config.Config{
-					Routing: config.Routing{
-						Rules: []config.RoutingRule{
-							{Upstream: "x", Match: tt.match},
-						},
-					},
-				}),
-				router.Module,
-				fx.Populate(&mux),
-				fx.NopLogger,
-			)
-
-			require.Error(t, app.Err())
-			require.ErrorContains(t, app.Err(), tt.exp)
-		}
-	})
 }

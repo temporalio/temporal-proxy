@@ -1,6 +1,10 @@
 package router
 
-import "slices"
+import (
+	"slices"
+
+	"github.com/temporalio/temporal-proxy/pkg/match"
+)
 
 const (
 	// OutcomeMatch means a rule matched the request.
@@ -24,13 +28,6 @@ type (
 		rules []Rule
 	}
 
-	// Matcher reports whether a string satisfies some pattern. Rules use it to
-	// match namespaces and metadata values, keeping Mux decoupled from any
-	// particular matching implementation.
-	Matcher interface {
-		Match(string) bool
-	}
-
 	// Outcome describes why Switch chose (or failed to choose) an upstream.
 	Outcome byte
 
@@ -39,11 +36,11 @@ type (
 	// and, for every constrained metadata key, at least one of the request's
 	// values for that key is accepted. Metadata keys are compared as stored, so
 	// the rule builder is responsible for canonicalizing them (gRPC lowercases
-	// metadata keys). Construct rules within this package.
+	// metadata keys). Construct rules with CompileMux.
 	Rule struct {
 		upstream string
-		ns       Matcher
-		meta     map[string]Matcher
+		ns       match.Matcher
+		meta     map[string]match.Matcher
 	}
 )
 
@@ -84,12 +81,12 @@ func (m *Mux) Switch(ns string, md map[string][]string) (string, Outcome) {
 // and metadata: the namespace must match and, for every metadata key the rule
 // constrains, at least one of the request's values for that key must match.
 func (r *Rule) matches(ns string, md map[string][]string) bool {
-	if r.ns == nil || !r.ns.Match(ns) {
+	if !r.ns.Match(ns) {
 		return false
 	}
 
 	for key, matcher := range r.meta {
-		if matcher == nil || !slices.ContainsFunc(md[key], matcher.Match) {
+		if !slices.ContainsFunc(md[key], matcher.Match) {
 			return false
 		}
 	}

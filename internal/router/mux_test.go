@@ -1,13 +1,12 @@
 package router
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-)
 
-type matcherFunc func(string) bool
+	"github.com/temporalio/temporal-proxy/pkg/match"
+)
 
 func TestMuxSwitch(t *testing.T) {
 	t.Parallel()
@@ -15,9 +14,9 @@ func TestMuxSwitch(t *testing.T) {
 	mux := New(
 		"default",
 		"system",
-		Rule{upstream: "prod", ns: matchPrefix("prod-")},
-		Rule{upstream: "gold", ns: matchAll(), meta: map[string]Matcher{"x-tier": matchExact("gold")}},
-		Rule{upstream: "combo", ns: matchPrefix("eu-"), meta: map[string]Matcher{"x-region": matchPrefix("eu")}},
+		Rule{upstream: "prod", ns: match.MustCompile("prod-*")},
+		Rule{upstream: "gold", ns: match.MustCompile("*"), meta: map[string]match.Matcher{"x-tier": match.MustCompile("gold")}},
+		Rule{upstream: "combo", ns: match.MustCompile("eu-*"), meta: map[string]match.Matcher{"x-region": match.MustCompile("eu*")}},
 	)
 
 	tests := []struct {
@@ -54,8 +53,8 @@ func TestMuxSwitchFirstMatchWins(t *testing.T) {
 	mux := New(
 		"default",
 		"",
-		Rule{upstream: "first", ns: matchPrefix("prod-")},
-		Rule{upstream: "second", ns: matchPrefix("prod-")},
+		Rule{upstream: "first", ns: match.MustCompile("prod-*")},
+		Rule{upstream: "second", ns: match.MustCompile("prod-*")},
 	)
 
 	got, outcome := mux.Switch("prod-1", nil)
@@ -69,7 +68,7 @@ func TestMuxSwitchNoDefault(t *testing.T) {
 	mux := New(
 		"",
 		"",
-		Rule{upstream: "prod", ns: matchPrefix("prod-")},
+		Rule{upstream: "prod", ns: match.MustCompile("prod-*")},
 	)
 
 	got, outcome := mux.Switch("other", nil)
@@ -87,7 +86,7 @@ func TestMuxSwitchEmptyRuleUpstreamIsUnroutable(t *testing.T) {
 	mux := New(
 		"default",
 		"",
-		Rule{upstream: "", ns: matchAll()},
+		Rule{upstream: "", ns: match.MustCompile("*")},
 	)
 
 	got, outcome := mux.Switch("other", nil)
@@ -95,16 +94,22 @@ func TestMuxSwitchEmptyRuleUpstreamIsUnroutable(t *testing.T) {
 	require.Equal(t, OutcomeUnroutable, outcome)
 }
 
-func (f matcherFunc) Match(s string) bool { return f(s) }
+func TestMuxSwitchZeroMatcherMatchesOnlyEmpty(t *testing.T) {
+	t.Parallel()
 
-func matchExact(want string) Matcher {
-	return matcherFunc(func(s string) bool { return s == want })
-}
+	// A Rule whose namespace matcher was never compiled must not act as a
+	// catch-all. The zero match.Matcher matches only the empty string.
+	mux := New(
+		"default",
+		"",
+		Rule{upstream: "unset"},
+	)
 
-func matchPrefix(p string) Matcher {
-	return matcherFunc(func(s string) bool { return strings.HasPrefix(s, p) })
-}
+	got, outcome := mux.Switch("anything", nil)
+	require.Equal(t, "default", got)
+	require.Equal(t, OutcomeDefault, outcome)
 
-func matchAll() Matcher {
-	return matcherFunc(func(string) bool { return true })
+	got, outcome = mux.Switch("", nil)
+	require.Equal(t, "unset", got)
+	require.Equal(t, OutcomeMatch, outcome)
 }
