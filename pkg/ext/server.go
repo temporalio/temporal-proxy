@@ -11,6 +11,8 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
 
 	"github.com/temporalio/temporal-proxy/pkg/api/auth/v1"
@@ -96,11 +98,29 @@ func Serve(ctx context.Context, opts ...Option) error {
 		}, sOpts.serverOptions...)
 	}
 
+	// Prepended after the guard so it ends up outermost, which means it also sees
+	// the calls the guard turns away: one of those arrived over the same wire this
+	// is about, and a server rejecting everything is exactly when an operator is
+	// looking at the log.
+	warnUnary, warnStream := plaintextWarning(sOpts.logger)
+	sOpts.serverOptions = append([]grpc.ServerOption{
+		grpc.ChainUnaryInterceptor(warnUnary),
+		grpc.ChainStreamInterceptor(warnStream),
+	}, sOpts.serverOptions...)
+
 	svr := grpc.NewServer(sOpts.serverOptions...)
 	auth.RegisterAuthServiceServer(svr, &authService{auth: sOpts.auth})
 	kms.RegisterEncryptionServiceServer(svr, &kmsService{kms: sOpts.kms, log: sOpts.logger})
 
-	return runServer(ctx, svr, sOpts)
+	// Registered unconditionally: without it there is no way to ask this server
+	// whether it is up, and a probe is the one caller that cannot be configured to
+	// use something else. It reports SERVING from the moment it is registered until
+	// shutdown, which makes it a liveness signal and not a readiness one; see the
+	// package documentation.
+	hc := health.NewServer()
+	grpc_health_v1.RegisterHealthServer(svr, hc)
+
+	return runServer(ctx, svr, hc, sOpts)
 }
 
 // WithAddr sets the address to listen on, defaulting to :8900 on every
@@ -148,9 +168,13 @@ func WithLogger(l logger.Logger) Option {
 // WithServerAuth guards this server's unary methods with check, which receives
 // the single value of the header metadata. It authenticates the proxy to this
 // server, unlike the [Auth] service, which is how the proxy asks about somebody
-// else. Unary covers the whole surface today, since both generated services are
-// unary; adding a streaming method to either proto means pairing this with a
+// else. Unary covers both generated services, since every method on them is unary;
+// adding a streaming method to either proto means pairing this with a
 // [grpc.StreamServerInterceptor].
+//
+// The health service is exempt, and deliberately: a probe has no credential to
+// give, and guarding it would withhold nothing anyway, because Watch reports the
+// same status over a stream that no unary interceptor sees.
 //
 // A call is rejected with Unauthenticated unless the header is present exactly
 // once and check accepts its value. Repeats are refused rather than searched, so
@@ -186,6 +210,11 @@ func WithServerOption(opts ...grpc.ServerOption) Option {
 // floor, so a zero or negative value still lets an already-answered call flush.
 // Set it below the grace period of whatever supervises the process; overrunning
 // that trades the graceful shutdown for a SIGKILL.
+//
+// A client watching the health service holds the drain open until this expires,
+// because a Watch ends with its stream rather than with the status going
+// NOT_SERVING. Expect the bound to be reached, not merely available, wherever
+// something watches.
 func WithShutdownTimeout(t time.Duration) Option {
 	return func(o *options) { o.shutdownTimeout = max(50*time.Millisecond, t) }
 }
@@ -193,7 +222,7 @@ func WithShutdownTimeout(t time.Duration) Option {
 // runServer serves and shuts down on the first of ctx being cancelled or a signal
 // arriving. The listener is obtained before the signal handler is installed, so a
 // bind failure comes back as Serve's error rather than as a shutdown.
-func runServer(ctx context.Context, svr *grpc.Server, opts *options) error {
+func runServer(ctx context.Context, svr *grpc.Server, hc *health.Server, opts *options) error {
 	lis := opts.listener
 	if lis == nil {
 		var err error
@@ -223,6 +252,11 @@ func runServer(ctx context.Context, svr *grpc.Server, opts *options) error {
 		return err
 	case <-ctx.Done():
 		log.Info("Shutdown signal received")
+
+		// Ahead of the drain, so anything routing to this server is told to stop
+		// before the door closes rather than by a refused connection. Note this does
+		// not end an open Watch: a watcher holds the drain open until the timeout.
+		hc.Shutdown()
 
 		// GracefulStop has no bound of its own, so it runs where it can be abandoned.
 		// A handler blocked on a backend that never answers would otherwise hold the

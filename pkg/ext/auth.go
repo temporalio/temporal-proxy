@@ -2,14 +2,21 @@ package ext
 
 import (
 	"context"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/temporalio/temporal-proxy/pkg/api/auth/v1"
 )
+
+// healthPrefix matches every method of the gRPC health service, which
+// [unaryGuard] lets through. Taken from the service descriptor rather than
+// spelled out, so it cannot drift from what was registered.
+var healthPrefix = "/" + grpc_health_v1.Health_ServiceDesc.ServiceName + "/"
 
 type (
 	// authService adapts an [Auth] to the generated service. The embedded
@@ -61,6 +68,11 @@ func (a *authService) Auth(ctx context.Context, req *auth.AuthRequest) (*auth.Au
 // Unauthenticated, and the message separates an absent credential from a rejected
 // one: both ends here are operator-run, so telling "wrong header" from "wrong
 // value" is worth more than withholding it.
+//
+// The health service is exempt. Guarding it would break every probe, which has no
+// credential to present and in Kubernetes' native gRPC prober cannot send
+// metadata at all, and would withhold nothing in exchange: Watch reports the same
+// status over a stream, which this interceptor does not see.
 func unaryGuard(hdr string, check CredentialCheck) grpc.UnaryServerInterceptor {
 	return func(
 		ctx context.Context,
@@ -68,6 +80,10 @@ func unaryGuard(hdr string, check CredentialCheck) grpc.UnaryServerInterceptor {
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
 	) (any, error) {
+		if strings.HasPrefix(info.FullMethod, healthPrefix) {
+			return handler(ctx, req)
+		}
+
 		md, ok := metadata.FromIncomingContext(ctx)
 		if !ok {
 			return nil, status.Error(codes.Unauthenticated, "missing metadata")
