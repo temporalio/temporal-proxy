@@ -333,7 +333,7 @@ func TestChainedInterceptorRunsAfterTheGuard(t *testing.T) {
 
 	seen := make(chan string, 1)
 	client := auth.NewAuthServiceClient(dial(t, serve(t,
-		ext.WithAuth(&stubAuth{}),
+		ext.WithAuth(allowingStubAuth()),
 		ext.WithServerOption(grpc.ChainUnaryInterceptor(recordMethod(seen))),
 		ext.WithServerAuth(extHeader, acceptExtToken),
 	), nil))
@@ -356,7 +356,7 @@ func TestUnaryInterceptorRunsBeforeTheGuard(t *testing.T) {
 
 	seen := make(chan string, 1)
 	client := auth.NewAuthServiceClient(dial(t, serve(t,
-		ext.WithAuth(&stubAuth{}),
+		ext.WithAuth(allowingStubAuth()),
 		// The one ordering this package does not get to decide: gRPC prepends
 		// grpc.UnaryInterceptor ahead of the whole chain, guard included.
 		ext.WithServerOption(grpc.UnaryInterceptor(recordMethod(seen))),

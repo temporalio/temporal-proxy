@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"github.com/temporalio/temporal-proxy/internal/rpc"
+	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 )
 
 const (
@@ -110,7 +111,7 @@ func newJWKSAuthenticator(keyfn jwt.Keyfunc, audiences []string, issuer, header,
 
 // Authenticate verifies the JWT carried in md: signature via the JWKS keyset,
 // expiry, and (when configured) issuer and audience.
-func (a *JWKSAuthenticator) Authenticate(_ context.Context, md metadata.MD) error {
+func (a *JWKSAuthenticator) Authenticate(_ context.Context, _ meta.Target, md metadata.MD) error {
 	raw, ok := extractToken(md, a.header, a.scheme)
 	if !ok {
 		return rpc.Reject(codes.Unauthenticated, "missing or malformed credentials",

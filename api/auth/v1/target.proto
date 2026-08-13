@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package api.auth.v1;
+
+option go_package = "github.com/temporalio/temporal-proxy/pkg/api/auth/v1;auth";
+
+// Target is what a call is addressing, as the proxy resolved it from the stream
+// it accepted. It is not caller-supplied: the proxy takes the method from the
+// stream itself and the namespace from the first request message, so a caller
+// cannot forge either by sending a header.
+message Target {
+  // full_name is the gRPC full method being invoked, leading slash included, as
+  // in "/temporal.api.workflowservice.v1.WorkflowService/DescribeNamespace". It
+  // is always set.
+  string full_name = 1;
+  // namespace is the Temporal namespace the request names. It is empty when the
+  // method has no namespace to name, as many do, when the caller sent no message
+  // to read one from, or when the proxy does not forward this method's service and
+  // so never looked. Empty therefore means "unknown", not "a namespace called
+  // nothing": match a namespace-scoped rule against full_name as well, rather than
+  // reading empty as a namespace that some rule might accept.
+  string namespace = 2;
+}

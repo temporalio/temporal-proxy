@@ -148,7 +148,6 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 
 	handler := router.Handler(
 		router.NewDirector(mux, conns, reps.router, o.logger),
-		o.extractor,
 		o.allowlist,
 		reps.router,
 	)
@@ -160,6 +159,9 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		// status for is exactly what it will forward.
 		server.WithHealthServices(o.allowlist.ServiceNames()...),
 		server.WithStreamInterceptor(reps.server.StreamInterceptor()),
+		// Ahead of authentication: it resolves what the request is addressing, and
+		// an authenticator decides on that as well as on the caller's credentials.
+		server.WithStreamInterceptor(router.PeekInterceptor(o.extractor, o.allowlist)),
 		server.WithStreamInterceptor(auth.StreamServerInterceptor(o.auth, o.logger)),
 		server.WithUnknownServiceHandler(handler),
 		server.WithLogger(o.logger),

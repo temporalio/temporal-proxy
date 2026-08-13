@@ -21,8 +21,66 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// AuthRequest asks the provider to authenticate the caller behind an inbound
-// stream.
+// Decision is whether the caller may proceed. Zero is the absence of a verdict
+// rather than one of them, so a response a provider left unfilled denies
+// instead of admitting: there is no way to admit a caller by omission.
+type AuthResponse_Decision int32
+
+const (
+	// DECISION_UNSPECIFIED is no verdict. The proxy denies the caller and treats
+	// the provider as the fault, since one that answers without deciding is
+	// misconfigured or newer than the proxy.
+	AuthResponse_DECISION_UNSPECIFIED AuthResponse_Decision = 0
+	// DECISION_ALLOW admits the caller, and is the only value that does.
+	AuthResponse_DECISION_ALLOW AuthResponse_Decision = 1
+	// DECISION_DENY refuses the caller, who is told PERMISSION_DENIED.
+	AuthResponse_DECISION_DENY AuthResponse_Decision = 2
+)
+
+// Enum value maps for AuthResponse_Decision.
+var (
+	AuthResponse_Decision_name = map[int32]string{
+		0: "DECISION_UNSPECIFIED",
+		1: "DECISION_ALLOW",
+		2: "DECISION_DENY",
+	}
+	AuthResponse_Decision_value = map[string]int32{
+		"DECISION_UNSPECIFIED": 0,
+		"DECISION_ALLOW":       1,
+		"DECISION_DENY":        2,
+	}
+)
+
+func (x AuthResponse_Decision) Enum() *AuthResponse_Decision {
+	p := new(AuthResponse_Decision)
+	*p = x
+	return p
+}
+
+func (x AuthResponse_Decision) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AuthResponse_Decision) Descriptor() protoreflect.EnumDescriptor {
+	return file_api_auth_v1_auth_proto_enumTypes[0].Descriptor()
+}
+
+func (AuthResponse_Decision) Type() protoreflect.EnumType {
+	return &file_api_auth_v1_auth_proto_enumTypes[0]
+}
+
+func (x AuthResponse_Decision) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AuthResponse_Decision.Descriptor instead.
+func (AuthResponse_Decision) EnumDescriptor() ([]byte, []int) {
+	return file_api_auth_v1_auth_proto_rawDescGZIP(), []int{1, 0}
+}
+
+// AuthRequest asks the provider whether the caller behind an inbound stream may
+// proceed. It carries both who the caller is and what the call is addressing, so
+// a provider can authorize as well as authenticate.
 //
 // The caller's credentials travel in a field rather than in the request's
 // metadata, because the proxy authenticates itself to this server with metadata
@@ -36,11 +94,15 @@ const (
 // themselves are removed from it. A credential appears in exactly one place.
 type AuthRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// target is what the call is addressing. It is what makes an authorization
+	// decision possible: the same credential may be allowed to reach one namespace
+	// or method and not another.
+	Target *Target `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
 	// credentials are the caller's credentials, one entry per header the operator
 	// declared as carrying one. It is empty when the operator declared no headers
 	// or the caller sent none of them, which a provider should treat as an
 	// unauthenticated caller rather than a trusted one.
-	Credentials   []*CallerCredential `protobuf:"bytes,1,rep,name=credentials,proto3" json:"credentials,omitempty"`
+	Credentials   []*Credential `protobuf:"bytes,2,rep,name=credentials,proto3" json:"credentials,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -75,85 +137,39 @@ func (*AuthRequest) Descriptor() ([]byte, []int) {
 	return file_api_auth_v1_auth_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *AuthRequest) GetCredentials() []*CallerCredential {
+func (x *AuthRequest) GetTarget() *Target {
+	if x != nil {
+		return x.Target
+	}
+	return nil
+}
+
+func (x *AuthRequest) GetCredentials() []*Credential {
 	if x != nil {
 		return x.Credentials
 	}
 	return nil
 }
 
-// CallerCredential is one credential-bearing header as the caller sent it.
-type CallerCredential struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// header is the canonical (lowercase) metadata key the values arrived under,
-	// so a provider can tell an opaque API key from a bearer token without
-	// guessing from the format.
-	Header string `protobuf:"bytes,1,opt,name=header,proto3" json:"header,omitempty"`
-	// values are that header's values in the order the caller sent them. gRPC
-	// metadata allows a key to repeat, so this preserves every value rather than
-	// silently choosing one.
-	Values        []string `protobuf:"bytes,2,rep,name=values,proto3" json:"values,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *CallerCredential) Reset() {
-	*x = CallerCredential{}
-	mi := &file_api_auth_v1_auth_proto_msgTypes[1]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *CallerCredential) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*CallerCredential) ProtoMessage() {}
-
-func (x *CallerCredential) ProtoReflect() protoreflect.Message {
-	mi := &file_api_auth_v1_auth_proto_msgTypes[1]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use CallerCredential.ProtoReflect.Descriptor instead.
-func (*CallerCredential) Descriptor() ([]byte, []int) {
-	return file_api_auth_v1_auth_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *CallerCredential) GetHeader() string {
-	if x != nil {
-		return x.Header
-	}
-	return ""
-}
-
-func (x *CallerCredential) GetValues() []string {
-	if x != nil {
-		return x.Values
-	}
-	return nil
-}
-
-// AuthResponse is the provider's verdict, and carries no fields by design:
-// returning a response at all means "admit this caller". A provider rejects by
-// returning a gRPC error status instead, so there is no way to accidentally admit
-// a caller by leaving a field unset.
+// AuthResponse is the provider's verdict. The decision carries it rather than the
+// gRPC status: a provider that reached a verdict answers OK and says so here, and
+// reserves an error status for having reached none.
 type AuthResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// decision is the verdict. Only DECISION_ALLOW admits; every other value,
+	// including one this proxy is too old to recognize, denies.
+	Decision AuthResponse_Decision `protobuf:"varint,1,opt,name=decision,proto3,enum=api.auth.v1.AuthResponse_Decision" json:"decision,omitempty"`
+	// reason is why, written for whoever operates this server. The proxy records it
+	// and keeps it out of what a refused caller is told, so it may name internal
+	// systems or subjects. It is optional, and unused for an admitted caller.
+	Reason        string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AuthResponse) Reset() {
 	*x = AuthResponse{}
-	mi := &file_api_auth_v1_auth_proto_msgTypes[2]
+	mi := &file_api_auth_v1_auth_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -165,7 +181,7 @@ func (x *AuthResponse) String() string {
 func (*AuthResponse) ProtoMessage() {}
 
 func (x *AuthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_auth_v1_auth_proto_msgTypes[2]
+	mi := &file_api_auth_v1_auth_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -178,20 +194,38 @@ func (x *AuthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthResponse.ProtoReflect.Descriptor instead.
 func (*AuthResponse) Descriptor() ([]byte, []int) {
-	return file_api_auth_v1_auth_proto_rawDescGZIP(), []int{2}
+	return file_api_auth_v1_auth_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *AuthResponse) GetDecision() AuthResponse_Decision {
+	if x != nil {
+		return x.Decision
+	}
+	return AuthResponse_DECISION_UNSPECIFIED
+}
+
+func (x *AuthResponse) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
 }
 
 var File_api_auth_v1_auth_proto protoreflect.FileDescriptor
 
 const file_api_auth_v1_auth_proto_rawDesc = "" +
 	"\n" +
-	"\x16api/auth/v1/auth.proto\x12\vapi.auth.v1\"N\n" +
-	"\vAuthRequest\x12?\n" +
-	"\vcredentials\x18\x01 \x03(\v2\x1d.api.auth.v1.CallerCredentialR\vcredentials\"B\n" +
-	"\x10CallerCredential\x12\x16\n" +
-	"\x06header\x18\x01 \x01(\tR\x06header\x12\x16\n" +
-	"\x06values\x18\x02 \x03(\tR\x06values\"\x0e\n" +
-	"\fAuthResponseB\xa5\x01\n" +
+	"\x16api/auth/v1/auth.proto\x12\vapi.auth.v1\x1a\x1capi/auth/v1/credential.proto\x1a\x18api/auth/v1/target.proto\"u\n" +
+	"\vAuthRequest\x12+\n" +
+	"\x06target\x18\x01 \x01(\v2\x13.api.auth.v1.TargetR\x06target\x129\n" +
+	"\vcredentials\x18\x02 \x03(\v2\x17.api.auth.v1.CredentialR\vcredentials\"\xb3\x01\n" +
+	"\fAuthResponse\x12>\n" +
+	"\bdecision\x18\x01 \x01(\x0e2\".api.auth.v1.AuthResponse.DecisionR\bdecision\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"K\n" +
+	"\bDecision\x12\x18\n" +
+	"\x14DECISION_UNSPECIFIED\x10\x00\x12\x12\n" +
+	"\x0eDECISION_ALLOW\x10\x01\x12\x11\n" +
+	"\rDECISION_DENY\x10\x02B\xa5\x01\n" +
 	"\x0fcom.api.auth.v1B\tAuthProtoP\x01Z9github.com/temporalio/temporal-proxy/pkg/api/auth/v1;auth\xa2\x02\x03AAX\xaa\x02\vApi.Auth.V1\xca\x02\vApi\\Auth\\V1\xe2\x02\x17Api\\Auth\\V1\\GPBMetadata\xea\x02\rApi::Auth::V1b\x06proto3"
 
 var (
@@ -206,19 +240,24 @@ func file_api_auth_v1_auth_proto_rawDescGZIP() []byte {
 	return file_api_auth_v1_auth_proto_rawDescData
 }
 
-var file_api_auth_v1_auth_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_api_auth_v1_auth_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_api_auth_v1_auth_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_api_auth_v1_auth_proto_goTypes = []any{
-	(*AuthRequest)(nil),      // 0: api.auth.v1.AuthRequest
-	(*CallerCredential)(nil), // 1: api.auth.v1.CallerCredential
-	(*AuthResponse)(nil),     // 2: api.auth.v1.AuthResponse
+	(AuthResponse_Decision)(0), // 0: api.auth.v1.AuthResponse.Decision
+	(*AuthRequest)(nil),        // 1: api.auth.v1.AuthRequest
+	(*AuthResponse)(nil),       // 2: api.auth.v1.AuthResponse
+	(*Target)(nil),             // 3: api.auth.v1.Target
+	(*Credential)(nil),         // 4: api.auth.v1.Credential
 }
 var file_api_auth_v1_auth_proto_depIdxs = []int32{
-	1, // 0: api.auth.v1.AuthRequest.credentials:type_name -> api.auth.v1.CallerCredential
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	3, // 0: api.auth.v1.AuthRequest.target:type_name -> api.auth.v1.Target
+	4, // 1: api.auth.v1.AuthRequest.credentials:type_name -> api.auth.v1.Credential
+	0, // 2: api.auth.v1.AuthResponse.decision:type_name -> api.auth.v1.AuthResponse.Decision
+	3, // [3:3] is the sub-list for method output_type
+	3, // [3:3] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_api_auth_v1_auth_proto_init() }
@@ -226,18 +265,21 @@ func file_api_auth_v1_auth_proto_init() {
 	if File_api_auth_v1_auth_proto != nil {
 		return
 	}
+	file_api_auth_v1_credential_proto_init()
+	file_api_auth_v1_target_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_auth_v1_auth_proto_rawDesc), len(file_api_auth_v1_auth_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   3,
+			NumEnums:      1,
+			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_api_auth_v1_auth_proto_goTypes,
 		DependencyIndexes: file_api_auth_v1_auth_proto_depIdxs,
+		EnumInfos:         file_api_auth_v1_auth_proto_enumTypes,
 		MessageInfos:      file_api_auth_v1_auth_proto_msgTypes,
 	}.Build()
 	File_api_auth_v1_auth_proto = out.File

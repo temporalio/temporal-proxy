@@ -2,10 +2,14 @@ syntax = "proto3";
 
 package api.auth.v1;
 
+import "api/auth/v1/credential.proto";
+import "api/auth/v1/target.proto";
+
 option go_package = "github.com/temporalio/temporal-proxy/pkg/api/auth/v1;auth";
 
-// AuthRequest asks the provider to authenticate the caller behind an inbound
-// stream.
+// AuthRequest asks the provider whether the caller behind an inbound stream may
+// proceed. It carries both who the caller is and what the call is addressing, so
+// a provider can authorize as well as authenticate.
 //
 // The caller's credentials travel in a field rather than in the request's
 // metadata, because the proxy authenticates itself to this server with metadata
@@ -18,27 +22,40 @@ option go_package = "github.com/temporalio/temporal-proxy/pkg/api/auth/v1;auth";
 // weigh context such as the method being invoked, but the credential headers
 // themselves are removed from it. A credential appears in exactly one place.
 message AuthRequest {
+  // target is what the call is addressing. It is what makes an authorization
+  // decision possible: the same credential may be allowed to reach one namespace
+  // or method and not another.
+  Target target = 1;
   // credentials are the caller's credentials, one entry per header the operator
   // declared as carrying one. It is empty when the operator declared no headers
   // or the caller sent none of them, which a provider should treat as an
   // unauthenticated caller rather than a trusted one.
-  repeated CallerCredential credentials = 1;
+  repeated Credential credentials = 2;
 }
 
-// CallerCredential is one credential-bearing header as the caller sent it.
-message CallerCredential {
-  // header is the canonical (lowercase) metadata key the values arrived under,
-  // so a provider can tell an opaque API key from a bearer token without
-  // guessing from the format.
-  string header = 1;
-  // values are that header's values in the order the caller sent them. gRPC
-  // metadata allows a key to repeat, so this preserves every value rather than
-  // silently choosing one.
-  repeated string values = 2;
-}
+// AuthResponse is the provider's verdict. The decision carries it rather than the
+// gRPC status: a provider that reached a verdict answers OK and says so here, and
+// reserves an error status for having reached none.
+message AuthResponse {
+  // Decision is whether the caller may proceed. Zero is the absence of a verdict
+  // rather than one of them, so a response a provider left unfilled denies
+  // instead of admitting: there is no way to admit a caller by omission.
+  enum Decision {
+    // DECISION_UNSPECIFIED is no verdict. The proxy denies the caller and treats
+    // the provider as the fault, since one that answers without deciding is
+    // misconfigured or newer than the proxy.
+    DECISION_UNSPECIFIED = 0;
+    // DECISION_ALLOW admits the caller, and is the only value that does.
+    DECISION_ALLOW = 1;
+    // DECISION_DENY refuses the caller, who is told PERMISSION_DENIED.
+    DECISION_DENY = 2;
+  }
 
-// AuthResponse is the provider's verdict, and carries no fields by design:
-// returning a response at all means "admit this caller". A provider rejects by
-// returning a gRPC error status instead, so there is no way to accidentally admit
-// a caller by leaving a field unset.
-message AuthResponse {}
+  // decision is the verdict. Only DECISION_ALLOW admits; every other value,
+  // including one this proxy is too old to recognize, denies.
+  Decision decision = 1;
+  // reason is why, written for whoever operates this server. The proxy records it
+  // and keeps it out of what a refused caller is told, so it may name internal
+  // systems or subjects. It is optional, and unused for an admitted caller.
+  string reason = 2;
+}

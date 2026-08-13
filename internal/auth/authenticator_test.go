@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/temporalio/temporal-proxy/internal/auth"
+	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
 
@@ -22,6 +23,12 @@ type (
 	}
 
 	fakeAuthenticator struct{ err error }
+
+	// recordingAuthenticator captures what it was asked to decide on.
+	recordingAuthenticator struct {
+		err    error
+		target meta.Target
+	}
 )
 
 func TestAdmitAll(t *testing.T) {
@@ -29,8 +36,28 @@ func TestAdmitAll(t *testing.T) {
 
 	a := auth.AdmitAll()
 
-	require.NoError(t, a.Authenticate(t.Context(), metadata.MD{}))
+	require.NoError(t, a.Authenticate(t.Context(), meta.Target{}, metadata.MD{}))
 	require.Nil(t, a.SecureHeaders(), "admitting every request must strip no header")
+}
+
+func TestStreamServerInterceptorPassesTarget(t *testing.T) {
+	t.Parallel()
+
+	// The interceptor hands the authenticator what the gateway already resolved,
+	// so a decision can weigh the method and namespace being addressed.
+	want := meta.Target{FullName: "/pkg.Svc/M", Namespace: "orders"}
+	ctx := meta.WithTarget(metadata.NewIncomingContext(t.Context(), metadata.MD{}), want)
+
+	a := &recordingAuthenticator{}
+	err := auth.StreamServerInterceptor(a, nil)(
+		nil,
+		&fakeStream{ctx: ctx},
+		&grpc.StreamServerInfo{FullMethod: "/pkg.Svc/M"},
+		func(any, grpc.ServerStream) error { return nil },
+	)
+	require.NoError(t, err)
+
+	require.Equal(t, want, a.target)
 }
 
 func TestStreamServerInterceptor(t *testing.T) {
@@ -132,5 +159,16 @@ func TestStreamServerInterceptorLogsReason(t *testing.T) {
 
 func (f *fakeStream) Context() context.Context { return f.ctx }
 
-func (f fakeAuthenticator) Authenticate(context.Context, metadata.MD) error { return f.err }
-func (fakeAuthenticator) SecureHeaders() []string                           { return nil }
+func (f fakeAuthenticator) Authenticate(context.Context, meta.Target, metadata.MD) error {
+	return f.err
+}
+
+func (fakeAuthenticator) SecureHeaders() []string { return nil }
+
+func (r *recordingAuthenticator) Authenticate(_ context.Context, target meta.Target, _ metadata.MD) error {
+	r.target = target
+
+	return r.err
+}
+
+func (*recordingAuthenticator) SecureHeaders() []string { return nil }

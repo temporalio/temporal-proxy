@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/temporalio/temporal-proxy/internal/auth"
+	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 )
 
 func TestStaticTokenAuthenticator(t *testing.T) {
@@ -38,7 +39,7 @@ func TestStaticTokenAuthenticator(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := a.Authenticate(t.Context(), tt.md)
+			err := a.Authenticate(t.Context(), meta.Target{}, tt.md)
 			require.Equal(t, tt.code, status.Code(err))
 		})
 	}

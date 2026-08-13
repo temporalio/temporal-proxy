@@ -10,6 +10,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/api"
 	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 )
 
 // nopConn stands in for a connection to an extension server. The module only has
@@ -44,7 +45,7 @@ func TestModuleProvidesAuthenticator(t *testing.T) {
 			require.NotNil(t, got)
 
 			if tt.admitsMissing {
-				require.NoError(t, got.Authenticate(t.Context(), nil))
+				require.NoError(t, got.Authenticate(t.Context(), meta.Target{}, nil))
 			}
 		})
 	}

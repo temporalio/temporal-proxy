@@ -42,3 +42,27 @@ func TestNamespaceFromAbsentIsEmpty(t *testing.T) {
 
 	require.Equal(t, "", meta.NamespaceFrom(t.Context()))
 }
+
+func TestWithTargetRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	target := meta.Target{FullName: "/temporal.api.workflowservice.v1.WorkflowService/StartWorkflowExecution", Namespace: "orders"}
+
+	ctx := meta.WithTarget(t.Context(), target)
+	require.Equal(t, target, meta.TargetFrom(ctx))
+}
+
+func TestTargetFromAbsentIsZero(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, meta.Target{}, meta.TargetFrom(t.Context()))
+}
+
+func TestTargetFromIgnoresMetadata(t *testing.T) {
+	t.Parallel()
+
+	// A caller cannot forge a Target by sending metadata: it is carried as a
+	// context value the gateway sets, and authentication decides on it.
+	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs(meta.NamespaceHeader, "spoofed"))
+	require.Equal(t, meta.Target{}, meta.TargetFrom(ctx))
+}
