@@ -23,8 +23,9 @@ type (
 		grpcSvr   *grpc.Server
 		healthSvr *health.Server
 
-		creds       Credentials
-		healthCheck HealthCheck
+		creds          Credentials
+		healthCheck    HealthCheck
+		healthServices []string
 
 		// mu guards logger and cancelFunc, which Start writes from its own
 		// goroutine while Stop reads them from the caller's goroutine.
@@ -49,6 +50,7 @@ type (
 	options struct {
 		creds              Credentials
 		healthCheck        HealthCheck
+		healthServices     []string
 		logger             logger.Logger
 		unaryInterceptors  []grpc.UnaryServerInterceptor
 		streamInterceptors []grpc.StreamServerInterceptor
@@ -84,16 +86,23 @@ func New(sopts ...Option) (*Server, error) {
 	hc := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(svr, hc)
 
+	// Seeded here rather than in the health loop so every entry exists before the
+	// first connection is accepted.
+	for _, name := range opts.healthServices {
+		hc.SetServingStatus(name, grpc_health_v1.HealthCheckResponse_SERVING)
+	}
+
 	for _, register := range opts.services {
 		register(svr)
 	}
 
 	return &Server{
-		grpcSvr:     svr,
-		healthSvr:   hc,
-		creds:       opts.creds,
-		healthCheck: opts.healthCheck,
-		logger:      opts.logger,
+		grpcSvr:        svr,
+		healthSvr:      hc,
+		creds:          opts.creds,
+		healthCheck:    opts.healthCheck,
+		healthServices: opts.healthServices,
+		logger:         opts.logger,
 	}, nil
 }
 
@@ -139,6 +148,13 @@ func WithServerCodec(c encoding.CodecV2) Option {
 // service's serving status.
 func WithHealthCheck(hc HealthCheck) Option {
 	return optFunc(func(o *options) { o.healthCheck = hc })
+}
+
+// WithHealthServices names the services the health service answers for, by proto
+// full name. Each gets an entry reporting the same status as the unnamed one.
+// Names accumulate across calls.
+func WithHealthServices(names ...string) Option {
+	return optFunc(func(o *options) { o.healthServices = append(o.healthServices, names...) })
 }
 
 // WithLogger sets the logger used by the server.
@@ -198,7 +214,11 @@ func (s *Server) runHealthCheck(ctx context.Context) {
 	next := grpc_health_v1.HealthCheckResponse_SERVING
 
 	for {
+		// Every entry reports the same status: the server's health is process-wide.
 		s.healthSvr.SetServingStatus("", next)
+		for _, name := range s.healthServices {
+			s.healthSvr.SetServingStatus(name, next)
+		}
 
 		select {
 		case <-ctx.Done():
