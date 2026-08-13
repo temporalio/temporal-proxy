@@ -16,6 +16,18 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
 
+const (
+	// defaultShutdownTimeout bounds the drain in [Server.Stop]. The gateway
+	// proxies long-poll methods that block 60s+, so a budget that waits them out
+	// would stall every restart; dropping them instead is safe because callers
+	// re-poll.
+	defaultShutdownTimeout = 5 * time.Second
+
+	// minShutdownTimeout keeps a zero or negative [WithShutdownTimeout] from
+	// turning Stop into an immediate kill: an already-answered call still flushes.
+	minShutdownTimeout = 50 * time.Millisecond
+)
+
 type (
 	// Server is a gRPC server with a built-in health service and a
 	// configurable periodic health check.
@@ -23,9 +35,10 @@ type (
 		grpcSvr   *grpc.Server
 		healthSvr *health.Server
 
-		creds          Credentials
-		healthCheck    HealthCheck
-		healthServices []string
+		creds           Credentials
+		healthCheck     HealthCheck
+		healthServices  []string
+		shutdownTimeout time.Duration
 
 		// mu guards logger and cancelFunc, which Start writes from its own
 		// goroutine while Stop reads them from the caller's goroutine.
@@ -52,6 +65,7 @@ type (
 		healthCheck        HealthCheck
 		healthServices     []string
 		logger             logger.Logger
+		shutdownTimeout    time.Duration
 		unaryInterceptors  []grpc.UnaryServerInterceptor
 		streamInterceptors []grpc.StreamServerInterceptor
 		services           []func(grpc.ServiceRegistrar)
@@ -63,13 +77,14 @@ type (
 )
 
 // New constructs a [Server]. When no options are supplied, it uses insecure
-// credentials, a default health check that always reports SERVING, and a CLI
-// logger.
+// credentials, a default health check that always reports SERVING, a CLI
+// logger, and a five second drain budget.
 func New(sopts ...Option) (*Server, error) {
 	opts := &options{
-		creds:       creds.NewListener(creds.Insecure()),
-		healthCheck: defaultHealthCheck(),
-		logger:      logger.Default(),
+		creds:           creds.NewListener(creds.Insecure()),
+		healthCheck:     defaultHealthCheck(),
+		logger:          logger.Default(),
+		shutdownTimeout: defaultShutdownTimeout,
 	}
 	for _, opt := range sopts {
 		opt.apply(opts)
@@ -97,12 +112,13 @@ func New(sopts ...Option) (*Server, error) {
 	}
 
 	return &Server{
-		grpcSvr:        svr,
-		healthSvr:      hc,
-		creds:          opts.creds,
-		healthCheck:    opts.healthCheck,
-		healthServices: opts.healthServices,
-		logger:         opts.logger,
+		grpcSvr:         svr,
+		healthSvr:       hc,
+		creds:           opts.creds,
+		healthCheck:     opts.healthCheck,
+		healthServices:  opts.healthServices,
+		logger:          opts.logger,
+		shutdownTimeout: opts.shutdownTimeout,
 	}, nil
 }
 
@@ -162,6 +178,14 @@ func WithLogger(log logger.Logger) Option {
 	return optFunc(func(o *options) { o.logger = log })
 }
 
+// WithShutdownTimeout bounds how long [Server.Stop] waits for in-flight calls
+// before dropping them. It defaults to five seconds and is clamped to a 50ms
+// floor. Stop also honours its Context, so the effective budget is whichever
+// expires first; a Context already cancelled forces immediately.
+func WithShutdownTimeout(d time.Duration) Option {
+	return optFunc(func(o *options) { o.shutdownTimeout = max(minShutdownTimeout, d) })
+}
+
 // Start serves on lis and blocks until the server stops. It also kicks off
 // the periodic health check, which runs until ctx is cancelled or [Server.Stop]
 // is called.
@@ -193,20 +217,71 @@ func (s *Server) Start(ctx context.Context, lis net.Listener) error {
 	return nil
 }
 
-// Stop gracefully shuts the server down, halting the health check loop and
-// waiting for in-flight RPCs to complete.
+// Stop shuts the server down, halting the health check loop and draining
+// in-flight RPCs. The drain is bounded by whichever expires first: the
+// [WithShutdownTimeout] budget or ctx. Past that, remaining calls are dropped.
+// A forced shutdown is still a shutdown, so it is reported through a warning
+// rather than an error; the only errors here would be a caller's to handle, and
+// there are none.
 func (s *Server) Stop(ctx context.Context) error {
 	s.mu.Lock()
-	logger := s.logger
+	log := s.logger
 	cancel := s.cancelFunc
 	s.mu.Unlock()
 
-	logger.Info("Shutting down")
+	log.Info("Shutting down")
+
+	// Flipped here rather than left to the health loop so a probe sees NOT_SERVING
+	// before the drain closes the listener, and so a status refresh already in
+	// flight cannot push SERVING back out behind it: SetServingStatus is ignored
+	// once the health server is shut down.
+	s.healthSvr.Shutdown()
 	if cancel != nil {
 		cancel()
 	}
 
-	s.grpcSvr.GracefulStop()
+	done := make(chan struct{})
+	go func() {
+		s.grpcSvr.GracefulStop()
+		close(done)
+	}()
+
+	// fx runs the remaining OnStop hooks off the same Context, so overrunning it
+	// strands them.
+	stopCtx, cancelStop := context.WithTimeout(ctx, s.shutdownTimeout)
+	defer cancelStop()
+
+	select {
+	case <-done:
+		log.Info("Server stopped cleanly")
+	case <-stopCtx.Done():
+		// stopCtx ends on whichever came first, our budget or ctx, so name which.
+		// An operator who raises WithShutdownTimeout past the caller's budget
+		// otherwise reads a number that never elapsed and tunes the knob that is
+		// not binding.
+		cause := "shutdown timeout"
+		if err := ctx.Err(); err != nil {
+			cause = "stop context: " + err.Error()
+		}
+
+		log.Warn(
+			"Drain ended with calls in flight. Dropping them",
+			tag.String("cause", cause),
+			tag.String("timeout", s.shutdownTimeout.String()),
+		)
+
+		// Closes the transports, so a caller waiting on a call this drain gave up on
+		// learns now rather than at its own timeout.
+		//
+		// Backgrounded because it cannot be relied on to return: GracefulStop waits
+		// for handlers while holding the server's lock, which Stop needs, so a
+		// handler that never returns wedges both, and Serve with them. That is why
+		// Serve is not waited on here and why the deadline is enforced by this
+		// select rather than by Stop. The goroutines end with the process, which by
+		// this point is what we are.
+		go s.grpcSvr.Stop()
+	}
+
 	return nil
 }
 

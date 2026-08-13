@@ -109,7 +109,8 @@ func (s *Server) Start(ctx context.Context, lis net.Listener) error {
 	return s.svr.Start(ctx, lis)
 }
 
-// Stop gracefully shuts the proxy down, waiting for in-flight RPCs to complete.
+// Stop shuts the proxy down, draining in-flight RPCs within the server's
+// shutdown budget and dropping whatever is left.
 func (s *Server) Stop(ctx context.Context) error {
 	if err := s.svr.Stop(ctx); err != nil {
 		return fmt.Errorf("failed to stop GRPC server: %w", err)

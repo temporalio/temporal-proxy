@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/urfave/cli/v3"
@@ -22,6 +23,11 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
+
+// shutdownTimeout bounds the whole stop sequence: the serving tiers, which drain
+// concurrently within their own budgets, and every lifecycle hook queued behind
+// them.
+const shutdownTimeout = 30 * time.Second
 
 // fxLogger swallows fx's event stream except for Started/Stopped failures,
 // which it forwards to the app logger. Configuration errors are caught
@@ -93,6 +99,14 @@ func serve() *cli.Command {
 				metrics.Module,
 				protoutil.Module,
 				fx.WithLogger(func(l logger.Logger) fxevent.Logger { return &fxLogger{log: l} }),
+
+				// Stated rather than inherited, because the relationship is what
+				// matters and it is otherwise invisible: each serving tier drains
+				// within its own budget, this bounds all of them plus the hooks behind
+				// them, and whatever supervises the process has to allow more than
+				// this before it resorts to SIGKILL. fx abandons the hooks still
+				// queued when this expires.
+				fx.StopTimeout(shutdownTimeout),
 			)
 
 			if err := fxApp.Err(); err != nil {

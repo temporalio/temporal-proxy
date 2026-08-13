@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
@@ -36,6 +37,11 @@ const (
 	// request in TestReceiveLimit is refused by the server's own limit rather than
 	// wedged in the pipe.
 	bufSize = 4 * 1024 * 1024
+
+	// plaintextMessage is the warning ext logs for an unencrypted connection.
+	// Spelled out here rather than exported: publishing a log line as API would
+	// promise not to reword it.
+	plaintextMessage = "Serving in plaintext. Supply credentials via WithServerOption for production use."
 )
 
 // blockingKMS enters Wrap, records that it did, and stays there until released.
@@ -382,6 +388,108 @@ func (b *blockingKMS) Unwrap(context.Context, []byte) ([]byte, error) {
 	return nil, status.Error(codes.Unimplemented, "not used")
 }
 
+func TestServeRegistersHealthService(t *testing.T) {
+	t.Parallel()
+
+	client := grpc_health_v1.NewHealthClient(dial(t, serve(t), nil))
+
+	resp, err := client.Check(t.Context(), &grpc_health_v1.HealthCheckRequest{})
+	require.NoError(t, err)
+	require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.GetStatus())
+}
+
+func TestHealthIsExemptFromServerAuth(t *testing.T) {
+	t.Parallel()
+
+	conn := dial(t, serve(t, ext.WithServerAuth(extHeader, acceptExtToken)), nil)
+
+	// No credential, because a probe has none to give.
+	resp, err := grpc_health_v1.NewHealthClient(conn).Check(
+		t.Context(),
+		&grpc_health_v1.HealthCheckRequest{},
+	)
+	require.NoError(t, err, "guarding health would break every probe")
+	require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.GetStatus())
+
+	// The same call without a credential to a guarded service, to show the
+	// exemption is confined to health rather than the guard being absent.
+	_, err = auth.NewAuthServiceClient(conn).Auth(t.Context(), &auth.AuthRequest{})
+	require.Error(t, err)
+	require.Equal(t, codes.Unauthenticated, status.Code(err))
+}
+
+func TestHealthReportsNotServingOnShutdown(t *testing.T) {
+	t.Parallel()
+
+	lis := bufconn.Listen(bufSize)
+	ctx, cancel := context.WithCancel(t.Context())
+
+	errs := make(chan error, 1)
+	go func() {
+		errs <- ext.Serve(ctx,
+			ext.WithListener(lis),
+			ext.WithLogger(logger.NewNoopLogger()),
+			// A watcher holds the drain open, so this shutdown is forced by design.
+			ext.WithShutdownTimeout(100*time.Millisecond),
+		)
+	}()
+
+	stream, err := grpc_health_v1.NewHealthClient(dial(t, lis, nil)).Watch(
+		t.Context(),
+		&grpc_health_v1.HealthCheckRequest{},
+	)
+	require.NoError(t, err)
+
+	first, err := stream.Recv()
+	require.NoError(t, err)
+	require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, first.GetStatus())
+
+	cancel()
+
+	// Watchers are told before the door closes, so whatever routes here can stop
+	// sending rather than discovering it through a refused connection.
+	next, err := stream.Recv()
+	require.NoError(t, err)
+	require.Equal(t, grpc_health_v1.HealthCheckResponse_NOT_SERVING, next.GetStatus())
+
+	require.NoError(t, waitFor(t, errs))
+}
+
+func TestServeWarnsWhenServingPlaintext(t *testing.T) {
+	t.Parallel()
+
+	log := logger.NewTestLogger()
+	client := grpc_health_v1.NewHealthClient(dial(t, serve(t, ext.WithLogger(log)), nil))
+
+	// The warning reads the connection, not the configuration, so it needs a call
+	// to have arrived before there is anything to report.
+	_, err := client.Check(t.Context(), &grpc_health_v1.HealthCheckRequest{})
+	require.NoError(t, err)
+
+	require.True(t, log.ContainsEntry(logger.LevelWarn, plaintextMessage))
+}
+
+func TestServeDoesNotWarnWhenServingTLS(t *testing.T) {
+	t.Parallel()
+
+	log := logger.NewTestLogger()
+	lis, roots := serveTLS(t, ext.WithLogger(log))
+
+	// ServerName because the certificate is issued for localhost and an in-memory
+	// listener has no name to match it against. Omitting it fails the handshake,
+	// which WaitForReady turns into a hang rather than an error.
+	client := grpc_health_v1.NewHealthClient(dial(t, lis, credentials.NewTLS(&tls.Config{
+		RootCAs:    roots,
+		ServerName: "localhost",
+		MinVersion: tls.VersionTLS12,
+	})))
+
+	_, err := client.Check(t.Context(), &grpc_health_v1.HealthCheckRequest{})
+	require.NoError(t, err)
+
+	require.False(t, log.Contains(plaintextMessage), "TLS via WithServerOption should be recognised")
+}
+
 // acceptExtToken is the stand-in for a real [ext.CredentialCheck]. A production
 // one compares in constant time; this one only has to be a function that agrees
 // with extToken.
@@ -497,7 +605,7 @@ func serve(t *testing.T, opts ...ext.Option) *bufconn.Listener {
 // listener along with a pool that trusts it. TLS arrives as a server option and
 // lands after Serve's own insecure default, which is what lets it win rather than
 // having to be unset first.
-func serveTLS(t *testing.T) (lis *bufconn.Listener, roots *x509.CertPool) {
+func serveTLS(t *testing.T, opts ...ext.Option) (lis *bufconn.Listener, roots *x509.CertPool) {
 	t.Helper()
 
 	certFile, keyFile := testutil.GenerateSelfSignedCert(t)
@@ -510,10 +618,12 @@ func serveTLS(t *testing.T) (lis *bufconn.Listener, roots *x509.CertPool) {
 	roots = x509.NewCertPool()
 	require.True(t, roots.AppendCertsFromPEM(pem))
 
-	return serve(t, ext.WithServerOption(grpc.Creds(credentials.NewTLS(&tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
-	})))), roots
+	return serve(t, append([]ext.Option{
+		ext.WithServerOption(grpc.Creds(credentials.NewTLS(&tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		}))),
+	}, opts...)...), roots
 }
 
 // waitFor reads from ch, failing the test rather than hanging until the package

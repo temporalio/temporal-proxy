@@ -22,9 +22,14 @@ import (
 
 	"github.com/temporalio/temporal-proxy/internal/server"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
 
-const insecureMessage = "Running with insecure credentials. Configure TLS for production use."
+const (
+	insecureMessage = "Running with insecure credentials. Configure TLS for production use."
+	forcedMessage   = "Drain ended with calls in flight. Dropping them"
+	cleanMessage    = "Server stopped cleanly"
+)
 
 type (
 	failingCredentials struct {
@@ -469,6 +474,191 @@ func TestServerStartAndStop(t *testing.T) {
 	}
 }
 
+func TestStopForcesShutdownWhenHandlerHangs(t *testing.T) {
+	t.Parallel()
+
+	log := logger.NewTestLogger()
+	svr, callErr := wedgedServer(t,
+		server.WithLogger(log),
+		server.WithShutdownTimeout(100*time.Millisecond),
+	)
+
+	start := time.Now()
+	require.NoError(t, svr.Stop(t.Context()), "a forced shutdown is still a shutdown")
+	require.Less(t, time.Since(start), 5*time.Second, "Stop waited on the wedged handler")
+
+	require.True(t, log.Contains(forcedMessage), "expected the forced drain to be logged")
+	require.False(t, log.Contains(cleanMessage))
+	// Serve scopes the logger to the bound address, so that tag leads every entry.
+	require.True(
+		t,
+		log.ContainsEntry(
+			logger.LevelWarn,
+			forcedMessage,
+			tag.String("addr", "bufconn"),
+			tag.String("cause", "shutdown timeout"),
+			tag.String("timeout", "100ms"),
+		),
+		"the budget expiring should be reported as the cause",
+	)
+
+	// The point of forcing: the call this drain gave up on is dropped, so its
+	// caller finds out now instead of waiting on its own timeout.
+	select {
+	case err := <-callErr:
+		require.Error(t, err, "the abandoned call should have been dropped")
+	case <-time.After(5 * time.Second):
+		t.Fatal("the abandoned call was left hanging")
+	}
+}
+
+// Real time rather than synctest: the drain is bounded by a timer, but what it
+// waits on is gRPC's own connection bookkeeping across a bufconn pipe, which
+// synctest cannot see as idle.
+func TestWithShutdownTimeoutClampsToFloor(t *testing.T) {
+	t.Parallel()
+
+	log := logger.NewTestLogger()
+	svr, _ := wedgedServer(t,
+		server.WithLogger(log),
+		server.WithShutdownTimeout(0),
+	)
+
+	start := time.Now()
+	require.NoError(t, svr.Stop(t.Context()))
+
+	// Clamped, so an already-answered call still gets a moment to flush instead of
+	// the drain becoming an immediate kill.
+	require.GreaterOrEqual(t, time.Since(start), 50*time.Millisecond)
+	require.True(t, log.Contains(forcedMessage))
+}
+
+func TestStopHonoursContextDeadline(t *testing.T) {
+	t.Parallel()
+
+	log := logger.NewTestLogger()
+	svr, _ := wedgedServer(t,
+		server.WithLogger(log),
+		// Far longer than the Context allows, so only the deadline can end this.
+		server.WithShutdownTimeout(10*time.Second),
+	)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	require.NoError(t, svr.Stop(ctx))
+	require.Less(t, time.Since(start), 5*time.Second, "Stop ignored the Context deadline")
+
+	// The budget never elapsed, so blaming it would send an operator to raise a
+	// setting that was not binding.
+	require.True(
+		t,
+		log.ContainsEntry(
+			logger.LevelWarn,
+			forcedMessage,
+			tag.String("addr", "bufconn"),
+			tag.String("cause", "stop context: context deadline exceeded"),
+			tag.String("timeout", "10s"),
+		),
+		"the Context deadline should be reported as the cause, not the budget",
+	)
+}
+
+func TestStopWithCancelledContextForcesImmediately(t *testing.T) {
+	t.Parallel()
+
+	log := logger.NewTestLogger()
+	svr, _ := wedgedServer(t,
+		server.WithLogger(log),
+		server.WithShutdownTimeout(10*time.Second),
+	)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	require.NoError(t, svr.Stop(ctx))
+	require.True(t, log.Contains(forcedMessage), "a cancelled Context should force the drain")
+	require.True(
+		t,
+		log.ContainsEntry(
+			logger.LevelWarn,
+			forcedMessage,
+			tag.String("addr", "bufconn"),
+			tag.String("cause", "stop context: context canceled"),
+			tag.String("timeout", "10s"),
+		),
+		"a cancelled Context should be distinguishable from an expired budget",
+	)
+}
+
+func TestStopDrainsCleanlyWhenNothingIsInFlight(t *testing.T) {
+	t.Parallel()
+
+	log := logger.NewTestLogger()
+	svr, err := server.New(server.WithLogger(log))
+	require.NoError(t, err)
+
+	lis := bufconn.Listen(1024 * 1024)
+	defer func() { _ = lis.Close() }()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- svr.Start(t.Context(), lis) }()
+
+	require.Eventually(t, func() bool {
+		return log.Contains("Starting the server")
+	}, time.Second, 10*time.Millisecond)
+
+	require.NoError(t, svr.Stop(t.Context()))
+	<-errCh
+
+	// Guards against the forced path becoming unconditional: with nothing to wait
+	// on, the drain must finish on its own.
+	require.True(t, log.Contains(cleanMessage))
+	require.False(t, log.Contains(forcedMessage))
+}
+
+func TestStopMarksNotServingBeforeDraining(t *testing.T) {
+	t.Parallel()
+
+	// A watcher keeps GracefulStop from ever finishing, so this exercises the
+	// forced path by design; the point is that the status flip still lands first.
+	svr, err := server.New(server.WithShutdownTimeout(100 * time.Millisecond))
+	require.NoError(t, err)
+
+	lis := bufconn.Listen(1024 * 1024)
+	defer func() { _ = lis.Close() }()
+
+	go func() { _ = svr.Start(t.Context(), lis) }()
+
+	conn := newBufConnClient(t, lis)
+	defer func() { _ = conn.Close() }()
+
+	stream, err := grpc_health_v1.NewHealthClient(conn).Watch(t.Context(), &grpc_health_v1.HealthCheckRequest{})
+	require.NoError(t, err)
+
+	first, err := stream.Recv()
+	require.NoError(t, err)
+	require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, first.GetStatus())
+
+	go func() { _ = svr.Stop(t.Context()) }()
+
+	next, err := stream.Recv()
+	require.NoError(t, err)
+	require.Equal(t, grpc_health_v1.HealthCheckResponse_NOT_SERVING, next.GetStatus())
+}
+
+func TestStopBeforeStart(t *testing.T) {
+	t.Parallel()
+
+	// The rollback path: a Start that failed before reaching Serve still gets
+	// stopped, so Stop has to tolerate never having been started.
+	svr, err := server.New()
+	require.NoError(t, err)
+
+	require.NoError(t, svr.Stop(t.Context()))
+}
+
 func (f failingCredentials) ServerOption() (grpc.ServerOption, error) {
 	return nil, f.err
 }
@@ -492,6 +682,64 @@ func (c *recordingCodec) Unmarshal(data mem.BufferSlice, v any) error {
 }
 
 func (c *recordingCodec) Name() string { return c.delegate.Name() }
+
+// wedgedServer starts a server whose unknown-service handler parks forever,
+// standing in for one blocked on a backend that never answers, and returns once
+// that handler has actually been entered: only then is there something for the
+// drain to wait on. The handler is released during cleanup so it does not
+// outlive the test.
+//
+// The returned channel carries the parked call's outcome. Start's return is not
+// offered because a forced drain never produces one: GracefulStop waits for
+// handlers holding the server's lock, so a handler that never returns wedges it,
+// the forced Stop that needs the same lock, and Serve waiting on either to
+// finish. Stop returning promptly is the guarantee, not teardown.
+func wedgedServer(t *testing.T, sopts ...server.Option) (*server.Server, <-chan error) {
+	t.Helper()
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	var once sync.Once
+	handler := func(_ any, _ grpc.ServerStream) error {
+		once.Do(func() { close(entered) })
+		<-release
+
+		return nil
+	}
+
+	svr, err := server.New(append(sopts, server.WithUnknownServiceHandler(handler))...)
+	require.NoError(t, err)
+
+	lis := bufconn.Listen(1024 * 1024)
+	t.Cleanup(func() { _ = lis.Close() })
+
+	go func() { _ = svr.Start(t.Context(), lis) }()
+
+	conn := newBufConnClient(t, lis)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	// Invoked from its own goroutine because it never returns until the drain
+	// drops it.
+	callErr := make(chan error, 1)
+	go func() {
+		callErr <- conn.Invoke(
+			t.Context(),
+			"/not.registered.Service/Method",
+			&grpc_health_v1.HealthCheckRequest{},
+			&grpc_health_v1.HealthCheckResponse{},
+		)
+	}()
+
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler was never entered")
+	}
+
+	return svr, callErr
+}
 
 func newBufConnClient(t *testing.T, lis *bufconn.Listener) *grpc.ClientConn {
 	t.Helper()
