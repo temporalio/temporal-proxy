@@ -58,6 +58,8 @@ reaches a different upstream with no change to the Worker.
 
 - **Rule-based routing.** Route requests to different upstreams by Namespace and/or request metadata, with a system
   upstream for Namespace-less calls and a default fallback.
+- **Service allowlist.** Forward only the gRPC services you name, defaulting to `WorkflowService` and
+  `OperatorService`. Server reflection is opt-in, and a service you leave out is never forwarded.
 - **Namespace translation.** Rewrite local Namespace names to the names an upstream expects (prefix, suffix, or explicit
   overrides) in both requests and responses.
 - **TLS termination and outbound credentials.** Terminate inbound TLS/mTLS and attach the upstream's own TLS and
@@ -68,8 +70,10 @@ reaches a different upstream with no change to the Worker.
 - **Pluggable key management.** For a backend the proxy has no built-in support for, such as an on-prem HSM or an
   internal key service, point it at an extension server you run and it wraps DEKs through that instead. Only key
   material is exchanged; payloads never reach it.
-- **Inbound authentication.** Optional static-token or JWKS validation on the gateway; off by default. For an identity
-  system neither covers, delegate the decision to an extension server you run and it admits or refuses each caller.
+- **Inbound authentication and authorization.** Optional static-token or JWKS validation on the gateway; off by default.
+  For rules neither covers, delegate the decision to an extension server you run. It is told what the call is addressing
+  (the gRPC method, and the Namespace the proxy resolved from the request rather than from anything the caller claims),
+  so it can decide per Namespace and per method rather than only whether the caller is who it says it is.
 - **Codec-transparent.** The gateway never parses payloads. It peeks the Namespace, picks an upstream, and relays raw
   frames in both directions.
 - **Multiple deployment options.** Ship as a Go binary, a container image, or a Helm chart.
@@ -150,6 +154,11 @@ a key provider you run, and workflow payloads that the Temporal Service only eve
 [`pkg/ext`](pkg/ext), which supplies the gRPC surface, the credential check, TLS, and graceful shutdown, so writing your
 own extension server means implementing the key handling and little else.
 
+The [authorization example](examples/authz) does the same for access control: an extension server maps a JWT to claims
+and then decides each call against them, the two steps Temporal OSS splits across its `ClaimMapper` and `Authorizer`.
+Four tokens show what that buys, including a Worker that cannot reach a second Namespace and an auditor that can read
+history but not start a Workflow.
+
 ## Terms
 
 | Term             | Meaning                                                                                                                                                                                        |
@@ -157,7 +166,7 @@ own extension server means implementing the key handling and little else.
 | gateway          | The single inbound gRPC endpoint that every SDK Client, Worker, and the UI connects to. It routes each request to an upstream by Namespace and/or request metadata, and never parses payloads. |
 | upstream         | A configured destination the proxy forwards to: a Temporal Service (local dev, self-hosted, or Temporal Cloud), or another Temporal Proxy.                                                     |
 | system upstream  | The upstream that handles Namespace-less requests, such as the SDK's `GetSystemInfo` call on connect.                                                                                          |
-| extension server | A gRPC service you run that the proxy calls out to for a capability it has no built-in backend for: wrapping DEKs, or admitting inbound callers. Build one with [`pkg/ext`](pkg/ext).          |
+| extension server | A gRPC service you run that the proxy calls out to for a capability it has no built-in backend for: wrapping DEKs, or deciding if a call may proceed. Build one with [`pkg/ext`](pkg/ext).     |
 | Temporal Service | A Temporal frontend the proxy connects to.                                                                                                                                                     |
 
 ## Development

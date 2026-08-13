@@ -4,6 +4,17 @@ tls:
   cert: dev/certs/server.crt
   key: dev/certs/server.key
 
+# The gRPC services the proxy forwards, by proto full name. Omitting this
+# forwards WorkflowService and OperatorService, which is what a Client, Worker,
+# CLI, or UI needs. Service discovery is opt-in, so name the reflection service
+# only to let grpcurl and friends probe the gateway; allowing v1 allows the
+# superseded v1alpha spelling too. A service left out is not forwarded, and the
+# health service reports NOT_FOUND for it rather than a status.
+# allowedServices:
+#   - temporal.api.workflowservice.v1.WorkflowService
+#   - temporal.api.operatorservice.v1.OperatorService
+#   - grpc.reflection.v1.ServerReflection
+
 upstreams:
   - name: cluster-1
     hostPort: localhost:7233
