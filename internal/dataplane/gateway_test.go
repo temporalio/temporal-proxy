@@ -3,6 +3,7 @@ package dataplane_test
 import (
 	"context"
 	"net"
+	"sync"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -21,6 +22,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/dataplane"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/services"
+	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 )
 
 // echoMethod is the method the stand-in upstream in this file answers.
@@ -58,6 +60,14 @@ var echoDesc = grpc.ServiceDesc{
 // Reaching a correct response proves the router's pass-through codec and
 // forwarding handler are actually wired onto the server, not merely that a
 // [Dataplane] and its upstream both exist.
+// targetRecorder is an Authenticator that admits every caller and records the
+// Target it was handed.
+type targetRecorder struct {
+	mu     sync.Mutex
+	calls  int
+	target meta.Target
+}
+
 func TestGatewayForwardsAnAllowedUnregisteredMethod(t *testing.T) {
 	t.Parallel()
 
@@ -159,6 +169,36 @@ func TestGatewayEndToEndAuth(t *testing.T) {
 	}
 }
 
+// TestGatewayResolvesTargetBeforeAuthenticating pins the interceptor order. The
+// peek that resolves a Target has to run ahead of authentication, and nothing else
+// notices if it does not: the router installs its own guard, so a peek that ran
+// too late still routes correctly while every authenticator silently decides on an
+// empty Target. This drives a real request through the real chain to prove the
+// authenticator sees what the caller addressed.
+func TestGatewayResolvesTargetBeforeAuthenticating(t *testing.T) {
+	t.Parallel()
+
+	rec := &targetRecorder{}
+
+	cfg := testConfig()
+	cfg.AllowedServices = config.Services{services.WorkflowService}
+	cfg.Upstreams[0].Listen.HostPort = serveEcho(t)
+
+	d := newTestDeps(t, cfg)
+	d.auth = rec
+
+	dp := startPlane(t, d)
+	conn := dialGateway(t, dp)
+
+	resp := new(grpc_health_v1.HealthCheckResponse)
+	require.NoError(t, conn.Invoke(t.Context(), echoMethod, &grpc_health_v1.HealthCheckRequest{}, resp))
+
+	calls, target := rec.snapshot()
+	require.Equal(t, 1, calls, "the authenticator must be consulted")
+	require.Equal(t, echoMethod, target.FullName,
+		"the authenticator decided on an empty Target, so the peek ran after it")
+}
+
 // TestGatewayHealthCoversEveryAllowedService proves the gateway's health service
 // is seeded from the allowlist. A client that probes one service by name (the
 // SDK's CheckHealth names WorkflowService) must get a status, and a service the
@@ -218,6 +258,25 @@ func TestGatewayHealthCoversEveryAllowedService(t *testing.T) {
 
 // serveEcho starts a plaintext gRPC server hosting echoDesc and returns its
 // address for use as an upstream hostPort.
+func (r *targetRecorder) Authenticate(_ context.Context, target meta.Target, _ metadata.MD) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.calls++
+	r.target = target
+
+	return nil
+}
+
+func (r *targetRecorder) SecureHeaders() []string { return nil }
+
+func (r *targetRecorder) snapshot() (calls int, target meta.Target) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.calls, r.target
+}
+
 func serveEcho(t *testing.T) string {
 	t.Helper()
 

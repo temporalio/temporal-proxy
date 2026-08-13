@@ -24,13 +24,6 @@ type (
 		Upstream string
 		Conn     grpc.ClientConnInterface
 	}
-
-	// Reflector extracts the Temporal namespace from a request. Namespace
-	// receives the full method and the raw bytes of the first request message
-	// and returns the namespace, or "" when it cannot determine one.
-	Reflector interface {
-		Namespace(string, []byte) string
-	}
 )
 
 // Handler returns a grpc.StreamHandler suitable for grpc.UnknownServiceHandler,
@@ -38,12 +31,12 @@ type (
 // stream fails. A method whose service a does not allow is rejected with
 // Unimplemented before any upstream work, so the proxy answers as a server that
 // does not implement it rather than revealing that an upstream might.
-// It buffers the first request frame so r can peek the request
-// namespace, asks d for the upstream connection, then transparently forwards
-// the stream to that upstream using the same full method name: it replays the
-// buffered first frame, pumps raw frames in both directions, and propagates
-// header, trailer, and status verbatim.
-func Handler(d Director, r Reflector, a services.Allowlist, rep *Reporter) grpc.StreamHandler {
+// It reads the request namespace from the [meta.Target] that [PeekInterceptor]
+// resolved, asks d for the upstream connection, then transparently forwards the
+// stream to that upstream using the same full method name: it replays the first
+// frame, pumps raw frames in both directions, and propagates header, trailer, and
+// status verbatim.
+func Handler(d Director, a services.Allowlist, rep *Reporter) grpc.StreamHandler {
 	return func(_ any, serverStream grpc.ServerStream) error {
 		ctx := serverStream.Context()
 		method, err := rpc.FullMethod(ctx)
@@ -62,27 +55,32 @@ func Handler(d Director, r Reflector, a services.Allowlist, rep *Reporter) grpc.
 			md = inMD
 		}
 
-		// Buffer the first client frame so we can read the namespace before
-		// choosing an upstream. io.EOF means the client half-closed without
-		// sending a message (namespace is empty).
+		// An absent Target means PeekInterceptor did not run, so the namespace is
+		// unknown rather than empty. Routing on the difference would quietly send
+		// every request to the default upstream, so say so instead.
+		peeked := meta.TargetFrom(ctx)
+		if peeked.FullName == "" {
+			return status.Error(codes.Internal, "router: no target on the request context")
+		}
+
+		// Collect the first client frame so it can be replayed upstream. The peek
+		// interceptor already took it off the wire and reported any failure reading
+		// it, so this returns the buffered bytes rather than touching the transport,
+		// and anything other than io.EOF (the client half-closed without sending a
+		// message) already carries its own status.
 		first := &frame{}
 		firstErr := serverStream.RecvMsg(first)
 		eof := errors.Is(firstErr, io.EOF)
 		if firstErr != nil && !eof {
-			return rpc.StatusError("router: reading the first request failed", firstErr)
-		}
-
-		namespace := ""
-		if !eof {
-			namespace = r.Namespace(method, first.payload)
+			return firstErr
 		}
 
 		// Carry the extracted namespace to the upstream proxy so it can resolve a
 		// templated address without re-parsing the payload. Set (not append) so a
 		// client-supplied value cannot influence routing.
-		outCtx = meta.WithNamespace(outCtx, namespace)
+		outCtx = meta.WithNamespace(outCtx, peeked.Namespace)
 
-		target, err := d.Resolve(ctx, method, namespace, maps.Clone(md))
+		target, err := d.Resolve(ctx, method, peeked.Namespace, maps.Clone(md))
 		if err != nil {
 			return err
 		}

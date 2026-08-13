@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
 
@@ -55,14 +56,14 @@ func TestJWKSAuthenticate(t *testing.T) {
 			Audience:  jwt.ClaimStrings{"proxy"},
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		})
-		require.NoError(t, a.Authenticate(t.Context(), bearer(tok)))
+		require.NoError(t, a.Authenticate(t.Context(), meta.Target{}, bearer(tok)))
 	})
 
 	t.Run("expired token", func(t *testing.T) {
 		t.Parallel()
 		a := newJWKSAuthenticator(goodKeyfunc, nil, "", "", "")
 		tok := sign(jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(-time.Hour))})
-		require.Equal(t, codes.Unauthenticated, status.Code(a.Authenticate(t.Context(), bearer(tok))))
+		require.Equal(t, codes.Unauthenticated, status.Code(a.Authenticate(t.Context(), meta.Target{}, bearer(tok))))
 	})
 
 	t.Run("wrong audience", func(t *testing.T) {
@@ -72,7 +73,7 @@ func TestJWKSAuthenticate(t *testing.T) {
 			Audience:  jwt.ClaimStrings{"other"},
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		})
-		require.Equal(t, codes.Unauthenticated, status.Code(a.Authenticate(t.Context(), bearer(tok))))
+		require.Equal(t, codes.Unauthenticated, status.Code(a.Authenticate(t.Context(), meta.Target{}, bearer(tok))))
 	})
 
 	t.Run("audience OR-intersection", func(t *testing.T) {
@@ -119,7 +120,7 @@ func TestJWKSAuthenticate(t *testing.T) {
 					ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 				})
 
-				err := a.Authenticate(t.Context(), bearer(tok))
+				err := a.Authenticate(t.Context(), meta.Target{}, bearer(tok))
 				if tt.wantOK {
 					require.NoError(t, err)
 					return
@@ -137,7 +138,7 @@ func TestJWKSAuthenticate(t *testing.T) {
 			Issuer:    "https://evil",
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		})
-		require.Equal(t, codes.Unauthenticated, status.Code(a.Authenticate(t.Context(), bearer(tok))))
+		require.Equal(t, codes.Unauthenticated, status.Code(a.Authenticate(t.Context(), meta.Target{}, bearer(tok))))
 	})
 
 	t.Run("bad signature", func(t *testing.T) {
@@ -145,13 +146,13 @@ func TestJWKSAuthenticate(t *testing.T) {
 		other, _ := rsa.GenerateKey(rand.Reader, 2048)
 		a := newJWKSAuthenticator(func(*jwt.Token) (any, error) { return &other.PublicKey, nil }, nil, "", "", "")
 		tok := sign(jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))})
-		require.Equal(t, codes.Unauthenticated, status.Code(a.Authenticate(t.Context(), bearer(tok))))
+		require.Equal(t, codes.Unauthenticated, status.Code(a.Authenticate(t.Context(), meta.Target{}, bearer(tok))))
 	})
 
 	t.Run("missing header", func(t *testing.T) {
 		t.Parallel()
 		a := newJWKSAuthenticator(goodKeyfunc, nil, "", "", "")
-		require.Equal(t, codes.Unauthenticated, status.Code(a.Authenticate(t.Context(), metadata.MD{})))
+		require.Equal(t, codes.Unauthenticated, status.Code(a.Authenticate(t.Context(), meta.Target{}, metadata.MD{})))
 	})
 
 	t.Run("keys unavailable maps to Unavailable", func(t *testing.T) {
@@ -160,7 +161,7 @@ func TestJWKSAuthenticate(t *testing.T) {
 			return nil, errKeysUnavailable
 		}, nil, "", "", "")
 		tok := sign(jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))})
-		require.Equal(t, codes.Unavailable, status.Code(a.Authenticate(t.Context(), bearer(tok))))
+		require.Equal(t, codes.Unavailable, status.Code(a.Authenticate(t.Context(), meta.Target{}, bearer(tok))))
 	})
 
 	t.Run("readiness gate reports Unavailable until the loader publishes a keyfunc", func(t *testing.T) {
@@ -178,7 +179,7 @@ func TestJWKSAuthenticate(t *testing.T) {
 		// The loader is still blocked on release: the gate must be closed, so
 		// a well-formed token still fails with Unavailable rather than
 		// blocking the caller or accepting an unverifiable token.
-		require.Equal(t, codes.Unavailable, status.Code(a.Authenticate(t.Context(), bearer(tok))))
+		require.Equal(t, codes.Unavailable, status.Code(a.Authenticate(t.Context(), meta.Target{}, bearer(tok))))
 		require.Nil(t, ready.Load())
 
 		close(release)
@@ -189,7 +190,7 @@ func TestJWKSAuthenticate(t *testing.T) {
 			return ready.Load() != nil
 		}, time.Second, time.Millisecond, "loader should have published a keyfunc")
 
-		require.NoError(t, a.Authenticate(t.Context(), bearer(tok)))
+		require.NoError(t, a.Authenticate(t.Context(), meta.Target{}, bearer(tok)))
 	})
 }
 

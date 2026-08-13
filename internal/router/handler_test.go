@@ -3,6 +3,8 @@ package router_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -70,6 +72,38 @@ type (
 	stubAllowlist struct{}
 )
 
+// countDesc is a client-streaming stand-in whose Sum reads request messages until
+// the client half-closes, then reports how many it saw. Counting is what lets a
+// test see how the peek interceptor's replayed first frame combines with the rest
+// of the stream: too few means a message was swallowed, too many means one was
+// replayed twice.
+var countDesc = grpc.ServiceDesc{
+	ServiceName: "test.v1.Count",
+	HandlerType: (*any)(nil),
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Sum",
+			ClientStreams: true,
+			Handler: func(_ any, stream grpc.ServerStream) error {
+				n := 0
+				for {
+					err := stream.RecvMsg(new(grpc_health_v1.HealthCheckRequest))
+					if errors.Is(err, io.EOF) {
+						break
+					}
+					if err != nil {
+						return err
+					}
+					n++
+				}
+				return stream.SendMsg(&grpc_health_v1.HealthCheckResponse{
+					Status: grpc_health_v1.HealthCheckResponse_ServingStatus(n),
+				})
+			},
+		},
+	},
+}
+
 func TestHandlerForwardsUnary(t *testing.T) {
 	t.Parallel()
 
@@ -124,15 +158,12 @@ func TestHandlerRejectsDisallowedService(t *testing.T) {
 	director := &recordingDirector{}
 	m, _ := newTestReporter(t)
 
+	allowlist := services.NewAllowlist([]string{services.WorkflowService})
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(
-			director,
-			stubReflector{},
-			services.NewAllowlist([]string{services.WorkflowService}),
-			m,
-		)),
+		grpc.ChainStreamInterceptor(router.PeekInterceptor(stubReflector{}, allowlist)),
+		grpc.UnknownServiceHandler(router.Handler(director, allowlist, m)),
 	)
 	serve(t, relay, relayLis)
 
@@ -211,36 +242,6 @@ func TestHandlerRoutesUsingReflectorAndDirector(t *testing.T) {
 func TestHandlerForwardsEmptyMessageHalfClose(t *testing.T) {
 	t.Parallel()
 
-	// Sum reads request messages until the client half-closes, then reports how
-	// many it saw. It lets the test prove the upstream observed the half-close
-	// (it returns rather than blocking) and received no injected first frame.
-	countDesc := grpc.ServiceDesc{
-		ServiceName: "test.v1.Count",
-		HandlerType: (*any)(nil),
-		Streams: []grpc.StreamDesc{
-			{
-				StreamName:    "Sum",
-				ClientStreams: true,
-				Handler: func(_ any, stream grpc.ServerStream) error {
-					n := 0
-					for {
-						err := stream.RecvMsg(new(grpc_health_v1.HealthCheckRequest))
-						if err == io.EOF {
-							break
-						}
-						if err != nil {
-							return err
-						}
-						n++
-					}
-					return stream.SendMsg(&grpc_health_v1.HealthCheckResponse{
-						Status: grpc_health_v1.HealthCheckResponse_ServingStatus(n),
-					})
-				},
-			},
-		},
-	}
-
 	reflector := &recordingReflector{ns: "unused"}
 	var director *recordingDirector
 	m, _ := newTestReporter(t)
@@ -276,6 +277,47 @@ func TestHandlerForwardsEmptyMessageHalfClose(t *testing.T) {
 	dCalls, _, dNS, _ := director.snapshot()
 	require.Equal(t, 1, dCalls)
 	require.Empty(t, dNS)
+}
+
+func TestHandlerForwardsEveryClientMessage(t *testing.T) {
+	t.Parallel()
+
+	// The peek interceptor takes the first message off the wire and replays it, so
+	// a client stream is the one place its bookkeeping shows: the upstream has to
+	// see the replayed frame exactly once and then every later message. A wrong
+	// count here means the relay is either swallowing or duplicating requests.
+	reflector := &recordingReflector{ns: "orders"}
+	m, _ := newTestReporter(t)
+	relay := newRelayWith(
+		t,
+		func(s *grpc.Server) { s.RegisterService(&countDesc, nil) },
+		func(cc *grpc.ClientConn) router.Director { return stubDirector{cc: cc} },
+		reflector,
+		m,
+	)
+
+	stream, err := relay.NewStream(
+		t.Context(),
+		&grpc.StreamDesc{ClientStreams: true, ServerStreams: true},
+		"/test.v1.Count/Sum",
+	)
+	require.NoError(t, err)
+
+	const sent = 3
+	for i := range sent {
+		require.NoError(t, stream.SendMsg(&grpc_health_v1.HealthCheckRequest{
+			Service: fmt.Sprintf("msg-%d", i),
+		}))
+	}
+	require.NoError(t, stream.CloseSend())
+
+	resp := new(grpc_health_v1.HealthCheckResponse)
+	require.NoError(t, stream.RecvMsg(resp))
+	require.Equal(t, sent, int(resp.GetStatus()), "upstream must observe every request message exactly once")
+
+	// Only the first message is peeked, however many follow it.
+	calls, _, _ := reflector.snapshot()
+	require.Equal(t, 1, calls)
 }
 
 func TestHandlerPropagatesHeaderAndTrailer(t *testing.T) {
@@ -387,7 +429,8 @@ func TestHandlerCoHostsLocalHealthWithForwarding(t *testing.T) {
 
 	m, _ := newTestReporter(t)
 	svr, err := server.New(
-		server.WithUnknownServiceHandler(router.Handler(stubDirector{cc: upstreamConn}, stubReflector{}, stubAllowlist{}, m)),
+		server.WithStreamInterceptor(router.PeekInterceptor(stubReflector{}, stubAllowlist{})),
+		server.WithUnknownServiceHandler(router.Handler(stubDirector{cc: upstreamConn}, stubAllowlist{}, m)),
 		server.WithServerCodec(router.Codec()),
 	)
 	require.NoError(t, err)
@@ -441,7 +484,8 @@ func TestHandlerRecordsStreamSetupError(t *testing.T) {
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: brokenConn}, stubReflector{}, stubAllowlist{}, m)),
+		grpc.ChainStreamInterceptor(router.PeekInterceptor(stubReflector{}, stubAllowlist{})),
+		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: brokenConn}, stubAllowlist{}, m)),
 	)
 	serve(t, relay, relayLis)
 
@@ -474,7 +518,8 @@ func TestHandlerRelayedUpstreamErrorIsNotAForwardingError(t *testing.T) {
 
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: upstreamConn}, stubReflector{}, stubAllowlist{}, m)),
+		grpc.ChainStreamInterceptor(router.PeekInterceptor(stubReflector{}, stubAllowlist{})),
+		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: upstreamConn}, stubAllowlist{}, m)),
 	)
 	serve(t, relay, relayLis)
 
@@ -503,7 +548,8 @@ func TestHandlerStampsNamespace(t *testing.T) {
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "u", cc: upstream}, &recordingReflector{ns: "orders"}, stubAllowlist{}, m)),
+		grpc.ChainStreamInterceptor(router.PeekInterceptor(&recordingReflector{ns: "orders"}, stubAllowlist{})),
+		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "u", cc: upstream}, stubAllowlist{}, m)),
 	)
 	serve(t, relay, relayLis)
 
@@ -520,6 +566,46 @@ func TestHandlerStampsNamespace(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("upstream never received a request")
 	}
+}
+
+func TestHandlerRequiresPeekInterceptor(t *testing.T) {
+	t.Parallel()
+
+	// Without the peek interceptor there is no Target, so the handler cannot know
+	// the namespace. It says so instead of routing with an empty one: a namespace
+	// silently missing would send every request to the default upstream.
+	// The upstream answers normally, so dropping the guard makes this request
+	// succeed outright rather than fail for an incidental reason.
+	upstreamLis := bufconn.Listen(1024 * 1024)
+	upstream := grpc.NewServer()
+	grpc_health_v1.RegisterHealthServer(upstream, health.NewServer())
+	serve(t, upstream, upstreamLis)
+
+	upstreamConn := dialBufconn(t, upstreamLis)
+	t.Cleanup(func() { _ = upstreamConn.Close() })
+
+	director := &recordingDirector{cc: upstreamConn}
+	m, _ := newTestReporter(t)
+
+	relayLis := bufconn.Listen(1024 * 1024)
+	relay := grpc.NewServer(
+		grpc.ForceServerCodecV2(router.Codec()),
+		grpc.UnknownServiceHandler(router.Handler(director, stubAllowlist{}, m)),
+	)
+	serve(t, relay, relayLis)
+
+	relayConn := dialBufconn(t, relayLis)
+	t.Cleanup(func() { _ = relayConn.Close() })
+
+	// The relay does not register health, so this reaches the unknown-service
+	// handler and would be forwarded to the upstream that does.
+	_, err := grpc_health_v1.NewHealthClient(relayConn).Check(t.Context(), &grpc_health_v1.HealthCheckRequest{})
+	require.Error(t, err)
+	require.Equal(t, codes.Internal, status.Code(err))
+	require.Contains(t, status.Convert(err).Message(), "no target")
+
+	calls, _, _, _ := director.snapshot()
+	require.Zero(t, calls, "an unrouted request must not reach the Director")
 }
 
 func (s stubDirector) Resolve(context.Context, string, string, map[string][]string) (router.Target, error) {
@@ -656,7 +742,8 @@ func newRelayWith(
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(makeDirector(upstreamConn), reflector, stubAllowlist{}, reporter)),
+		grpc.ChainStreamInterceptor(router.PeekInterceptor(reflector, stubAllowlist{})),
+		grpc.UnknownServiceHandler(router.Handler(makeDirector(upstreamConn), stubAllowlist{}, reporter)),
 	)
 	serve(t, relay, relayLis)
 

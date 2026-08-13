@@ -1,7 +1,9 @@
 package api
 
 import (
+	"cmp"
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -11,6 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/temporalio/temporal-proxy/internal/rpc"
+	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 	"github.com/temporalio/temporal-proxy/pkg/api/auth/v1"
 )
 
@@ -46,15 +49,17 @@ func NewAuth(cc grpc.ClientConnInterface, secureHeaders []string) *Auth {
 	}
 }
 
-// Authenticate asks the extension server whether the caller may proceed. Any
-// response admits the stream and any error denies it, so a server that is down
-// or cannot reach its own backend fails the request closed rather than opening
-// the gateway to everyone for as long as it is unhealthy.
+// Authenticate asks the extension server whether the caller may proceed. Only an
+// explicit DECISION_ALLOW admits the stream: an error, a denial, and an answer
+// carrying no verdict all deny it, so a server that is down, misconfigured, or
+// newer than this build fails the request closed rather than opening the gateway
+// to everyone for as long as it is that way.
 //
-// A denial reaches the caller as an [rpc.Reject]: the provider's status code
-// is kept, since it tells a worker whether to fix its credential or retry, but
-// its message is demoted to the server-side detail. A provider writes that
-// message for whoever operates it, not for the caller it just turned away.
+// A denial reaches the caller as an [rpc.Reject], whose message is generic while
+// the provider's reason becomes the server-side detail: a provider writes that
+// reason for whoever operates it, not for the caller it just turned away. An
+// error keeps the provider's status code, since it tells a worker whether to fix
+// its credential or retry; a decision carries no code, so the proxy supplies one.
 //
 // The declared credential headers are lifted into the request and withheld from
 // the forwarded metadata, so each credential reaches the server in exactly one
@@ -70,13 +75,15 @@ func NewAuth(cc grpc.ClientConnInterface, secureHeaders []string) *Auth {
 // such as the method being invoked. gRPC drops reserved keys (":authority",
 // "user-agent", "content-type", "grpc-*") when writing the request, so a caller
 // cannot reach the extension server's transport this way.
-func (a *Auth) Authenticate(ctx context.Context, md metadata.MD) error {
-	req := &auth.AuthRequest{}
+func (a *Auth) Authenticate(ctx context.Context, target meta.Target, md metadata.MD) error {
+	req := &auth.AuthRequest{
+		Target: &auth.Target{FullName: target.FullName, Namespace: target.Namespace},
+	}
 	fwd := md.Copy()
 
 	for _, h := range a.headers {
 		if vals := fwd.Get(h); len(vals) > 0 {
-			req.Credentials = append(req.Credentials, &auth.CallerCredential{Header: h, Values: vals})
+			req.Credentials = append(req.Credentials, &auth.Credential{Header: h, Values: vals})
 		}
 
 		// Withheld from the forwarded metadata even when absent, so a credential
@@ -87,7 +94,8 @@ func (a *Auth) Authenticate(ctx context.Context, md metadata.MD) error {
 
 	// Replaces rather than merges any outgoing metadata already on ctx: md comes
 	// from the inbound stream and is what the server is being asked about.
-	if _, err := a.client.Auth(metadata.NewOutgoingContext(ctx, fwd), req); err != nil {
+	resp, err := a.client.Auth(metadata.NewOutgoingContext(ctx, fwd), req)
+	if err != nil {
 		// Returned unwrapped, and with the provider's message demoted to the
 		// detail: gRPC would otherwise send the caller err.Error(), which is the
 		// reason this rejection exists to keep server-side.
@@ -96,7 +104,28 @@ func (a *Auth) Authenticate(ctx context.Context, md metadata.MD) error {
 		return rpc.Reject(st.Code(), clientMessageFor(st.Code()), "external auth: "+st.Message())
 	}
 
-	return nil
+	switch d := resp.GetDecision(); d {
+	case auth.AuthResponse_DECISION_ALLOW:
+		return nil
+	case auth.AuthResponse_DECISION_DENY:
+		// The proxy supplies the code, since a decision carries none: the provider
+		// judged the caller rather than its credential, which is PermissionDenied.
+		return rpc.Reject(
+			codes.PermissionDenied,
+			clientMessageFor(codes.PermissionDenied),
+			"external auth: "+cmp.Or(resp.GetReason(), "denied without a reason"),
+		)
+	default:
+		// DECISION_UNSPECIFIED, or a value added to the enum after this build. A
+		// provider that answers without a verdict is misconfigured or too new, and
+		// neither is a reason to admit a caller. Internal rather than
+		// PermissionDenied because the fault is the provider's, not the caller's.
+		return rpc.Reject(
+			codes.Internal,
+			clientMessageFor(codes.Internal),
+			fmt.Sprintf("external auth: provider returned no usable decision (%s)", d),
+		)
+	}
 }
 
 // SecureHeaders returns the credential headers the proxy must strip before

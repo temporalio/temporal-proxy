@@ -16,6 +16,7 @@ import (
 
 	"github.com/temporalio/temporal-proxy/internal/api"
 	"github.com/temporalio/temporal-proxy/internal/auth/outbound"
+	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 	authv1 "github.com/temporalio/temporal-proxy/pkg/api/auth/v1"
 )
 
@@ -24,9 +25,11 @@ type (
 	// last unary call, letting us assert which metadata the Auth client puts on
 	// the wire without running a real extension server.
 	fakeAuthConn struct {
-		gotCtx context.Context
-		gotReq any
-		invoke error
+		gotCtx   context.Context
+		gotReq   any
+		invoke   error
+		decision authv1.AuthResponse_Decision
+		reason   string
 	}
 
 	// recordingAuthServer is a real AuthService implementation that records the
@@ -52,11 +55,11 @@ type (
 func TestAuthForwardsCallerMetadata(t *testing.T) {
 	t.Parallel()
 
-	conn := &fakeAuthConn{}
+	conn := allowingConn()
 	a := api.NewAuth(conn, nil)
 
 	md := metadata.Pairs("authorization", "Bearer caller-token", "x-caller", "worker-1")
-	require.NoError(t, a.Authenticate(t.Context(), md))
+	require.NoError(t, a.Authenticate(t.Context(), meta.Target{}, md))
 
 	// The request body is empty by design, so metadata is the only thing the
 	// extension server has to authenticate. Without this the server is asked to
@@ -70,12 +73,12 @@ func TestAuthForwardsCallerMetadata(t *testing.T) {
 func TestAuthSendsDeclaredCredentialsInRequest(t *testing.T) {
 	t.Parallel()
 
-	conn := &fakeAuthConn{}
+	conn := allowingConn()
 	a := api.NewAuth(conn, []string{"authorization", "x-api-key"})
 
 	// x-api-key repeats: gRPC allows it, so every value is carried rather than
 	// the proxy picking one on the provider's behalf.
-	require.NoError(t, a.Authenticate(t.Context(), metadata.Pairs(
+	require.NoError(t, a.Authenticate(t.Context(), meta.Target{}, metadata.Pairs(
 		"authorization", "Bearer caller-token",
 		"x-api-key", "key-1",
 		"x-api-key", "key-2",
@@ -91,10 +94,10 @@ func TestAuthSendsDeclaredCredentialsInRequest(t *testing.T) {
 func TestAuthWithholdsDeclaredCredentialsFromForwardedMetadata(t *testing.T) {
 	t.Parallel()
 
-	conn := &fakeAuthConn{}
+	conn := allowingConn()
 	a := api.NewAuth(conn, []string{"authorization"})
 
-	require.NoError(t, a.Authenticate(t.Context(), metadata.Pairs(
+	require.NoError(t, a.Authenticate(t.Context(), meta.Target{}, metadata.Pairs(
 		"authorization", "Bearer caller-token",
 		"x-caller", "worker-1",
 	)))
@@ -111,13 +114,13 @@ func TestAuthWithholdsDeclaredCredentialsFromForwardedMetadata(t *testing.T) {
 func TestAuthDoesNotMutateCallerMetadata(t *testing.T) {
 	t.Parallel()
 
-	conn := &fakeAuthConn{}
+	conn := allowingConn()
 	a := api.NewAuth(conn, []string{"authorization"})
 
 	// The interceptor forwards this same map upstream after the verdict, so
 	// withholding a header from the request must not strip it from the caller's.
 	md := metadata.Pairs("authorization", "Bearer caller-token")
-	require.NoError(t, a.Authenticate(t.Context(), md))
+	require.NoError(t, a.Authenticate(t.Context(), meta.Target{}, md))
 
 	require.Equal(t, []string{"Bearer caller-token"}, md.Get("authorization"))
 }
@@ -131,12 +134,93 @@ func TestAuthWithholdsProviderReasonFromCaller(t *testing.T) {
 	conn := &fakeAuthConn{invoke: status.Error(codes.PermissionDenied, "subject bob@corp not in group admins")}
 	a := api.NewAuth(conn, []string{"authorization"})
 
-	err := a.Authenticate(t.Context(), metadata.Pairs("authorization", "Bearer caller-token"))
+	err := a.Authenticate(t.Context(), meta.Target{}, metadata.Pairs("authorization", "Bearer caller-token"))
 	require.Error(t, err)
 
 	st := status.Convert(err)
 	require.Equal(t, codes.PermissionDenied, st.Code(), "the provider's code still reaches the caller")
 	require.NotContains(t, st.Message(), "bob@corp", "the provider's reason must not reach the caller")
+	require.Contains(t, err.Error(), "subject bob@corp not in group admins", "but it must reach the log")
+}
+
+func TestAuthSendsTarget(t *testing.T) {
+	t.Parallel()
+
+	// The provider decides on what the caller is addressing, not just on who it
+	// is, which is what makes an authorization decision possible at all.
+	conn := allowingConn()
+	a := api.NewAuth(conn, nil)
+
+	target := meta.Target{
+		FullName:  "/temporal.api.workflowservice.v1.WorkflowService/StartWorkflowExecution",
+		Namespace: "orders",
+	}
+	require.NoError(t, a.Authenticate(t.Context(), target, metadata.MD{}))
+
+	got := conn.sentTarget(t)
+	require.Equal(t, target.FullName, got.GetFullName())
+	require.Equal(t, target.Namespace, got.GetNamespace())
+}
+
+func TestAuthHonorsDecision(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		decision authv1.AuthResponse_Decision
+		wantCode codes.Code
+	}{
+		{
+			name:     "allow admits the caller",
+			decision: authv1.AuthResponse_DECISION_ALLOW,
+			wantCode: codes.OK,
+		},
+		{
+			// A denial arrives as a decision rather than an error status, and a
+			// decision carries no code, so the proxy supplies one. The provider
+			// judged the caller, which is PermissionDenied.
+			name:     "deny rejects the caller",
+			decision: authv1.AuthResponse_DECISION_DENY,
+			wantCode: codes.PermissionDenied,
+		},
+		{
+			// The zero value is not a verdict. A provider that answers without
+			// setting one is broken, and a broken provider must not admit: this is
+			// the whole reason the enum reserves zero. Internal rather than
+			// PermissionDenied because the fault is the provider's, not the caller's.
+			name:     "an unset decision denies rather than admits",
+			decision: authv1.AuthResponse_DECISION_UNSPECIFIED,
+			wantCode: codes.Internal,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			a := api.NewAuth(&fakeAuthConn{decision: tt.decision}, nil)
+
+			err := a.Authenticate(t.Context(), meta.Target{FullName: "/pkg.Svc/M"}, metadata.MD{})
+			require.Equal(t, tt.wantCode, status.Code(err))
+		})
+	}
+}
+
+func TestAuthWithholdsDenialReasonFromCaller(t *testing.T) {
+	t.Parallel()
+
+	// Same contract a rejection by error status gets: the provider's reason is
+	// written for whoever operates it and can name internal systems or subjects, so
+	// it goes to the log while the caller is told something generic.
+	conn := &fakeAuthConn{
+		decision: authv1.AuthResponse_DECISION_DENY,
+		reason:   "subject bob@corp not in group admins",
+	}
+	a := api.NewAuth(conn, nil)
+
+	err := a.Authenticate(t.Context(), meta.Target{FullName: "/pkg.Svc/M"}, metadata.MD{})
+	require.Error(t, err)
+	require.NotContains(t, status.Convert(err).Message(), "bob@corp", "the reason must not reach the caller")
 	require.Contains(t, err.Error(), "subject bob@corp not in group admins", "but it must reach the log")
 }
 
@@ -149,7 +233,7 @@ func TestAuthDeniesWhenServerFails(t *testing.T) {
 	conn := &fakeAuthConn{invoke: status.Error(codes.Unavailable, "backend down")}
 	a := api.NewAuth(conn, nil)
 
-	err := a.Authenticate(t.Context(), metadata.Pairs("authorization", "Bearer caller-token"))
+	err := a.Authenticate(t.Context(), meta.Target{}, metadata.Pairs("authorization", "Bearer caller-token"))
 	require.Error(t, err)
 	require.Equal(t, codes.Unavailable, status.Code(err))
 }
@@ -160,12 +244,12 @@ func TestAuthCanonicalizesDeclaredHeaders(t *testing.T) {
 	// gRPC lowercases metadata keys on the wire, so a mixed-case configured header
 	// has to be canonicalized before it is matched against one or reported as a
 	// header to strip. The built-in authenticators do this at construction too.
-	conn := &fakeAuthConn{}
+	conn := allowingConn()
 	a := api.NewAuth(conn, []string{"Authorization", "X-API-Key"})
 
 	require.Equal(t, []string{"authorization", "x-api-key"}, a.SecureHeaders())
 
-	require.NoError(t, a.Authenticate(t.Context(), metadata.Pairs("authorization", "Bearer caller-token")))
+	require.NoError(t, a.Authenticate(t.Context(), meta.Target{}, metadata.Pairs("authorization", "Bearer caller-token")))
 	require.Equal(t, map[string][]string{"authorization": {"Bearer caller-token"}}, conn.sentCredentials(t))
 }
 
@@ -214,7 +298,7 @@ func TestAuthCallerCredentialSurvivesExtensionCredentialOnSameHeader(t *testing.
 	})
 
 	a := api.NewAuth(conn, []string{"authorization"})
-	require.NoError(t, a.Authenticate(t.Context(), metadata.Pairs(
+	require.NoError(t, a.Authenticate(t.Context(), meta.Target{}, metadata.Pairs(
 		"authorization", "Bearer caller-token",
 		"x-caller", "worker-1",
 	)))
@@ -239,7 +323,7 @@ func TestAuthDeclaresNothingWhenNoCredentialHeadersConfigured(t *testing.T) {
 	conn := dialRecordingAuthServer(t, srv, nil)
 
 	a := api.NewAuth(conn, nil)
-	require.NoError(t, a.Authenticate(t.Context(), metadata.Pairs(
+	require.NoError(t, a.Authenticate(t.Context(), meta.Target{}, metadata.Pairs(
 		"authorization", "Bearer caller-token",
 		"x-caller", "worker-1",
 	)))
@@ -291,7 +375,7 @@ func (s *recordingAuthServer) Auth(ctx context.Context, req *authv1.AuthRequest)
 	defer s.mu.Unlock()
 	s.md, s.creds = md, creds
 
-	return &authv1.AuthResponse{}, nil
+	return &authv1.AuthResponse{Decision: authv1.AuthResponse_DECISION_ALLOW}, nil
 }
 
 func (s *recordingAuthServer) metadata() metadata.MD {
@@ -319,11 +403,30 @@ func (c *proxyCredential) Header() string { return c.header }
 // headers reach the server.
 func (c *proxyCredential) RequireTransportSecurity() bool { return false }
 
-func (f *fakeAuthConn) Invoke(ctx context.Context, _ string, args, _ any, _ ...grpc.CallOption) error {
+func (f *fakeAuthConn) Invoke(ctx context.Context, _ string, args, reply any, _ ...grpc.CallOption) error {
 	f.gotCtx = ctx
 	f.gotReq = args
 
-	return f.invoke
+	if f.invoke != nil {
+		return f.invoke
+	}
+
+	if resp, ok := reply.(*authv1.AuthResponse); ok {
+		resp.Decision = f.decision
+		resp.Reason = f.reason
+	}
+
+	return nil
+}
+
+// sentTarget returns the Target the recorded request carried.
+func (f *fakeAuthConn) sentTarget(t *testing.T) *authv1.Target {
+	t.Helper()
+
+	req, ok := f.gotReq.(*authv1.AuthRequest)
+	require.True(t, ok, "expected an *AuthRequest, got %T", f.gotReq)
+
+	return req.GetTarget()
 }
 
 // sentCredentials returns the credentials the recorded request carried, flattened
@@ -347,4 +450,10 @@ func (f *fakeAuthConn) NewStream(
 	context.Context, *grpc.StreamDesc, string, ...grpc.CallOption,
 ) (grpc.ClientStream, error) {
 	return nil, errors.New("streaming not supported")
+}
+
+// allowingConn is a provider that admits, which is what the tests covering
+// credential and metadata plumbing need: the verdict is not what they are about.
+func allowingConn() *fakeAuthConn {
+	return &fakeAuthConn{decision: authv1.AuthResponse_DECISION_ALLOW}
 }

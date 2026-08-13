@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
@@ -18,15 +19,20 @@ const (
 )
 
 type (
-	// Authenticator authenticates an inbound request from its metadata. It
-	// returns nil to allow the request, or a gRPC status error to reject it.
-	// SecureHeaders reports the metadata headers the authenticator consumes, so
-	// the proxy can strip the caller's credentials before forwarding upstream;
-	// it returns nil when the authenticator consumes no header. An
-	// authenticator may name more than one because it need not own the header
-	// it reads: an external one is told which headers its server consumes.
+	// Authenticator authenticates an inbound request from what it is addressing
+	// and the metadata it carries. It returns nil to allow the request, or a gRPC
+	// status error to reject it. SecureHeaders reports the metadata headers the
+	// authenticator consumes, so the proxy can strip the caller's credentials
+	// before forwarding upstream; it returns nil when the authenticator consumes
+	// no header. An authenticator may name more than one because it need not own
+	// the header it reads: an external one is told which headers its server
+	// consumes.
+	//
+	// The target is what the gateway resolved for this stream. Its Namespace is
+	// empty for a request that named none, so an implementation weighing it must
+	// treat empty as "unknown" rather than as a value to match on.
 	Authenticator interface {
-		Authenticate(ctx context.Context, md metadata.MD) error
+		Authenticate(ctx context.Context, target meta.Target, md metadata.MD) error
 		SecureHeaders() []string
 	}
 
@@ -58,7 +64,7 @@ func StreamServerInterceptor(a Authenticator, log logger.Logger) grpc.StreamServ
 
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		md, _ := metadata.FromIncomingContext(ss.Context())
-		if err := a.Authenticate(ss.Context(), md); err != nil {
+		if err := a.Authenticate(ss.Context(), meta.TargetFrom(ss.Context()), md); err != nil {
 			log.Warn(
 				"inbound authentication rejected",
 				tag.String("method", info.FullMethod),
@@ -89,7 +95,7 @@ func StreamServerInterceptor(a Authenticator, log logger.Logger) grpc.StreamServ
 	}
 }
 
-func (a *admitAll) Authenticate(_ context.Context, _ metadata.MD) error {
+func (a *admitAll) Authenticate(_ context.Context, _ meta.Target, _ metadata.MD) error {
 	return nil
 }
 

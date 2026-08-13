@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"github.com/temporalio/temporal-proxy/internal/rpc"
+	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 )
 
 // StaticTokenAuthenticator authenticates a request by comparing the bearer
@@ -36,7 +37,7 @@ func NewStaticTokenAuthenticator(token, header, scheme string) (*StaticTokenAuth
 
 // Authenticate compares the extracted token against the configured value in
 // constant time.
-func (a *StaticTokenAuthenticator) Authenticate(_ context.Context, md metadata.MD) error {
+func (a *StaticTokenAuthenticator) Authenticate(_ context.Context, _ meta.Target, md metadata.MD) error {
 	got, ok := extractToken(md, a.header, a.scheme)
 	if !ok {
 		return rpc.Reject(codes.Unauthenticated, "missing or malformed credentials",

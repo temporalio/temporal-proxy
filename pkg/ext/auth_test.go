@@ -16,14 +16,16 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/ext"
 )
 
-// stubAuth records what the service handed it and answers with a fixed error.
-// err is set at construction and never mutated, so it needs no locking.
+// stubAuth records what the service handed it and answers with a fixed response
+// and error. Both are set at construction and never mutated, so they need no
+// locking.
 type stubAuth struct {
-	err error
+	resp *auth.AuthResponse
+	err  error
 
 	mu    sync.Mutex
 	calls int
-	creds []*auth.CallerCredential
+	req   *auth.AuthRequest
 	md    metadata.MD
 }
 
@@ -32,12 +34,23 @@ func TestAuthServiceDelegates(t *testing.T) {
 
 	tests := []struct {
 		name     string
+		resp     *auth.AuthResponse
 		authErr  error
 		wantCode codes.Code
 	}{
 		{
-			name:     "nil admits the caller",
-			authErr:  nil,
+			name:     "an allow decision admits the caller",
+			resp:     &auth.AuthResponse{Decision: auth.AuthResponse_DECISION_ALLOW},
+			wantCode: codes.OK,
+		},
+		{
+			// A denial is an ordinary answer, not a failure: it travels as a
+			// response so the reason can travel with it.
+			name: "a deny decision is not an error",
+			resp: &auth.AuthResponse{
+				Decision: auth.AuthResponse_DECISION_DENY,
+				Reason:   "not in group admins",
+			},
 			wantCode: codes.OK,
 		},
 		{
@@ -64,7 +77,7 @@ func TestAuthServiceDelegates(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			stub := &stubAuth{err: tt.authErr}
+			stub := &stubAuth{resp: tt.resp, err: tt.authErr}
 			cc := dial(t, serve(t, ext.WithAuth(stub)), nil)
 
 			res, err := auth.NewAuthServiceClient(cc).Auth(t.Context(), &auth.AuthRequest{})
@@ -77,15 +90,55 @@ func TestAuthServiceDelegates(t *testing.T) {
 	}
 }
 
+func TestAuthServiceForwardsTarget(t *testing.T) {
+	t.Parallel()
+
+	// The implementation is handed the request whole, so what the caller is
+	// addressing arrives alongside who it is. This is also why the interface takes
+	// the message: a field added to it reaches implementations without a break.
+	stub := allowingStubAuth()
+	cc := dial(t, serve(t, ext.WithAuth(stub)), nil)
+
+	_, err := auth.NewAuthServiceClient(cc).Auth(t.Context(), &auth.AuthRequest{
+		Target: &auth.Target{
+			FullName:  "/temporal.api.workflowservice.v1.WorkflowService/StartWorkflowExecution",
+			Namespace: "orders",
+		},
+	})
+	require.NoError(t, err)
+
+	got := stub.request().GetTarget()
+	require.Equal(
+		t,
+		"/temporal.api.workflowservice.v1.WorkflowService/StartWorkflowExecution",
+		got.GetFullName(),
+	)
+	require.Equal(t, "orders", got.GetNamespace())
+}
+
+func TestAuthServiceReportsMissingAnswer(t *testing.T) {
+	t.Parallel()
+
+	// An implementation that returns neither a response nor an error has not
+	// decided anything. Saying so is better than sending an empty message the
+	// proxy would read as an absent verdict and blame on the wire.
+	stub := &stubAuth{}
+	cc := dial(t, serve(t, ext.WithAuth(stub)), nil)
+
+	_, err := auth.NewAuthServiceClient(cc).Auth(t.Context(), &auth.AuthRequest{})
+	require.Error(t, err)
+	require.Equal(t, codes.Internal, status.Code(err))
+}
+
 func TestAuthServiceForwardsCredentialsAndMetadata(t *testing.T) {
 	t.Parallel()
 
-	stub := &stubAuth{}
+	stub := allowingStubAuth()
 	cc := dial(t, serve(t, ext.WithAuth(stub)), nil)
 
 	ctx := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("x-caller", "worker-1"))
 	_, err := auth.NewAuthServiceClient(cc).Auth(ctx, &auth.AuthRequest{
-		Credentials: []*auth.CallerCredential{
+		Credentials: []*auth.Credential{
 			{Header: "authorization", Values: []string{"Bearer caller-token"}},
 			{Header: "x-api-key", Values: []string{"one", "two"}},
 		},
@@ -109,7 +162,7 @@ func TestAuthServiceForwardsCredentialsAndMetadata(t *testing.T) {
 func TestAuthServiceReceivesNoCredentials(t *testing.T) {
 	t.Parallel()
 
-	stub := &stubAuth{}
+	stub := allowingStubAuth()
 	cc := dial(t, serve(t, ext.WithAuth(stub)), nil)
 
 	// A caller that presented none of the declared headers. The handler is still
@@ -128,7 +181,7 @@ func TestServerAuth(t *testing.T) {
 	// One server for the whole table: the guard is a property of the server, and
 	// what varies is what the caller presents.
 	addr := serve(t,
-		ext.WithAuth(&stubAuth{}),
+		ext.WithAuth(allowingStubAuth()),
 		ext.WithServerAuth(extHeader, acceptExtToken),
 	)
 	cc := dial(t, addr, nil)
@@ -227,7 +280,7 @@ func TestServerAuthNilCheckLeavesServerOpen(t *testing.T) {
 	// Documented behaviour rather than desirable behaviour: the option reads as
 	// configured at the call site, so a nil fn is worth pinning down.
 	cc := dial(t, serve(t,
-		ext.WithAuth(&stubAuth{}),
+		ext.WithAuth(allowingStubAuth()),
 		ext.WithServerAuth(extHeader, nil),
 	), nil)
 
@@ -235,16 +288,23 @@ func TestServerAuthNilCheckLeavesServerOpen(t *testing.T) {
 	require.NoError(t, err, "a nil check admits everyone")
 }
 
-func (s *stubAuth) Authenticate(ctx context.Context, creds []*auth.CallerCredential) error {
+func (s *stubAuth) Authenticate(ctx context.Context, req *auth.AuthRequest) (*auth.AuthResponse, error) {
 	md, _ := metadata.FromIncomingContext(ctx)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.calls++
-	s.creds, s.md = creds, md
+	s.req, s.md = req, md
 
-	return s.err
+	return s.resp, s.err
+}
+
+func (s *stubAuth) request() *auth.AuthRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.req
 }
 
 func (s *stubAuth) called() bool {
@@ -254,11 +314,11 @@ func (s *stubAuth) called() bool {
 	return s.calls > 0
 }
 
-func (s *stubAuth) credentials() []*auth.CallerCredential {
+func (s *stubAuth) credentials() []*auth.Credential {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.creds
+	return s.req.GetCredentials()
 }
 
 func (s *stubAuth) metadata() metadata.MD {
@@ -266,4 +326,10 @@ func (s *stubAuth) metadata() metadata.MD {
 	defer s.mu.Unlock()
 
 	return s.md
+}
+
+// allowingStubAuth admits every caller, for the tests where the verdict is not
+// what is under test.
+func allowingStubAuth() *stubAuth {
+	return &stubAuth{resp: &auth.AuthResponse{Decision: auth.AuthResponse_DECISION_ALLOW}}
 }

@@ -40,15 +40,16 @@ const (
 // into AuthRequest and strips them from the stream it forwards, so a credential
 // this service consumes never reaches an upstream.
 type AuthServiceClient interface {
-	// Auth reports whether the caller behind the current stream may proceed.
-	// Returning a response admits the stream; returning a gRPC error denies it
-	// (UNAUTHENTICATED for a missing or invalid credential, PERMISSION_DENIED for
-	// a valid one that is not allowed here).
+	// Auth reports whether the caller behind the current stream may proceed. The
+	// verdict travels in the response's decision, and only DECISION_ALLOW admits,
+	// so a response left unfilled denies rather than admitting by accident.
 	//
-	// The proxy treats every error as a denial, including one that says nothing
-	// about the caller. A provider that cannot reach its own backend should
-	// report that failure (UNAVAILABLE, DEADLINE_EXCEEDED) rather than admit the
-	// caller: an authenticator that fails open is worse than one that is down.
+	// Return an error only for having reached no verdict at all, such as a backend
+	// this server cannot itself reach. The proxy denies either way, but an error
+	// keeps its status code, so UNAVAILABLE or DEADLINE_EXCEEDED tells a worker to
+	// retry where a denial tells it not to bother. A provider that cannot reach its
+	// own backend should report that rather than admit the caller: an authenticator
+	// that fails open is worse than one that is down.
 	Auth(ctx context.Context, in *AuthRequest, opts ...grpc.CallOption) (*AuthResponse, error)
 }
 
@@ -88,15 +89,16 @@ func (c *authServiceClient) Auth(ctx context.Context, in *AuthRequest, opts ...g
 // into AuthRequest and strips them from the stream it forwards, so a credential
 // this service consumes never reaches an upstream.
 type AuthServiceServer interface {
-	// Auth reports whether the caller behind the current stream may proceed.
-	// Returning a response admits the stream; returning a gRPC error denies it
-	// (UNAUTHENTICATED for a missing or invalid credential, PERMISSION_DENIED for
-	// a valid one that is not allowed here).
+	// Auth reports whether the caller behind the current stream may proceed. The
+	// verdict travels in the response's decision, and only DECISION_ALLOW admits,
+	// so a response left unfilled denies rather than admitting by accident.
 	//
-	// The proxy treats every error as a denial, including one that says nothing
-	// about the caller. A provider that cannot reach its own backend should
-	// report that failure (UNAVAILABLE, DEADLINE_EXCEEDED) rather than admit the
-	// caller: an authenticator that fails open is worse than one that is down.
+	// Return an error only for having reached no verdict at all, such as a backend
+	// this server cannot itself reach. The proxy denies either way, but an error
+	// keeps its status code, so UNAVAILABLE or DEADLINE_EXCEEDED tells a worker to
+	// retry where a denial tells it not to bother. A provider that cannot reach its
+	// own backend should report that rather than admit the caller: an authenticator
+	// that fails open is worse than one that is down.
 	Auth(context.Context, *AuthRequest) (*AuthResponse, error)
 	mustEmbedUnimplementedAuthServiceServer()
 }
