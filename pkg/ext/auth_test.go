@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
+	health "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
@@ -27,6 +28,186 @@ type stubAuth struct {
 	calls int
 	req   *auth.AuthRequest
 	md    metadata.MD
+}
+
+func TestAllow(t *testing.T) {
+	t.Parallel()
+
+	resp := ext.Allow()
+	require.Equal(t, auth.AuthResponse_DECISION_ALLOW, resp.GetDecision())
+	require.Empty(t, resp.GetReason())
+}
+
+func TestDeny(t *testing.T) {
+	t.Parallel()
+
+	resp := ext.Deny("holds reader, needs writer")
+	require.Equal(t, auth.AuthResponse_DECISION_DENY, resp.GetDecision())
+	require.Equal(t, "holds reader, needs writer", resp.GetReason())
+}
+
+// TestDenyWithoutReason pins that an absent reason still denies: the decision
+// carries the verdict, so a caller is refused whether or not anyone said why.
+func TestDenyWithoutReason(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, auth.AuthResponse_DECISION_DENY, ext.Deny("").GetDecision())
+}
+
+func TestBearerToken(t *testing.T) {
+	t.Parallel()
+
+	creds := func(header string, values ...string) []*auth.Credential {
+		return []*auth.Credential{{Header: header, Values: values}}
+	}
+
+	tests := []struct {
+		name  string
+		req   *auth.AuthRequest
+		hdr   string
+		want  string
+		error string
+	}{
+		{
+			name: "returns the token",
+			req:  &auth.AuthRequest{Credentials: creds("authorization", "Bearer abc.def")},
+			hdr:  "authorization",
+			want: "abc.def",
+		},
+		{
+			name: "matches the header case-insensitively",
+			req:  &auth.AuthRequest{Credentials: creds("authorization", "Bearer abc")},
+			hdr:  "Authorization",
+			want: "abc",
+		},
+		{
+			name: "matches the scheme case-insensitively",
+			req:  &auth.AuthRequest{Credentials: creds("authorization", "bearer abc")},
+			hdr:  "authorization",
+			want: "abc",
+		},
+		{
+			name: "keeps whitespace inside the token",
+			req:  &auth.AuthRequest{Credentials: creds("authorization", "Bearer  abc")},
+			hdr:  "authorization",
+			want: " abc",
+		},
+		{
+			name: "finds the header among others",
+			req: &auth.AuthRequest{Credentials: []*auth.Credential{
+				{Header: "x-api-key", Values: []string{"opaque"}},
+				{Header: "authorization", Values: []string{"Bearer abc"}},
+			}},
+			hdr:  "authorization",
+			want: "abc",
+		},
+		{
+			name:  "rejects a request with no credentials",
+			req:   &auth.AuthRequest{},
+			hdr:   "authorization",
+			error: "no credential presented on authorization",
+		},
+		{
+			name:  "rejects a nil request",
+			req:   nil,
+			hdr:   "authorization",
+			error: "no credential presented on authorization",
+		},
+		{
+			name:  "rejects a different header",
+			req:   &auth.AuthRequest{Credentials: creds("x-api-key", "Bearer abc")},
+			hdr:   "authorization",
+			error: "no credential presented on authorization",
+		},
+		{
+			name:  "rejects a repeated value rather than choosing one",
+			req:   &auth.AuthRequest{Credentials: creds("authorization", "Bearer abc", "Bearer xyz")},
+			hdr:   "authorization",
+			error: "authorization carries 2 values, want exactly one",
+		},
+		{
+			name:  "rejects a header with no values",
+			req:   &auth.AuthRequest{Credentials: creds("authorization")},
+			hdr:   "authorization",
+			error: "authorization carries 0 values, want exactly one",
+		},
+		{
+			name:  "rejects another scheme",
+			req:   &auth.AuthRequest{Credentials: creds("authorization", "Basic abc")},
+			hdr:   "authorization",
+			error: "authorization is not a Bearer credential",
+		},
+		{
+			name:  "rejects a value shorter than the scheme",
+			req:   &auth.AuthRequest{Credentials: creds("authorization", "Bear")},
+			hdr:   "authorization",
+			error: "authorization is not a Bearer credential",
+		},
+		{
+			name:  "rejects a bare token with no scheme",
+			req:   &auth.AuthRequest{Credentials: creds("authorization", "abc.def")},
+			hdr:   "authorization",
+			error: "authorization is not a Bearer credential",
+		},
+		{
+			name:  "rejects the scheme with no token behind it",
+			req:   &auth.AuthRequest{Credentials: creds("authorization", "Bearer ")},
+			hdr:   "authorization",
+			error: "authorization carries no token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := ext.BearerToken(tt.req, tt.hdr)
+			if tt.error != "" {
+				require.Empty(t, got)
+				require.Equal(t, codes.Unauthenticated, status.Code(err))
+				require.Equal(t, tt.error, status.Convert(err).Message())
+
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestIsHealthCheckMethod(t *testing.T) {
+	t.Parallel()
+
+	const workflowService = "/temporal.api.workflowservice.v1.WorkflowService/"
+
+	tests := []struct {
+		name string
+		full string
+		want bool
+	}{
+		{name: "health check", full: health.Health_Check_FullMethodName, want: true},
+		{name: "health watch", full: health.Health_Watch_FullMethodName, want: true},
+		{name: "get system info", full: workflowService + "GetSystemInfo", want: true},
+		// GetClusterInfo reports on the service too, but nothing needs it to connect,
+		// and Temporal's own authorizer charges it as a cluster-scoped read.
+		{name: "get cluster info", full: workflowService + "GetClusterInfo", want: false},
+		{name: "start workflow", full: workflowService + "StartWorkflowExecution", want: false},
+		{name: "poll", full: workflowService + "PollWorkflowTaskQueue", want: false},
+		{name: "empty", full: "", want: false},
+		// Matched exactly: a method name is not caller-supplied, so there is nothing
+		// to normalize and a near miss is a bug rather than a spelling to accept.
+		{name: "wrong case", full: workflowService + "getsysteminfo", want: false},
+		{name: "no leading slash", full: "temporal.api.workflowservice.v1.WorkflowService/GetSystemInfo", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			require.Equal(t, tt.want, ext.IsHealthCheckMethod(tt.full))
+		})
+	}
 }
 
 func TestAuthServiceDelegates(t *testing.T) {

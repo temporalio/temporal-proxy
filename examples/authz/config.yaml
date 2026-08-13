@@ -1,0 +1,40 @@
+# Proxy configuration for the extension server authorization example.
+#
+# Workers and starters connect to the gateway in plaintext, carrying a JWT on the
+# authorization header. The proxy asks the extension server about every stream it
+# accepts and forwards only the ones it is told to admit, so the Temporal Service
+# behind it never sees a call the extension server refused.
+#
+# The proxy holds no secret here. The token signing secret lives only in the
+# extension server and in the gentoken command:
+#   AUTHZ_JWT_SECRET  HMAC secret tokens are signed and verified with (not read
+#                     by the proxy)
+#
+# The proxy runs from the repository root, so paths here are relative to it.
+hostPort: 127.0.0.1:7234 # the dev server holds 7233
+
+routing:
+  default: local
+
+upstreams:
+  - name: local
+    hostPort: 127.0.0.1:7233 # temporal server start-dev
+
+# The authorization backend. The proxy opens this connection at startup, so an
+# extension server that is not running yet fails the proxy's start rather than
+# the first request.
+#
+# Plaintext, with no credential the proxy presents: this hop carries the caller's
+# token, and a real deployment would run it over TLS and require a credential
+# here. See examples/kms for that arrangement, and the note in server/main.go.
+extensionServers:
+  - name: authz
+    hostPort: 127.0.0.1:9444
+
+# Inbound authentication and authorization, delegated to the extension server
+# above. Without this block the proxy admits every caller.
+auth:
+  external:
+    name: authz
+    credentialHeaders:
+      - authorization
