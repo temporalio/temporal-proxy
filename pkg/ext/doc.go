@@ -27,6 +27,12 @@
 // whether the caller can fix this or should retry, and a plain error arrives as
 // Unknown.
 //
+// [Allow], [Deny], [BearerToken], and [IsHealthCheckMethod] cover the parts of an
+// [Auth] implementation that are the same everywhere, and the first two are worth
+// preferring to a hand-built response: an [api.auth.v1.AuthResponse] whose
+// Decision is unset denies, so building one by hand can refuse a caller by
+// omission.
+//
 // [Serve] listens in plaintext unless [WithServerOption] supplies credentials, and
 // warns once when the first call confirms it. Both are supported, but the ends must
 // agree, since the proxy dials plaintext when the extension server's TLS block is
