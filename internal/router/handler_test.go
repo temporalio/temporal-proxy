@@ -530,6 +530,10 @@ func (stubReflector) Namespace(string, []byte) string { return "" }
 
 func (stubAllowlist) Allows(string) bool { return true }
 
+// ServiceNames has nothing to report: this stub admits by rule rather than from
+// a set, and the handler never enumerates.
+func (stubAllowlist) ServiceNames() []string { return nil }
+
 func (r *recordingReflector) Namespace(method string, payload []byte) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -1,12 +1,22 @@
 package services
 
+import (
+	"maps"
+	"slices"
+)
+
 type (
-	// Allowlist reports whether the proxy will forward the named service. Allows
-	// matches a service full name only, so a caller holding a gRPC full method
-	// must strip the method first. An Allowlist built from no names allows
-	// nothing.
+	// Allowlist is the set of services the proxy will forward. One built from no
+	// names admits nothing.
 	Allowlist interface {
+		// Allows reports whether the named service was admitted. It matches a
+		// service full name only, so a caller holding a gRPC full method must strip
+		// the method first.
 		Allows(string) bool
+
+		// ServiceNames returns the admitted names in sorted order, for callers that
+		// publish the set rather than query it.
+		ServiceNames() []string
 	}
 
 	// allowSet is the concrete admission set, keyed by proto full name. It admits
@@ -33,4 +43,10 @@ func NewAllowlist(names []string) Allowlist {
 func (s allowSet) Allows(name string) bool {
 	_, ok := s[name]
 	return ok
+}
+
+// ServiceNames returns every admitted name, aliases included, sorted so the
+// order does not shift between runs.
+func (s allowSet) ServiceNames() []string {
+	return slices.Sorted(maps.Keys(s))
 }

@@ -354,6 +354,69 @@ func TestWithServerCodec(t *testing.T) {
 	require.Positive(t, rec.calls.Load(), "forced server codec should be exercised")
 }
 
+func TestWithHealthServices(t *testing.T) {
+	t.Parallel()
+
+	// Literal names rather than the services package's constants: the server is
+	// generic and only publishes what it is handed.
+	const (
+		workflow = "temporal.api.workflowservice.v1.WorkflowService"
+		operator = "temporal.api.operatorservice.v1.OperatorService"
+	)
+
+	var serving atomic.Int32
+	serving.Store(int32(grpc_health_v1.HealthCheckResponse_SERVING))
+	hc := server.HealthCheckFunc(10*time.Millisecond, func(context.Context) grpc_health_v1.HealthCheckResponse_ServingStatus {
+		return grpc_health_v1.HealthCheckResponse_ServingStatus(serving.Load())
+	})
+
+	svr, err := server.New(
+		server.WithHealthCheck(hc),
+		server.WithHealthServices(workflow, operator),
+	)
+	require.NoError(t, err)
+
+	lis := bufconn.Listen(1024 * 1024)
+	defer func() { _ = lis.Close() }()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- svr.Start(t.Context(), lis) }()
+
+	conn := newBufConnClient(t, lis)
+	defer func() { _ = conn.Close() }()
+
+	client := grpc_health_v1.NewHealthClient(conn)
+	check := func(service string) (*grpc_health_v1.HealthCheckResponse, error) {
+		return client.Check(t.Context(), &grpc_health_v1.HealthCheckRequest{Service: service})
+	}
+
+	// Asserted without Eventually: every entry exists from construction, so a
+	// client that connects the instant the server starts cannot see NOT_FOUND for
+	// a service the server advertises.
+	for _, service := range []string{"", workflow, operator} {
+		resp, err := check(service)
+		require.NoError(t, err, "Check(%q)", service)
+		require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.GetStatus(), "Check(%q)", service)
+	}
+
+	// A service that was not advertised stays unknown, so a client cannot read a
+	// status for something this server does not answer for.
+	_, err = check("temporal.api.adminservice.v1.AdminService")
+	require.Equal(t, codes.NotFound, status.Code(err))
+
+	// The periodic check drives every entry, not just the unnamed one.
+	serving.Store(int32(grpc_health_v1.HealthCheckResponse_NOT_SERVING))
+	for _, service := range []string{"", workflow, operator} {
+		require.Eventually(t, func() bool {
+			resp, err := check(service)
+			return err == nil && resp.GetStatus() == grpc_health_v1.HealthCheckResponse_NOT_SERVING
+		}, time.Second, 10*time.Millisecond, "Check(%q)", service)
+	}
+
+	require.NoError(t, svr.Stop(t.Context()))
+	<-errCh
+}
+
 func TestServerStartAndStop(t *testing.T) {
 	t.Parallel()
 

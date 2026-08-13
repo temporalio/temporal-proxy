@@ -104,6 +104,47 @@ func TestAllowlistAllows(t *testing.T) {
 	}
 }
 
+func TestAllowlistServiceNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		allowed []string
+		want    []string
+	}{
+		{
+			name:    "the default set names the two default services",
+			allowed: services.Default(),
+			want:    []string{services.OperatorService, services.WorkflowService},
+		},
+		{
+			name:    "reflection names both spellings, since both are admitted",
+			allowed: []string{services.Reflection},
+			want:    []string{services.Reflection, services.ReflectionV1Alpha},
+		},
+		{
+			name:    "a repeated name is named once",
+			allowed: []string{services.WorkflowService, services.WorkflowService},
+			want:    []string{services.WorkflowService},
+		},
+		{
+			name:    "an empty list names nothing",
+			allowed: nil,
+			want:    nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Sorted output, so callers publishing these (health entries, log
+			// lines) get a stable order rather than map iteration order.
+			require.Equal(t, tt.want, services.NewAllowlist(tt.allowed).ServiceNames())
+		})
+	}
+}
+
 func TestNewAllowlistToleratesDuplicates(t *testing.T) {
 	t.Parallel()
 

@@ -159,6 +159,63 @@ func TestGatewayEndToEndAuth(t *testing.T) {
 	}
 }
 
+// TestGatewayHealthCoversEveryAllowedService proves the gateway's health service
+// is seeded from the allowlist. A client that probes one service by name (the
+// SDK's CheckHealth names WorkflowService) must get a status, and a service the
+// gateway will not forward must stay unknown rather than report SERVING.
+func TestGatewayHealthCoversEveryAllowedService(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		allowed  config.Services
+		serving  []string
+		notFound string
+	}{
+		{
+			// The configuration an SDK worker crashed behind: it names no services,
+			// so the entries have to come from the default set rather than from the
+			// raw field, or WorkflowService is unknown again.
+			name:     "a configuration naming no service publishes the default set",
+			allowed:  nil,
+			serving:  []string{"", services.WorkflowService, services.OperatorService},
+			notFound: services.Reflection,
+		},
+		{
+			// Allowing reflection admits its superseded spelling too, so both answer.
+			name:     "named services publish, compatibility aliases included",
+			allowed:  config.Services{services.WorkflowService, services.Reflection},
+			serving:  []string{"", services.WorkflowService, services.Reflection, services.ReflectionV1Alpha},
+			notFound: services.OperatorService,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := liveConfig(t)
+			cfg.AllowedServices = tt.allowed
+
+			dp := startPlane(t, newTestDeps(t, cfg))
+			client := grpc_health_v1.NewHealthClient(dialGateway(t, dp))
+
+			check := func(service string) (*grpc_health_v1.HealthCheckResponse, error) {
+				return client.Check(t.Context(), &grpc_health_v1.HealthCheckRequest{Service: service})
+			}
+
+			for _, svc := range tt.serving {
+				resp, err := check(svc)
+				require.NoError(t, err, "Check(%q)", svc)
+				require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.GetStatus(), "Check(%q)", svc)
+			}
+
+			_, err := check(tt.notFound)
+			require.Equal(t, codes.NotFound, status.Code(err), "Check(%q) must not report a status", tt.notFound)
+		})
+	}
+}
+
 // serveEcho starts a plaintext gRPC server hosting echoDesc and returns its
 // address for use as an upstream hostPort.
 func serveEcho(t *testing.T) string {
