@@ -317,21 +317,33 @@ func newUpstreamTier(
 		dialOpts = append(dialOpts, outbound.DialOptions(cp)...)
 	}
 
-	// A vault is present whenever encryption keys are configured, which may be
-	// true even when encryption is disabled; install the interceptor whenever one
-	// is present and pass Enabled so sealing is gated while inbound decryption
-	// always runs. That keeps payloads sealed earlier openable after encryption
-	// is turned off for new traffic. Added after translation so it is the
-	// innermost unary interceptor, sealing outbound payloads last and opening
-	// inbound payloads first.
-	if o.vault != nil {
-		enc, err := proxy.EncryptionInterceptor(cfg.Encryption.Enabled, o.vault, reps.encryption)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to build encryption interceptor for upstream %q: %w", up.Name, err)
-		}
+	// One interceptor applies every payload codec, so anything added to the chain
+	// travels this path without another interceptor here. It decides for itself
+	// which codecs a direction needs and skips a direction with none, so it is
+	// installed unconditionally rather than gated on any one codec's config. A
+	// vault is present whenever encryption keys are configured, which may be true
+	// even when encryption is disabled; passing Enabled gates sealing while
+	// inbound decryption always runs, keeping payloads sealed earlier openable
+	// after encryption is turned off for new traffic. Added after translation so
+	// it is the innermost unary interceptor, encoding outbound payloads last and
+	// decoding inbound payloads first.
+	codecOpts := proxy.CodecOptions{Encrypt: cfg.Encryption.Enabled}
 
-		dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(enc))
+	// Only assign the vault once it is known to be there. o.vault is a concrete
+	// pointer and the field is an interface, so assigning unconditionally would
+	// hand over a non-nil interface holding a nil pointer, which reads as a vault
+	// being present and panics the first time a payload is opened.
+	if o.vault != nil {
+		codecOpts.Vault = o.vault
+		codecOpts.Reporter = reps.encryption
 	}
+
+	cdc, err := proxy.CodecInterceptor(codecOpts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to build codec interceptor for upstream %q: %w", up.Name, err)
+	}
+
+	dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(cdc))
 
 	res, err := proxy.ResolverFor(up, dialOpts, o.logger)
 	if err != nil {
