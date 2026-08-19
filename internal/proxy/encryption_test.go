@@ -1,4 +1,4 @@
-package proxy
+package proxy_test
 
 import (
 	"bytes"
@@ -13,14 +13,15 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/common/v1"
-	"go.temporal.io/api/proxy"
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/temporalio/temporal-proxy/internal/metrics"
+	"github.com/temporalio/temporal-proxy/internal/proxy"
 	"github.com/temporalio/temporal-proxy/internal/transport/meta"
+	"github.com/temporalio/temporal-proxy/pkg/codec"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
 )
 
@@ -31,87 +32,87 @@ const (
 
 // fakeVault is a reversible in-memory Vault. Seal prefixes the plaintext with
 // sealPrefix (so sealed data is observably distinct from cleartext) and records
-// the namespace it was called with; Open strips the prefix. Errors and a fixed
-// Open result can be injected to exercise the interceptor's failure paths. It is
-// safe for concurrent use because the payload visitor may seal/open payloads
-// from multiple goroutines within a single call.
+// the namespace it was called with; Open strips the prefix. Errors can be
+// injected to exercise the interceptor's failure paths. It is safe for
+// concurrent use because the payload visitor may seal/open payloads from
+// multiple goroutines within a single call.
 type fakeVault struct {
 	mu         sync.Mutex
 	namespaces []string // namespaces passed to Seal, in call order
 	opens      int      // number of Open calls
 	sealErr    error    // when set, Seal returns it
 	openErr    error    // when set, Open returns it
-	openReturn []byte   // when set, Open returns these bytes instead of the unsealed plaintext
 }
 
-func TestEncryptionInterceptorRoundtrip(t *testing.T) {
+func TestEncryptionRoundtrip(t *testing.T) {
 	t.Parallel()
 
 	v := &fakeVault{}
-	interceptor, err := EncryptionInterceptor(true, v, newTestReporter(t))
+	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: v, Encrypt: true, Reporter: newTestReporter(t)})
 	require.NoError(t, err)
 
-	input := &common.Payloads{Payloads: []*common.Payload{testPayload("json/plain", `"hi"`)}}
-	want := proto.Clone(input.Payloads[0]).(*common.Payload)
+	original := []*common.Payload{
+		testPayload("json/plain", `"first"`),
+		testPayload("json/plain", `"second"`),
+	}
+	want := []*common.Payload{
+		proto.Clone(original[0]).(*common.Payload),
+		proto.Clone(original[1]).(*common.Payload),
+	}
 
-	req := &workflowservice.StartWorkflowExecutionRequest{Namespace: "local", Input: input}
+	req := startRequest(original...)
 	resp := &workflowservice.StartWorkflowExecutionRequest{}
 
 	invoker := func(_ context.Context, _ string, gotReq, gotResp any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
-		// Outbound: the request payload reached the upstream sealed.
-		sent := gotReq.(*workflowservice.StartWorkflowExecutionRequest).Input.Payloads[0]
-		require.Equal(t, encryptionEncoding, string(sent.Metadata[metadataEncoding]))
-		require.True(t, bytes.HasPrefix(sent.Data, []byte(sealPrefix)))
+		// Outbound: every payload reached the upstream sealed. What the sealed form
+		// looks like is pinned in pkg/codec; what matters here is that the upstream
+		// sees ciphertext rather than the plaintext the caller handed in.
+		sent := gotReq.(*workflowservice.StartWorkflowExecutionRequest).Input.Payloads
+		require.Len(t, sent, len(original))
 
-		// Echo the sealed payload back so the inbound path can open it.
-		gotResp.(*workflowservice.StartWorkflowExecutionRequest).Input = &common.Payloads{
-			Payloads: []*common.Payload{sent},
+		for i, p := range sent {
+			require.Equal(t, codec.EncryptionEncoding, string(p.Metadata[codec.MetadataEncoding]))
+			require.True(t, bytes.HasPrefix(p.Data, []byte(sealPrefix)))
+			require.NotEqual(t, want[i].Data, p.Data)
 		}
+
+		// Echo the sealed payloads back so the inbound path can open them.
+		gotResp.(*workflowservice.StartWorkflowExecutionRequest).Input = &common.Payloads{Payloads: sent}
 		return nil
 	}
 
 	ctx := meta.WithNamespace(t.Context(), "orders")
 	require.NoError(t, interceptor(ctx, "/svc/Start", req, resp, nil, invoker))
 
-	require.Len(t, resp.Input.Payloads, 1)
-	require.True(t, proto.Equal(want, resp.Input.Payloads[0]))
-	require.Equal(t, []string{"orders"}, v.namespaces)
+	require.Len(t, resp.Input.Payloads, len(want))
+	for i := range want {
+		require.True(t, proto.Equal(want[i], resp.Input.Payloads[i]), "payload %d did not round-trip", i)
+	}
+
+	// One Seal per payload, each under the request's namespace.
+	require.Equal(t, []string{"orders", "orders"}, v.namespaces)
 }
 
-func TestEncryptionInterceptorDisabledSkipsOutbound(t *testing.T) {
+func TestEncryptionDisabledSkipsOutbound(t *testing.T) {
 	t.Parallel()
 
 	v := &fakeVault{}
-	interceptor, err := EncryptionInterceptor(false, v, newTestReporter(t))
+	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: v, Reporter: newTestReporter(t)})
 	require.NoError(t, err)
 
-	// A response payload sealed exactly as fakeVault.Seal would produce it, so
-	// the inbound path can open it without the interceptor ever sealing.
 	orig := testPayload("json/plain", `"hi"`)
-	sealed := &common.Payload{
-		Metadata: map[string][]byte{
-			metadataEncoding:        []byte(encryptionEncoding),
-			metadataEncryptionKeyID: []byte(testKEKID),
-			metadataEncryptionDEK:   []byte("dek:orders"),
-		},
-		Data: append([]byte(sealPrefix), mustMarshal(t, orig)...),
-	}
-
-	req := &workflowservice.StartWorkflowExecutionRequest{
-		Namespace: "local",
-		Input:     &common.Payloads{Payloads: []*common.Payload{testPayload("json/plain", `"hi"`)}},
-	}
+	req := startRequest(testPayload("json/plain", `"hi"`))
 	resp := &workflowservice.StartWorkflowExecutionRequest{}
 
 	invoker := func(_ context.Context, _ string, gotReq, gotResp any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
 		// Outbound sealing is disabled: the request payload reaches the upstream
 		// as cleartext with its original encoding.
 		sent := gotReq.(*workflowservice.StartWorkflowExecutionRequest).Input.Payloads[0]
-		require.Equal(t, "json/plain", string(sent.Metadata[metadataEncoding]))
+		require.Equal(t, "json/plain", string(sent.Metadata[codec.MetadataEncoding]))
 		require.False(t, bytes.HasPrefix(sent.Data, []byte(sealPrefix)))
 
 		gotResp.(*workflowservice.StartWorkflowExecutionRequest).Input = &common.Payloads{
-			Payloads: []*common.Payload{sealed},
+			Payloads: []*common.Payload{sealedPayload(t, orig)},
 		}
 		return nil
 	}
@@ -126,21 +127,105 @@ func TestEncryptionInterceptorDisabledSkipsOutbound(t *testing.T) {
 	require.Empty(t, v.namespaces, "interceptor must not seal when disabled")
 }
 
-func TestEncryptionInterceptorRecordsVaultOps(t *testing.T) {
+func TestEncryptionNamespace(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		ctx  func(t *testing.T) context.Context
+		want string
+	}{
+		{
+			name: "namespace from metadata",
+			ctx:  func(t *testing.T) context.Context { return meta.WithNamespace(t.Context(), "orders") },
+			want: "orders",
+		},
+		{
+			name: "namespace appended to outgoing metadata",
+			ctx: func(t *testing.T) context.Context {
+				return metadata.AppendToOutgoingContext(t.Context(), meta.NamespaceHeader, "ns1")
+			},
+			want: "ns1",
+		},
+		{
+			name: "absent namespace seals under empty string",
+			ctx:  func(t *testing.T) context.Context { return t.Context() },
+			want: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			v := &fakeVault{}
+			interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: v, Encrypt: true, Reporter: newTestReporter(t)})
+			require.NoError(t, err)
+
+			req := startRequest(testPayload("json/plain", "x"))
+			resp := &workflowservice.StartWorkflowExecutionRequest{}
+			require.NoError(t, interceptor(tc.ctx(t), "/svc/Start", req, resp, nil, respondWith()))
+
+			require.Equal(t, []string{tc.want}, v.namespaces)
+		})
+	}
+}
+
+func TestEncryptionErrors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("seal error aborts before the call", func(t *testing.T) {
+		t.Parallel()
+
+		v := &fakeVault{sealErr: errors.New("kms unavailable")}
+		interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: v, Encrypt: true, Reporter: newTestReporter(t)})
+		require.NoError(t, err)
+
+		called := false
+		invoker := func(context.Context, string, any, any, *grpc.ClientConn, ...grpc.CallOption) error {
+			called = true
+			return nil
+		}
+
+		req := startRequest(testPayload("json/plain", "x"))
+		resp := &workflowservice.StartWorkflowExecutionRequest{}
+		err = interceptor(t.Context(), "/svc/Start", req, resp, nil, invoker)
+
+		require.ErrorContains(t, err, "failed to encrypt payload")
+		require.False(t, called, "upstream must not be called when sealing fails")
+	})
+
+	// The remaining decode failures are pinned in pkg/codec. What is left to show
+	// here is that one surfaces as the call's error rather than being swallowed,
+	// leaving the caller to treat the response as unusable.
+	t.Run("open error fails the call", func(t *testing.T) {
+		t.Parallel()
+
+		v := &fakeVault{openErr: errors.New("unwrap failed")}
+		interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: v, Reporter: newTestReporter(t)})
+		require.NoError(t, err)
+
+		invoker := respondWith(sealedPayload(t, testPayload("json/plain", "x")))
+		resp := &workflowservice.StartWorkflowExecutionRequest{}
+		err = interceptor(t.Context(), "/svc/Start", startRequest(), resp, nil, invoker)
+
+		require.ErrorContains(t, err, "failed to decrypt payload")
+	})
+}
+
+func TestEncryptionRecordsVaultOps(t *testing.T) {
 	t.Parallel()
 
 	reg := prometheus.NewRegistry()
-	reporter := NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"))
+	reporter := proxy.NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"))
 
 	vault := &fakeVault{}
-	interceptor, err := EncryptionInterceptor(true, vault, reporter)
+	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: vault, Encrypt: true, Reporter: reporter})
 	require.NoError(t, err)
 
 	ctx := metadata.AppendToOutgoingContext(t.Context(), meta.NamespaceHeader, "ns1")
 
-	req := &workflowservice.StartWorkflowExecutionRequest{
-		Input: &common.Payloads{Payloads: []*common.Payload{{Data: []byte("hi")}}},
-	}
+	req := startRequest(&common.Payload{Data: []byte("hi")})
 	resp := &workflowservice.StartWorkflowExecutionRequest{}
 
 	// Echo the sealed request payload back so the inbound path opens it,
@@ -165,31 +250,24 @@ func TestEncryptionInterceptorRecordsVaultOps(t *testing.T) {
 	require.True(t, hasLabels(dur, map[string]string{"operation": "decrypt", "namespace": "ns1"}))
 }
 
-func TestEncryptionInterceptorSkipsMetricsForPassThrough(t *testing.T) {
+func TestEncryptionSkipsMetricsForPassThrough(t *testing.T) {
 	t.Parallel()
 
 	reg := prometheus.NewRegistry()
-	reporter := NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"))
+	reporter := proxy.NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"))
 
 	vault := &fakeVault{}
-	interceptor, err := EncryptionInterceptor(true, vault, reporter)
+	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: vault, Encrypt: true, Reporter: reporter})
 	require.NoError(t, err)
 
 	ctx := metadata.AppendToOutgoingContext(t.Context(), meta.NamespaceHeader, "ns1")
 
-	req := &workflowservice.StartWorkflowExecutionRequest{
-		Input: &common.Payloads{Payloads: []*common.Payload{{Data: []byte("hi")}}},
-	}
+	req := startRequest(&common.Payload{Data: []byte("hi")})
 	resp := &workflowservice.StartWorkflowExecutionRequest{}
 
 	// Return an unencrypted response payload; the inbound path must pass it
 	// through without opening it or recording a decrypt op.
-	invoker := func(_ context.Context, _ string, _, gotResp any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
-		gotResp.(*workflowservice.StartWorkflowExecutionRequest).Input = &common.Payloads{
-			Payloads: []*common.Payload{testPayload("json/plain", `"plain"`)},
-		}
-		return nil
-	}
+	invoker := respondWith(testPayload("json/plain", `"plain"`))
 	require.NoError(t, interceptor(ctx, "/method", req, resp, nil, invoker))
 
 	require.Equal(t, 0, vault.opens)
@@ -198,137 +276,6 @@ func TestEncryptionInterceptorSkipsMetricsForPassThrough(t *testing.T) {
 	require.NotNil(t, ops)
 	require.True(t, hasLabels(ops, map[string]string{"operation": "encrypt", "result": "success", "namespace": "ns1"}))
 	require.False(t, hasLabels(ops, map[string]string{"operation": "decrypt", "result": "success", "namespace": "ns1"}))
-}
-
-func TestEncryptDecryptPayloadsRoundtrip(t *testing.T) {
-	t.Parallel()
-
-	v := &fakeVault{}
-	r := newTestReporter(t)
-	vc := visitCtx(meta.WithNamespace(t.Context(), "ns1"))
-
-	original := []*common.Payload{
-		testPayload("json/plain", `"first"`),
-		testPayload("json/plain", `"second"`),
-	}
-	want := []*common.Payload{
-		proto.Clone(original[0]).(*common.Payload),
-		proto.Clone(original[1]).(*common.Payload),
-	}
-
-	sealed, err := encryptPayloads(v, r)(vc, original)
-	require.NoError(t, err)
-	require.Len(t, sealed, len(original))
-
-	for _, p := range sealed {
-		require.Equal(t, encryptionEncoding, string(p.Metadata[metadataEncoding]))
-		require.Equal(t, testKEKID, string(p.Metadata[metadataEncryptionKeyID]))
-		require.NotEmpty(t, p.Metadata[metadataEncryptionDEK])
-		// The data on the wire is ciphertext, never the marshaled plaintext.
-		require.True(t, bytes.HasPrefix(p.Data, []byte(sealPrefix)))
-	}
-
-	require.Equal(t, []string{"ns1", "ns1"}, v.namespaces)
-
-	opened, err := decryptPayloads(v, r)(vc, sealed)
-	require.NoError(t, err)
-	require.Len(t, opened, len(want))
-
-	for i := range want {
-		require.True(t, proto.Equal(want[i], opened[i]), "payload %d did not round-trip", i)
-	}
-}
-
-func TestDecryptPayloadsPassesThroughUnencrypted(t *testing.T) {
-	t.Parallel()
-
-	v := &fakeVault{}
-	r := newTestReporter(t)
-	vc := visitCtx(meta.WithNamespace(t.Context(), "ns1"))
-
-	orig := testPayload("json/plain", `"secret"`)
-	sealed, err := encryptPayloads(v, r)(vc, []*common.Payload{orig})
-	require.NoError(t, err)
-
-	plain := testPayload("json/plain", `"visible"`)
-
-	out, err := decryptPayloads(v, r)(vc, []*common.Payload{sealed[0], plain})
-	require.NoError(t, err)
-	require.Len(t, out, 2)
-	require.True(t, proto.Equal(orig, out[0]))
-	require.Same(t, plain, out[1], "unencrypted payload should pass through by reference")
-	require.Equal(t, 1, v.opens, "Open must be called only for the sealed payload")
-}
-
-func TestEncryptPayloadsNamespace(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		ctx  func(t *testing.T) context.Context
-		want string
-	}{
-		{
-			name: "namespace from metadata",
-			ctx:  func(t *testing.T) context.Context { return meta.WithNamespace(t.Context(), "orders") },
-			want: "orders",
-		},
-		{
-			name: "absent namespace seals under empty string",
-			ctx:  func(t *testing.T) context.Context { return t.Context() },
-			want: "",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			v := &fakeVault{}
-			_, err := encryptPayloads(v, newTestReporter(t))(visitCtx(tc.ctx(t)), []*common.Payload{testPayload("json/plain", "x")})
-			require.NoError(t, err)
-			require.Equal(t, []string{tc.want}, v.namespaces)
-		})
-	}
-}
-
-func TestEncryptDecryptPayloadsErrors(t *testing.T) {
-	t.Parallel()
-
-	t.Run("seal error", func(t *testing.T) {
-		t.Parallel()
-
-		v := &fakeVault{sealErr: errors.New("kms unavailable")}
-		_, err := encryptPayloads(v, newTestReporter(t))(visitCtx(t.Context()), []*common.Payload{testPayload("json/plain", "x")})
-		require.ErrorContains(t, err, "failed to encrypt payload")
-	})
-
-	t.Run("open error", func(t *testing.T) {
-		t.Parallel()
-
-		v := &fakeVault{}
-		r := newTestReporter(t)
-		vc := visitCtx(meta.WithNamespace(t.Context(), "ns1"))
-		sealed, err := encryptPayloads(v, r)(vc, []*common.Payload{testPayload("json/plain", "x")})
-		require.NoError(t, err)
-
-		v.openErr = errors.New("unwrap failed")
-		_, err = decryptPayloads(v, r)(vc, sealed)
-		require.ErrorContains(t, err, "failed to decrypt payload")
-	})
-
-	t.Run("unmarshal error", func(t *testing.T) {
-		t.Parallel()
-
-		v := &fakeVault{openReturn: []byte{0xFF, 0xFF, 0xFF}}
-		r := newTestReporter(t)
-		vc := visitCtx(meta.WithNamespace(t.Context(), "ns1"))
-		sealed, err := encryptPayloads(v, r)(vc, []*common.Payload{testPayload("json/plain", "x")})
-		require.NoError(t, err)
-
-		_, err = decryptPayloads(v, r)(vc, sealed)
-		require.ErrorContains(t, err, "failed to unmarshal payload")
-	})
 }
 
 func (f *fakeVault) Seal(_ context.Context, ns string, data []byte) (*crypto.Message, error) {
@@ -354,9 +301,6 @@ func (f *fakeVault) Open(_ context.Context, msg *crypto.Message) ([]byte, error)
 	if f.openErr != nil {
 		return nil, f.openErr
 	}
-	if f.openReturn != nil {
-		return f.openReturn, nil
-	}
 
 	if !bytes.HasPrefix(msg.Ciphertext, []byte(sealPrefix)) {
 		return nil, fmt.Errorf("ciphertext was not sealed by fakeVault")
@@ -367,29 +311,60 @@ func (f *fakeVault) Open(_ context.Context, msg *crypto.Message) ([]byte, error)
 
 func testPayload(encoding, data string) *common.Payload {
 	return &common.Payload{
-		Metadata: map[string][]byte{metadataEncoding: []byte(encoding)},
+		Metadata: map[string][]byte{codec.MetadataEncoding: []byte(encoding)},
 		Data:     []byte(data),
 	}
 }
 
-func mustMarshal(t *testing.T, p *common.Payload) []byte {
+// sealedPayload returns p as [fakeVault.Seal] would have sealed it, so a
+// response payload can arrive already encrypted without the interceptor having
+// sealed it on the way out.
+func sealedPayload(t *testing.T, p *common.Payload) *common.Payload {
 	t.Helper()
 
 	data, err := p.Marshal()
 	require.NoError(t, err)
-	return data
+
+	return &common.Payload{
+		Metadata: map[string][]byte{
+			codec.MetadataEncoding:        []byte(codec.EncryptionEncoding),
+			codec.MetadataEncryptionKeyID: []byte(testKEKID),
+			codec.MetadataEncryptionDEK:   []byte("dek:orders"),
+		},
+		Data: append([]byte(sealPrefix), data...),
+	}
 }
 
-func visitCtx(ctx context.Context) *proxy.VisitPayloadsContext {
-	return &proxy.VisitPayloadsContext{Context: ctx}
+// startRequest builds the request the interceptor is handed, carrying payloads
+// as its workflow input. StartWorkflowExecution is used throughout because its
+// input is the payload field the visitor walks.
+func startRequest(payloads ...*common.Payload) *workflowservice.StartWorkflowExecutionRequest {
+	req := &workflowservice.StartWorkflowExecutionRequest{Namespace: "local"}
+	if len(payloads) > 0 {
+		req.Input = &common.Payloads{Payloads: payloads}
+	}
+
+	return req
+}
+
+// respondWith returns an invoker that ignores the request and hands back
+// payloads as the response's workflow input.
+func respondWith(payloads ...*common.Payload) grpc.UnaryInvoker {
+	return func(_ context.Context, _ string, _, gotResp any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
+		if len(payloads) > 0 {
+			gotResp.(*workflowservice.StartWorkflowExecutionRequest).Input = &common.Payloads{Payloads: payloads}
+		}
+
+		return nil
+	}
 }
 
 // newTestReporter builds a Reporter backed by its own private registry, so
 // call sites under test have a Reporter to record into without colliding with
 // any other test's metrics.
-func newTestReporter(t *testing.T) *Reporter {
+func newTestReporter(t *testing.T) *proxy.Reporter {
 	t.Helper()
-	return NewReporter(metrics.New("test", promauto.With(prometheus.NewRegistry())).ForSubsystem("encryption"))
+	return proxy.NewReporter(metrics.New("test", promauto.With(prometheus.NewRegistry())).ForSubsystem("encryption"))
 }
 
 // gatherFamily returns the metric family named name from reg, or nil if no
