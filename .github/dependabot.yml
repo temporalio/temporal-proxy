@@ -4,6 +4,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: go.temporal.io/api
     open-pull-requests-limit: 5
     labels:
       - dependencies
