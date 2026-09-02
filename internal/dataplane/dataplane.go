@@ -24,6 +24,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
 
 type (
@@ -307,6 +308,17 @@ func newUpstreamTier(
 	rules := &up.Namespaces.Rules
 	if rules.Configured() {
 		dialOpts = append(dialOpts, proxy.TranslationDialOptions(o.translator, rules.Remote, rules.Local)...)
+	}
+
+	// Cloud derives its endpoint and authorizes requests by the translated
+	// namespace, so report one that cannot work there. Remote is identity when no
+	// rules are configured, which still catches a client sending a short name to
+	// an upstream that expects fully-qualified ones.
+	if up.IsCloud() {
+		dialOpts = append(dialOpts, proxy.CloudNamespaceDialOptions(
+			rules.Remote,
+			o.logger.With(tag.String("upstream", up.Name)),
+		)...)
 	}
 
 	cp, err := outbound.CredentialProviderFor(up.Credentials)

@@ -616,3 +616,225 @@ func TestNamespaceRulesConfigured(t *testing.T) {
 		})
 	}
 }
+
+func TestUpstream_IsCloud(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		upstream *config.Upstream
+		want     bool
+	}{
+		{
+			name: "per-namespace endpoint",
+			upstream: &config.Upstream{
+				Name:   "cloud",
+				Listen: config.ListenConfig{HostPort: "quickstart.a1b2c.tmprl.cloud:7233"},
+			},
+			want: true,
+		},
+		{
+			name: "templated endpoint",
+			upstream: &config.Upstream{
+				Name:   "cloud",
+				Listen: config.ListenConfig{HostPort: "{{ .RemoteNamespace }}.tmprl.cloud:7233"},
+			},
+			want: true,
+		},
+		{
+			name: "declared, address says nothing",
+			upstream: &config.Upstream{
+				Name:   "private-link",
+				Cloud:  true,
+				Listen: config.ListenConfig{HostPort: "vpce-0abc123.us-east-1.vpce.amazonaws.com:7233"},
+			},
+			want: true,
+		},
+		{
+			// A private-link upstream reaches Cloud through a per-VPC hostname but
+			// still pins Cloud's certificate, so the server name gives it away.
+			name: "cloud server name with a private-link address",
+			upstream: &config.Upstream{
+				Name: "private-link",
+				Listen: config.ListenConfig{
+					HostPort: "vpce-0abc123.us-east-1.vpce.amazonaws.com:7233",
+					TLS:      &config.TLSConfig{ServerName: "quickstart.a1b2c.tmprl.cloud"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "self-hosted, no TLS",
+			upstream: &config.Upstream{
+				Name:   "local",
+				Listen: config.ListenConfig{HostPort: "localhost:7233"},
+			},
+		},
+		{
+			name: "self-hosted with TLS",
+			upstream: &config.Upstream{
+				Name: "local",
+				Listen: config.ListenConfig{
+					HostPort: "temporal.internal:7233",
+					TLS:      &config.TLSConfig{ServerName: "temporal.internal"},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			require.Equal(t, tt.want, tt.upstream.IsCloud())
+		})
+	}
+}
+
+func TestUpstream_Validate_Cloud(t *testing.T) {
+	t.Parallel()
+
+	// Every case shares a Cloud address, so IsCloud is true without the flag
+	// except where the case says otherwise.
+	upstream := func(rules config.NamespaceRules) *config.Upstream {
+		return &config.Upstream{
+			Name:       "cloud",
+			Listen:     config.ListenConfig{HostPort: "{{ .RemoteNamespace }}.tmprl.cloud:7233"},
+			Namespaces: config.NamespaceConfig{Rules: rules},
+		}
+	}
+
+	tests := []struct {
+		name       string
+		upstream   *config.Upstream
+		wantTuples [][2]string
+	}{
+		{
+			name:     "account suffix",
+			upstream: upstream(config.NamespaceRules{Suffix: ".a1b2c"}),
+		},
+		{
+			name:     "no rules at all",
+			upstream: upstream(config.NamespaceRules{}),
+		},
+		{
+			// The motivating bug: an unset TEMPORAL_ACCOUNT expands to empty, so
+			// the suffix is a bare dot and every namespace translates to "<name>.".
+			name:       "suffix is a bare dot",
+			upstream:   upstream(config.NamespaceRules{Suffix: "."}),
+			wantTuples: [][2]string{{"namespaces.rules", "suffix"}},
+		},
+		{
+			name:       "suffix has no leading dot",
+			upstream:   upstream(config.NamespaceRules{Suffix: "-prod"}),
+			wantTuples: [][2]string{{"namespaces.rules", "suffix"}},
+		},
+		{
+			name:       "suffix account id too short",
+			upstream:   upstream(config.NamespaceRules{Suffix: ".a1b"}),
+			wantTuples: [][2]string{{"namespaces.rules", "suffix"}},
+		},
+		{
+			name: "override remote is a cloud namespace",
+			upstream: upstream(config.NamespaceRules{
+				Overrides: []config.NamespaceMapping{{Local: "orders", Remote: "orders.a1b2c"}},
+			}),
+		},
+		{
+			name: "override remote is not a cloud namespace",
+			upstream: upstream(config.NamespaceRules{
+				Overrides: []config.NamespaceMapping{{Local: "orders", Remote: "orders"}},
+			}),
+			wantTuples: [][2]string{{"namespaces.rules.overrides[0]", "remote"}},
+		},
+		{
+			name: "only the offending override is reported",
+			upstream: upstream(config.NamespaceRules{
+				Overrides: []config.NamespaceMapping{
+					{Local: "orders", Remote: "orders.a1b2c"},
+					{Local: "billing", Remote: "billing"},
+				},
+			}),
+			wantTuples: [][2]string{{"namespaces.rules.overrides[1]", "remote"}},
+		},
+		{
+			// An empty remote is already reported as required, so the cloud rule
+			// stays quiet rather than piling a second entry onto the same field.
+			name: "empty override remote reports required only",
+			upstream: upstream(config.NamespaceRules{
+				Overrides: []config.NamespaceMapping{{Local: "orders", Remote: ""}},
+			}),
+			wantTuples: [][2]string{{"namespaces.rules.overrides[0]", "remote"}},
+		},
+		{
+			name: "declared cloud with a private-link address",
+			upstream: &config.Upstream{
+				Name:       "private-link",
+				Cloud:      true,
+				Listen:     config.ListenConfig{HostPort: "vpce-0abc123.us-east-1.vpce.amazonaws.com:7233"},
+				Namespaces: config.NamespaceConfig{Rules: config.NamespaceRules{Suffix: "."}},
+			},
+			wantTuples: [][2]string{{"namespaces.rules", "suffix"}},
+		},
+		{
+			// The gate is the whole point: a self-hosted upstream is free to use
+			// names Cloud would reject.
+			name: "self-hosted upstream is not held to cloud rules",
+			upstream: &config.Upstream{
+				Name:   "local",
+				Listen: config.ListenConfig{HostPort: "localhost:7233"},
+				Namespaces: config.NamespaceConfig{Rules: config.NamespaceRules{
+					Suffix:    "-prod",
+					Overrides: []config.NamespaceMapping{{Local: "orders", Remote: "orders"}},
+				}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tt.upstream.Validate()
+			if len(tt.wantTuples) == 0 {
+				require.NoError(t, err)
+				return
+			}
+
+			var errs validation.Errors
+			require.True(t, errors.As(err, &errs), "expected validation.Errors, got %T", err)
+
+			got := make([][2]string, len(errs))
+			for i, e := range errs {
+				got[i] = [2]string{e.Subject, e.Field}
+			}
+
+			require.ElementsMatch(t, tt.wantTuples, got)
+		})
+	}
+}
+
+func TestUpstreamCloudErrorPath(t *testing.T) {
+	t.Parallel()
+
+	// The flag round-trips through YAML, and a cloud failure reports the whole
+	// dotted path so an operator can find the offending key.
+	cfg, err := config.Load(strings.NewReader(`
+hostPort: 127.0.0.1:7233
+upstreams:
+  - name: private-link
+    cloud: true
+    hostPort: vpce-0abc123.us-east-1.vpce.amazonaws.com:7233
+    namespaces:
+      rules:
+        suffix: .
+`))
+	require.NoError(t, err)
+	require.True(t, cfg.Upstreams[0].Cloud)
+
+	require.EqualError(
+		t,
+		cfg.Validate(),
+		`upstreams[0].namespaces.rules: suffix: must be ".<account-id>" for a Temporal Cloud upstream`,
+	)
+}
