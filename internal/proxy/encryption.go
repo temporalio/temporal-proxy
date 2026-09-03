@@ -32,7 +32,7 @@ type (
 func (c *cipher) Encrypt(data []byte) (*crypto.Message, error) {
 	start := time.Now()
 	msg, err := c.v.Seal(c.ctx, c.ns, data)
-	c.r.VaultOp("encrypt", resultLabel(err), c.ns, time.Since(start).Seconds())
+	c.r.VaultOp(c.ctx, "encrypt", resultLabel(err), c.ns, time.Since(start).Seconds())
 
 	return msg, err
 }
@@ -41,7 +41,7 @@ func (c *cipher) Encrypt(data []byte) (*crypto.Message, error) {
 func (c *cipher) Decrypt(m *crypto.Message) ([]byte, error) {
 	start := time.Now()
 	pt, err := c.v.Open(c.ctx, m)
-	c.r.VaultOp("decrypt", resultLabel(err), c.ns, time.Since(start).Seconds())
+	c.r.VaultOp(c.ctx, "decrypt", resultLabel(err), c.ns, time.Since(start).Seconds())
 
 	return pt, err
 }

@@ -75,7 +75,9 @@ reaches a different upstream with no change to the Worker.
   (the gRPC method, and the Namespace the proxy resolved from the request rather than from anything the caller claims),
   so it can decide per Namespace and per method rather than only whether the caller is who it says it is.
 - **Prometheus metrics.** Expose request latency and counts, routing decisions, and encryption activity on `/metrics`.
-  The listen address and the namespace prefixed onto every metric are set under `metrics:` in the config.
+  The listen address and the namespace prefixed onto every metric are set under `metrics:` in the config, which can
+  also name request metadata to carry onto the request-scoped metrics as extra labels, so they can be sliced by a
+  dimension only your callers know.
 - **Codec-transparent.** The gateway never parses payloads. It peeks the Namespace, picks an upstream, and relays raw
   frames in both directions.
 - **Multiple deployment options.** Ship as a Go binary, a container image, or a Helm chart.

@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/proxy"
 	"github.com/temporalio/temporal-proxy/internal/transport/meta"
@@ -213,11 +214,53 @@ func TestEncryptionErrors(t *testing.T) {
 	})
 }
 
+func TestEncryptionRecordsVaultOpsWithTags(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	tags := metrics.NewTags([]config.MetricTag{{Header: "X-Tenant", Label: "tenant"}})
+	reporter := proxy.NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"), tags)
+
+	vault := &fakeVault{}
+	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: vault, Encrypt: true, Reporter: reporter})
+	require.NoError(t, err)
+
+	// The namespace reaches this hop as outgoing metadata, but a tag is read
+	// from the incoming metadata the gateway forwarded over the socket, which is
+	// the only reason tags work on this side at all.
+	ctx := metadata.AppendToOutgoingContext(t.Context(), meta.NamespaceHeader, "ns1")
+	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs("x-tenant", "acme"))
+
+	req := startRequest(&common.Payload{Data: []byte("hi")})
+	resp := &workflowservice.StartWorkflowExecutionRequest{}
+
+	invoker := func(_ context.Context, _ string, gotReq, gotResp any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
+		sent := gotReq.(*workflowservice.StartWorkflowExecutionRequest).Input.Payloads[0]
+		gotResp.(*workflowservice.StartWorkflowExecutionRequest).Input = &common.Payloads{
+			Payloads: []*common.Payload{sent},
+		}
+		return nil
+	}
+	require.NoError(t, interceptor(ctx, "/method", req, resp, nil, invoker))
+
+	ops := gatherFamily(t, reg, "proxy_encryption_vault_ops_total")
+	require.NotNil(t, ops)
+	require.True(t, hasLabels(ops, map[string]string{
+		"operation": "encrypt", "result": "success", "namespace": "ns1", "tenant": "acme",
+	}))
+
+	dur := gatherFamily(t, reg, "proxy_encryption_vault_ops_duration_secs")
+	require.NotNil(t, dur)
+	require.True(t, hasLabels(dur, map[string]string{
+		"operation": "encrypt", "namespace": "ns1", "tenant": "acme",
+	}))
+}
+
 func TestEncryptionRecordsVaultOps(t *testing.T) {
 	t.Parallel()
 
 	reg := prometheus.NewRegistry()
-	reporter := proxy.NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"))
+	reporter := proxy.NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"), metrics.Tags{})
 
 	vault := &fakeVault{}
 	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: vault, Encrypt: true, Reporter: reporter})
@@ -254,7 +297,7 @@ func TestEncryptionSkipsMetricsForPassThrough(t *testing.T) {
 	t.Parallel()
 
 	reg := prometheus.NewRegistry()
-	reporter := proxy.NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"))
+	reporter := proxy.NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"), metrics.Tags{})
 
 	vault := &fakeVault{}
 	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: vault, Encrypt: true, Reporter: reporter})
@@ -364,7 +407,7 @@ func respondWith(payloads ...*common.Payload) grpc.UnaryInvoker {
 // any other test's metrics.
 func newTestReporter(t *testing.T) *proxy.Reporter {
 	t.Helper()
-	return proxy.NewReporter(metrics.New("test", promauto.With(prometheus.NewRegistry())).ForSubsystem("encryption"))
+	return proxy.NewReporter(metrics.New("test", promauto.With(prometheus.NewRegistry())).ForSubsystem("encryption"), metrics.Tags{})
 }
 
 // gatherFamily returns the metric family named name from reg, or nil if no
