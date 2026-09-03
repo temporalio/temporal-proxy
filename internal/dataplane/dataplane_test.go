@@ -141,7 +141,6 @@ func TestNewRejectsConfiguredKeysWithoutVault(t *testing.T) {
 		})
 	}
 }
-
 func TestNewTwiceOverOneMetricsFactoryDoesNotPanic(t *testing.T) {
 	t.Parallel()
 
@@ -196,10 +195,12 @@ func (d testDeps) opts(omit ...string) []dataplane.Option {
 }
 
 // testConfig is a minimal valid configuration: one gateway listener and one
-// static upstream.
+// static upstream. Metrics is populated because Config.Validate requires it;
+// nothing in these tests serves it.
 func testConfig() *config.Config {
 	return &config.Config{
 		Listen:  config.ListenConfig{HostPort: "127.0.0.1:0"},
+		Metrics: config.Metrics{HostPort: "127.0.0.1:0", Namespace: "test"},
 		Routing: config.Routing{DefaultUpstream: "primary"},
 		Upstreams: config.UpstreamList{{
 			Name:   "primary",

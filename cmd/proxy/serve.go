@@ -57,18 +57,6 @@ func serve() *cli.Command {
 				Value:   "info",
 				Sources: cli.EnvVars("LOG_LEVEL"),
 			},
-			&cli.StringFlag{
-				Name:    "metrics-addr",
-				Usage:   "The host:port on which to serve /metrics",
-				Value:   ":9090",
-				Sources: cli.EnvVars("METRICS_ADDR"),
-			},
-			&cli.StringFlag{
-				Name:    "metrics-namespace",
-				Usage:   "The prometheus namespace for metrics",
-				Value:   "tmprl_proxy",
-				Sources: cli.EnvVars("METRICS_NAMESPACE"),
-			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			log := logger.NewZeroLogger(os.Stderr, logger.ParseLevel(cmd.String("level")))
@@ -77,8 +65,6 @@ func serve() *cli.Command {
 				fx.Supply(
 					fx.Annotate(ctx, fx.As(new(context.Context))),
 					fx.Annotate(cmd.String("config"), config.ConfigFileTag),
-					fx.Annotate(cmd.String("metrics-addr"), metrics.AddrTag),
-					fx.Annotate(cmd.String("metrics-namespace"), metrics.NamespaceTag),
 					fx.Annotate(protoregistry.GlobalFiles, fx.As(new(protoutil.Files))),
 					fx.Annotate(protoregistry.GlobalTypes, fx.As(new(protoutil.Types))),
 					// Services whose request and response types have their namespace
