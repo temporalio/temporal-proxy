@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/temporalio/temporal-proxy/internal/cloud"
 	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
@@ -12,8 +13,14 @@ type (
 	// workers to along with configuration for that remote cluster. Name
 	// identifies the upstream so routing rules can refer to it; it must be
 	// unique within the config.
+	//
+	// Cloud declares the upstream to be Temporal Cloud, which turns on
+	// Cloud-specific namespace rules. It is only needed for an address
+	// [cloud.IsEndpoint] does not recognize, such as a private-link hostname; a
+	// .tmprl.cloud address is detected without it.
 	Upstream struct {
 		Name        string            `yaml:"name"`
+		Cloud       bool              `yaml:"cloud"`
 		Listen      ListenConfig      `yaml:",inline"`
 		Namespaces  NamespaceConfig   `yaml:"namespaces"`
 		Credentials *CredentialConfig `yaml:"credentials"`
@@ -78,7 +85,20 @@ func (u *Upstream) Validate() error {
 				return validation.Errors{{Field: "credentials", Message: "requires TLS to the upstream"}}
 			},
 		),
+		validation.WhenRules(u.IsCloud, u.cloudRules()...),
 	)
+}
+
+// IsCloud reports whether the upstream is Temporal Cloud, either because it says
+// so or because its address is a Cloud endpoint. The TLS server name counts too:
+// a private-link upstream reaches Cloud through a per-VPC hostname but still
+// pins Cloud's certificate.
+func (u *Upstream) IsCloud() bool {
+	if u.Cloud || cloud.IsEndpoint(u.Listen.HostPort) {
+		return true
+	}
+
+	return u.Listen.TLS != nil && cloud.IsEndpoint(u.Listen.TLS.ServerName)
 }
 
 // IsTemplated reports whether the upstream must be resolved per request because
@@ -90,6 +110,46 @@ func (u *Upstream) IsTemplated() bool {
 	}
 
 	return u.Listen.TLS != nil && isTemplated(u.Listen.TLS.ServerName)
+}
+
+// cloudRules builds the namespace rules that only hold for a Temporal Cloud
+// upstream, where every remote name has to be a Cloud namespace identifier.
+// They live here rather than under [NamespaceRules.Validate] because that runs a
+// level down and cannot see whether the upstream is Cloud.
+func (u *Upstream) cloudRules() []validation.Rule {
+	nsRules := &u.Namespaces.Rules
+
+	return []validation.Rule{
+		func() validation.Errors {
+			id, found := strings.CutPrefix(nsRules.Suffix, ".")
+			if nsRules.Suffix == "" || (found && cloud.ValidateAccountID(id) == nil) {
+				return nil
+			}
+
+			return validation.Errors{{
+				Subject: "namespaces.rules",
+				Field:   "suffix",
+				Message: `must be ".<account-id>" for a Temporal Cloud upstream`,
+			}}
+		},
+		func() validation.Errors {
+			var errs validation.Errors
+			for i, m := range nsRules.Overrides {
+				// An empty remote is already reported as required.
+				if m.Remote == "" || cloud.ValidateNamespace(m.Remote) == nil {
+					continue
+				}
+
+				errs = append(errs, validation.Error{
+					Subject: fmt.Sprintf("namespaces.rules.overrides[%d]", i),
+					Field:   "remote",
+					Message: "must be a Temporal Cloud namespace (<name>.<account-id>)",
+				})
+			}
+
+			return errs
+		},
+	}
 }
 
 func (ul UpstreamList) Validate() error {
