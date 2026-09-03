@@ -210,6 +210,7 @@ func TestConfig_ValidateExtensionKeyReferences(t *testing.T) {
 		return &config.Config{
 			Listen:     config.ListenConfig{HostPort: ":8080"},
 			Encryption: e,
+			Metrics:    defaultMetrics(),
 			ExtensionServers: config.ExtensionServerList{
 				{Name: "audit", Listen: config.ListenConfig{HostPort: "127.0.0.1:9090"}},
 			},

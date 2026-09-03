@@ -164,6 +164,7 @@ func TestConfig_Validate_AllowedServices(t *testing.T) {
 		return &config.Config{
 			Listen:          config.ListenConfig{HostPort: ":8080"},
 			AllowedServices: svcs,
+			Metrics:         defaultMetrics(),
 			Upstreams: config.UpstreamList{
 				{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
 			},

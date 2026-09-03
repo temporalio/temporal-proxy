@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
 
+	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
@@ -94,16 +95,11 @@ func TestModule(t *testing.T) {
 	t.Run("requires the metrics address", func(t *testing.T) {
 		t.Parallel()
 
-		reg := goprom.NewRegistry()
-		app := fx.New(
-			fx.Supply(
-				fx.Annotate(reg, fx.As(new(goprom.Registerer))),
-				fx.Annotate(reg, fx.As(new(goprom.Gatherer))),
-			),
-			metrics.Module,
-			fx.NopLogger,
-		)
-		require.Error(t, app.Err())
+		// Every other dependency is supplied, so the empty hostPort is the only
+		// thing that can fail the app, and the message proves it was the guard
+		// rather than an unsatisfied constructor.
+		app := newTestApp(t, "")
+		require.ErrorContains(t, app.Err(), "metrics addr not set")
 	})
 }
 
@@ -114,8 +110,7 @@ func newTestApp(t *testing.T, addr string, opts ...fx.Option) *fx.App {
 
 	base := []fx.Option{
 		fx.Supply(
-			fx.Annotate(addr, metrics.AddrTag),
-			fx.Annotate("tmprl_proxy", metrics.NamespaceTag),
+			&config.Config{Metrics: config.Metrics{HostPort: addr, Namespace: "tmprl_proxy"}},
 			fx.Annotate(reg, fx.As(new(goprom.Registerer))),
 			fx.Annotate(reg, fx.As(new(goprom.Gatherer))),
 			fx.Annotate(logger.NewNoopLogger(), fx.As(new(logger.Logger))),

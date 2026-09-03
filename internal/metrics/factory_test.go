@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
 
+	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
@@ -176,8 +177,7 @@ func TestModuleProvidesNamespacedMetrics(t *testing.T) {
 	var m *metrics.Factory
 	app := fx.New(
 		fx.Supply(
-			fx.Annotate(freeAddr(t), metrics.AddrTag),
-			fx.Annotate("wired", metrics.NamespaceTag),
+			&config.Config{Metrics: config.Metrics{HostPort: freeAddr(t), Namespace: "wired"}},
 			fx.Annotate(reg, fx.As(new(goprom.Registerer))),
 			fx.Annotate(reg, fx.As(new(goprom.Gatherer))),
 			fx.Annotate(logger.NewNoopLogger(), fx.As(new(logger.Logger))),
@@ -189,8 +189,8 @@ func TestModuleProvidesNamespacedMetrics(t *testing.T) {
 	require.NoError(t, app.Err())
 	require.NotNil(t, m)
 
-	// The provider must feed the "metricsNamespace" value into New, so a counter
-	// built from the injected Metrics carries the "wired" prefix.
+	// The provider must feed the config's metrics namespace into New, so a
+	// counter built from the injected Factory carries the "wired" prefix.
 	m.NewCounter(goprom.CounterOpts{Name: "wired_total", Help: "Wired."}, nil).WithLabelValues().Inc()
 
 	require.NoError(t, testutil.GatherAndCompare(reg, strings.NewReader(`
