@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -12,9 +13,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
+	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/server"
 )
@@ -25,11 +28,11 @@ func TestReporterObserve(t *testing.T) {
 	t.Run("counts requests by method and code", func(t *testing.T) {
 		t.Parallel()
 
-		r, reg := newTestReporter(t)
+		r, reg := newTestReporter(t, metrics.Tags{})
 
-		r.Observe("/svc/Method", codes.OK, 750*time.Millisecond)
-		r.Observe("/svc/Method", codes.OK, 250*time.Millisecond)
-		r.Observe("/svc/Other", codes.NotFound, 2*time.Second)
+		r.Observe(t.Context(), "/svc/Method", codes.OK, 750*time.Millisecond)
+		r.Observe(t.Context(), "/svc/Method", codes.OK, 250*time.Millisecond)
+		r.Observe(t.Context(), "/svc/Other", codes.NotFound, 2*time.Second)
 
 		require.NoError(t, testutil.GatherAndCompare(reg, strings.NewReader(`
 # HELP tmprl_proxy_server_requests_total Total RPCs served, labeled by method and gRPC status code.
@@ -42,10 +45,10 @@ tmprl_proxy_server_requests_total{code="NotFound",method="/svc/Other"} 1
 	t.Run("buckets durations by method", func(t *testing.T) {
 		t.Parallel()
 
-		r, reg := newTestReporter(t)
+		r, reg := newTestReporter(t, metrics.Tags{})
 
-		r.Observe("/svc/Method", codes.OK, 750*time.Millisecond)
-		r.Observe("/svc/Method", codes.OK, 250*time.Millisecond)
+		r.Observe(t.Context(), "/svc/Method", codes.OK, 750*time.Millisecond)
+		r.Observe(t.Context(), "/svc/Method", codes.OK, 250*time.Millisecond)
 
 		require.NoError(t, testutil.GatherAndCompare(reg, strings.NewReader(`
 # HELP tmprl_proxy_server_request_duration_seconds Time spent serving an RPC end to end, labeled by method.
@@ -71,13 +74,22 @@ tmprl_proxy_server_request_duration_seconds_count{method="/svc/Method"} 2
 	})
 }
 
+// fakeStream is a ServerStream supplying only a context, which is all the
+// reporter's interceptor reads from it.
+type fakeStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s *fakeStream) Context() context.Context { return s.ctx }
+
 func TestReporterStreamInterceptor(t *testing.T) {
 	t.Parallel()
 
 	t.Run("records the returned status code", func(t *testing.T) {
 		t.Parallel()
 
-		r, reg := newTestReporter(t)
+		r, reg := newTestReporter(t, metrics.Tags{})
 		interceptor := r.StreamInterceptor()
 
 		info := &grpc.StreamServerInfo{FullMethod: "/svc/Fail"}
@@ -85,7 +97,7 @@ func TestReporterStreamInterceptor(t *testing.T) {
 			return status.Error(codes.PermissionDenied, "nope")
 		}
 
-		err := interceptor(nil, nil, info, handler)
+		err := interceptor(nil, &fakeStream{ctx: t.Context()}, info, handler)
 		require.Error(t, err)
 		require.Equal(t, codes.PermissionDenied, status.Code(err))
 
@@ -99,13 +111,13 @@ tmprl_proxy_server_requests_total{code="PermissionDenied",method="/svc/Fail"} 1
 	t.Run("maps a nil error to OK", func(t *testing.T) {
 		t.Parallel()
 
-		r, reg := newTestReporter(t)
+		r, reg := newTestReporter(t, metrics.Tags{})
 		interceptor := r.StreamInterceptor()
 
 		info := &grpc.StreamServerInfo{FullMethod: "/svc/Ok"}
 		handler := func(any, grpc.ServerStream) error { return nil }
 
-		require.NoError(t, interceptor(nil, nil, info, handler))
+		require.NoError(t, interceptor(nil, &fakeStream{ctx: t.Context()}, info, handler))
 
 		require.NoError(t, testutil.GatherAndCompare(reg, strings.NewReader(`
 # HELP tmprl_proxy_server_requests_total Total RPCs served, labeled by method and gRPC status code.
@@ -118,7 +130,7 @@ tmprl_proxy_server_requests_total{code="OK",method="/svc/Ok"} 1
 func TestReporterInterceptorMetersForwardedTraffic(t *testing.T) {
 	t.Parallel()
 
-	r, reg := newTestReporter(t)
+	r, reg := newTestReporter(t, metrics.Tags{})
 
 	handler := func(_ any, _ grpc.ServerStream) error {
 		return status.Error(codes.Unimplemented, "unknown")
@@ -163,10 +175,10 @@ tmprl_proxy_server_requests_total{code="Unimplemented",method="/temporal.api.wor
 `), "tmprl_proxy_server_requests_total"))
 }
 
-func newTestReporter(t *testing.T) (*server.Reporter, *goprom.Registry) {
+func newTestReporter(t *testing.T, tags metrics.Tags) (*server.Reporter, *goprom.Registry) {
 	t.Helper()
 	f, reg := newTestFactory(t)
-	return server.NewReporter(f.ForSubsystem("server")), reg
+	return server.NewReporter(f.ForSubsystem("server"), tags), reg
 }
 
 // newTestFactory builds a namespace-scoped metrics Factory backed by a fresh,
@@ -176,4 +188,46 @@ func newTestFactory(t *testing.T) (*metrics.Factory, *goprom.Registry) {
 	t.Helper()
 	reg := goprom.NewRegistry()
 	return metrics.New("tmprl_proxy", promauto.With(reg)), reg
+}
+
+func TestReporterCarriesConfiguredTags(t *testing.T) {
+	t.Parallel()
+
+	tags := metrics.NewTags([]config.MetricTag{{Header: "X-Tenant", Label: "tenant"}})
+	r, reg := newTestReporter(t, tags)
+
+	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs("x-tenant", "acme"))
+	r.Observe(ctx, "/svc/Method", codes.OK, time.Second)
+
+	// A request that carried no header still reports the label, empty, because
+	// Prometheus has no notion of an absent label value.
+	r.Observe(t.Context(), "/svc/Other", codes.OK, time.Second)
+
+	require.NoError(t, testutil.GatherAndCompare(reg, strings.NewReader(`
+# HELP tmprl_proxy_server_requests_total Total RPCs served, labeled by method and gRPC status code.
+# TYPE tmprl_proxy_server_requests_total counter
+tmprl_proxy_server_requests_total{code="OK",method="/svc/Method",tenant="acme"} 1
+tmprl_proxy_server_requests_total{code="OK",method="/svc/Other",tenant=""} 1
+`), "tmprl_proxy_server_requests_total"))
+}
+
+func TestReporterInterceptorReadsTagsFromTheStream(t *testing.T) {
+	t.Parallel()
+
+	// Proves the interceptor takes the metadata off the stream it was handed,
+	// which is the only reason Observe needs a context at all.
+	tags := metrics.NewTags([]config.MetricTag{{Header: "x-tenant", Label: "tenant"}})
+	r, reg := newTestReporter(t, tags)
+
+	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs("x-tenant", "acme"))
+	info := &grpc.StreamServerInfo{FullMethod: "/svc/Ok"}
+	handler := func(any, grpc.ServerStream) error { return nil }
+
+	require.NoError(t, r.StreamInterceptor()(nil, &fakeStream{ctx: ctx}, info, handler))
+
+	require.NoError(t, testutil.GatherAndCompare(reg, strings.NewReader(`
+# HELP tmprl_proxy_server_requests_total Total RPCs served, labeled by method and gRPC status code.
+# TYPE tmprl_proxy_server_requests_total counter
+tmprl_proxy_server_requests_total{code="OK",method="/svc/Ok",tenant="acme"} 1
+`), "tmprl_proxy_server_requests_total"))
 }

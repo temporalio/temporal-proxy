@@ -64,15 +64,15 @@ func (d *director) Resolve(
 ) (Target, error) {
 	upstream, outcome := d.mux.Switch(namespace, md)
 	if outcome == OutcomeUnroutable {
-		d.reporter.Decision(upstreamUnknown, OutcomeUnroutable)
+		d.reporter.Decision(ctx, upstreamUnknown, OutcomeUnroutable)
 		return Target{}, status.Error(codes.FailedPrecondition, "no upstream matched the request and no default is configured")
 	}
 
-	d.reporter.Decision(upstream, outcome)
+	d.reporter.Decision(ctx, upstream, outcome)
 
 	cc, ok := d.conns[upstream]
 	if !ok {
-		d.reporter.ForwardingError(upstream, reasonNoConnection)
+		d.reporter.ForwardingError(ctx, upstream, reasonNoConnection)
 		return Target{}, status.Errorf(codes.Unavailable, "router: no connection for upstream %q", upstream)
 	}
 
