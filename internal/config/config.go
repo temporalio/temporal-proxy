@@ -1,6 +1,7 @@
 package config
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -17,17 +18,19 @@ type (
 	Config struct {
 		Listen           ListenConfig        `yaml:",inline"`
 		AllowedServices  Services            `yaml:"allowedServices"`
+		Auth             *AuthConfig         `yaml:"auth"`
 		Encryption       Encryption          `yaml:"encryption"`
 		ExtensionServers ExtensionServerList `yaml:"extensionServers"`
+		Metrics          Metrics             `yaml:"metrics"`
 		Routing          Routing             `yaml:"routing"`
 		Upstreams        UpstreamList        `yaml:"upstreams"`
-		Auth             *AuthConfig         `yaml:"auth"`
 	}
 )
 
 // Load reads and parses the YAML config specified in the Reader.
 // Values of the form ${VAR} are replaced with the corresponding environment
-// variable. A config that names no allowed services gets the default set.
+// variable. A config that names no allowed services gets the default set, and
+// one that leaves a metrics field empty gets that field's default.
 func Load(r io.Reader) (*Config, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -45,6 +48,13 @@ func Load(r io.Reader) (*Config, error) {
 	// an absent key never reaches one, and an absent allowedServices is how most
 	// configs are written.
 	cfg.AllowedServices = cfg.AllowedServices.Allowed()
+
+	// Defaulted here for the same reason as the allowlist: an absent metrics
+	// block never reaches an unmarshaler, and most configs omit it entirely.
+	// The config is the only way to set these, so defaulting is what keeps
+	// /metrics served for a config that says nothing about it.
+	cfg.Metrics.HostPort = cmp.Or(cfg.Metrics.HostPort, ":9090")
+	cfg.Metrics.Namespace = cmp.Or(cfg.Metrics.Namespace, "tmprl_proxy")
 
 	return &cfg, nil
 }
@@ -84,6 +94,7 @@ func (c *Config) Validate() error {
 		validation.Nested("", &c.AllowedServices),
 		validation.Nested("encryption", &c.Encryption),
 		validation.Nested("extensionServers", &c.ExtensionServers),
+		validation.Nested("metrics", &c.Metrics),
 		validation.Nested("routing", &c.Routing),
 		validation.WhenRules(func() bool { return c.Auth != nil }, validation.Nested("auth", c.Auth)),
 		validation.Nested("upstreams", &c.Upstreams),

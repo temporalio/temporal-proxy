@@ -48,6 +48,7 @@ type Fixture struct {
 	t    *testing.T
 	dp   *dataplane.Dataplane
 	conn *grpc.ClientConn
+	reg  prometheus.Gatherer
 }
 
 // Config returns a minimal valid configuration: an ephemeral gateway port and
@@ -107,11 +108,13 @@ func Start(t *testing.T, cfg *config.Config) *Fixture {
 	pool := connect.NewPool()
 	t.Cleanup(func() { _ = pool.Close() })
 
+	reg := prometheus.NewRegistry()
+
 	dp, err := dataplane.New(t.Context(), cfg,
 		dataplane.WithExtractor(protoutil.NewExtractor(protoregistry.GlobalFiles, protoregistry.GlobalTypes)),
 		dataplane.WithTranslator(protoutil.NewTranslator(protoregistry.GlobalFiles)),
 		dataplane.WithPool(pool),
-		dataplane.WithMetrics(metrics.New("test", promauto.With(prometheus.NewRegistry()))),
+		dataplane.WithMetrics(metrics.New("test", promauto.With(reg))),
 		dataplane.WithAllowlist(config.NewAllowlist(cfg)),
 		dataplane.WithAuth(auth.AdmitAll()),
 		dataplane.WithLogger(logger.NewNoopLogger()),
@@ -127,7 +130,7 @@ func Start(t *testing.T, cfg *config.Config) *Fixture {
 	// cleanups run, and a shutdown must not inherit that.
 	t.Cleanup(func() { requireCleanStop(t, dp.Stop(stopContext(t))) })
 
-	return newFixture(t, dp)
+	return newFixture(t, dp, reg)
 }
 
 // StartApp assembles and starts the whole production module graph around cfg,
@@ -148,8 +151,6 @@ func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 	app := fx.New(
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(cfg),
-		fx.Supply(fx.Annotate("127.0.0.1:0", metrics.AddrTag)),
-		fx.Supply(fx.Annotate("test", metrics.NamespaceTag)),
 		fx.Provide(
 			func() logger.Logger { return logger.NewNoopLogger() },
 			func() prometheus.Gatherer { return reg },
@@ -182,8 +183,14 @@ func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 		requireCleanStop(t, app.Stop(stopCtx))
 	})
 
-	return newFixture(t, dp)
+	return newFixture(t, dp, reg)
 }
+
+// Gatherer is the registry every collector in this plane registered with, and
+// the one its /metrics handler serves. A test asserts against it directly
+// because [applyDefaults] binds that handler to an ephemeral port nothing
+// reports.
+func (f *Fixture) Gatherer() prometheus.Gatherer { return f.reg }
 
 // Addr is the address the gateway is accepting on.
 func (f *Fixture) Addr() string { return f.dp.Addr().String() }
@@ -229,11 +236,22 @@ func applyDefaults(cfg *config.Config) {
 	if len(cfg.AllowedServices) == 0 {
 		cfg.AllowedServices = config.Services(services.Known())
 	}
+
+	// Also a Load default, and Config.Validate requires both. The address is
+	// ephemeral so parallel apps never contend for a port, and the namespace
+	// matches the factory Start builds directly.
+	if cfg.Metrics.HostPort == "" {
+		cfg.Metrics.HostPort = "127.0.0.1:0"
+	}
+
+	if cfg.Metrics.Namespace == "" {
+		cfg.Metrics.Namespace = "test"
+	}
 }
 
 // newFixture dials the running gateway. gRPC connects lazily, so this opens
 // nothing until the first request.
-func newFixture(t *testing.T, dp *dataplane.Dataplane) *Fixture {
+func newFixture(t *testing.T, dp *dataplane.Dataplane, reg prometheus.Gatherer) *Fixture {
 	t.Helper()
 
 	require.NotNil(t, dp.Addr(), "the gateway must be accepting once Start returns")
@@ -242,7 +260,7 @@ func newFixture(t *testing.T, dp *dataplane.Dataplane) *Fixture {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 
-	return &Fixture{t: t, dp: dp, conn: conn}
+	return &Fixture{t: t, dp: dp, conn: conn, reg: reg}
 }
 
 // stopContext returns a context for shutdown that does not inherit the test's

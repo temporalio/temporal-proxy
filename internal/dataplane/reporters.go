@@ -32,14 +32,15 @@ func newReporters(f *metrics.Factory, c *config.Config, encryption bool) (r *rep
 		// MustRegister panics with the error Register returned, so wrap it and
 		// leave the caller an [prometheus.AlreadyRegisteredError] to match on.
 		// Any other panic value can only be reported as it arrived, and names a
-		// cause other than the one guessed at below.
+		// cause other than the ones guessed at below.
 		cause, ok := rec.(error)
 		if !ok {
 			cause = errors.New(fmt.Sprint(rec))
 		}
 
 		r, err = nil, fmt.Errorf(
-			"dataplane: registering metrics panicked, is another dataplane using this registry: %w", cause,
+			"dataplane: registering metrics panicked, is another dataplane using this "+
+				"registry, or a configured metrics tag label colliding with a collector's own: %w", cause,
 		)
 	}()
 
@@ -48,13 +49,18 @@ func newReporters(f *metrics.Factory, c *config.Config, encryption bool) (r *rep
 		names = append(names, c.Upstreams[i].Name)
 	}
 
+	// Only the request-scoped reporters take the tags; internal/kms builds its
+	// own from the same factory and emits off a request, where no metadata is in
+	// scope to read them from.
+	tags := metrics.NewTags(c.Metrics.Tags)
+
 	out := &reporters{
-		router: router.NewReporter(f.ForSubsystem("router"), names),
-		server: server.NewReporter(f.ForSubsystem("server")),
+		router: router.NewReporter(f.ForSubsystem("router"), names, tags),
+		server: server.NewReporter(f.ForSubsystem("server"), tags),
 	}
 
 	if encryption {
-		out.encryption = proxy.NewReporter(f.ForSubsystem("encryption"))
+		out.encryption = proxy.NewReporter(f.ForSubsystem("encryption"), tags)
 	}
 
 	return out, nil

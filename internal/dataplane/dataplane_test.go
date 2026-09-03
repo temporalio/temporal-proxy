@@ -142,6 +142,21 @@ func TestNewRejectsConfiguredKeysWithoutVault(t *testing.T) {
 	}
 }
 
+func TestNewRejectsATagLabelCollidingWithACollectorsOwn(t *testing.T) {
+	t.Parallel()
+
+	// A tag claiming a label a collector already declares makes the Desc
+	// invalid, so registration panics. That is caught in the same place a
+	// duplicate registration is, and the message has to name this cause too:
+	// config cannot check it without knowing every collector's label set.
+	cfg := testConfig()
+	cfg.Metrics.Tags = []config.MetricTag{{Header: "x-method", Label: "method"}}
+
+	deps := newTestDeps(t, cfg)
+	_, err := dataplane.New(deps.ctx, deps.cfg, deps.opts()...)
+	require.ErrorContains(t, err, "metrics tag label colliding with a collector's own")
+}
+
 func TestNewTwiceOverOneMetricsFactoryDoesNotPanic(t *testing.T) {
 	t.Parallel()
 
@@ -196,10 +211,12 @@ func (d testDeps) opts(omit ...string) []dataplane.Option {
 }
 
 // testConfig is a minimal valid configuration: one gateway listener and one
-// static upstream.
+// static upstream. Metrics is populated because Config.Validate requires it;
+// nothing in these tests serves it.
 func testConfig() *config.Config {
 	return &config.Config{
 		Listen:  config.ListenConfig{HostPort: "127.0.0.1:0"},
+		Metrics: config.Metrics{HostPort: "127.0.0.1:0", Namespace: "test"},
 		Routing: config.Routing{DefaultUpstream: "primary"},
 		Upstreams: config.UpstreamList{{
 			Name:   "primary",

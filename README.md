@@ -58,8 +58,8 @@ reaches a different upstream with no change to the Worker.
 
 - **Rule-based routing.** Route requests to different upstreams by Namespace and/or request metadata, with a system
   upstream for Namespace-less calls and a default fallback.
-- **Service allowlist.** Forward only the gRPC services you name, defaulting to `WorkflowService` and
-  `OperatorService`. Server reflection is opt-in, and a service you leave out is never forwarded.
+- **Service allowlist.** Forward only the gRPC services you name, defaulting to `WorkflowService` and `OperatorService`.
+  Server reflection is opt-in, and a service you leave out is never forwarded.
 - **Namespace translation.** Rewrite local Namespace names to the names an upstream expects (prefix, suffix, or explicit
   overrides) in both requests and responses.
 - **TLS termination and outbound credentials.** Terminate inbound TLS/mTLS and attach the upstream's own TLS and
@@ -74,6 +74,10 @@ reaches a different upstream with no change to the Worker.
   For rules neither covers, delegate the decision to an extension server you run. It is told what the call is addressing
   (the gRPC method, and the Namespace the proxy resolved from the request rather than from anything the caller claims),
   so it can decide per Namespace and per method rather than only whether the caller is who it says it is.
+- **Prometheus metrics.** Expose request latency and counts, routing decisions, and payload sealing and opening on
+  `/metrics`. The listen address and the metric prefix stamped onto every metric name are set under `metrics:` in the
+  config, which can also name request metadata to carry onto the request-scoped metrics as extra labels, so they can be
+  sliced by a dimension only your callers know.
 - **Codec-transparent.** The gateway never parses payloads. It peeks the Namespace, picks an upstream, and relays raw
   frames in both directions.
 - **Multiple deployment options.** Ship as a Go binary, a container image, or a Helm chart.

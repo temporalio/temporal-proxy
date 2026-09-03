@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -33,29 +34,35 @@ var durationBuckets = []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10
 type Reporter struct {
 	duration *prometheus.HistogramVec
 	requests *prometheus.CounterVec
+	tags     metrics.Tags
 }
 
 // NewReporter builds the Prometheus-backed Reporter. f must already be scoped to
-// the "server" subsystem by the caller.
-func NewReporter(f *metrics.Factory) *Reporter {
+// the "server" subsystem by the caller. tags are the configured metadata labels
+// carried on both collectors, and may be the zero value.
+func NewReporter(f *metrics.Factory, tags metrics.Tags) *Reporter {
 	return &Reporter{
 		duration: f.NewHistogram(prometheus.HistogramOpts{
 			Name:    "request_duration_seconds",
 			Help:    "Time spent serving an RPC end to end, labeled by method.",
 			Buckets: durationBuckets,
-		}, []string{"method"}),
+		}, append([]string{"method"}, tags.Labels()...)),
 		requests: f.NewCounter(prometheus.CounterOpts{
 			Name: "requests_total",
 			Help: "Total RPCs served, labeled by method and gRPC status code.",
-		}, []string{"method", "code"}),
+		}, append([]string{"method", "code"}, tags.Labels()...)),
+		tags: tags,
 	}
 }
 
 // Observe records one completed RPC: its duration on the method histogram and a
-// count on the (method, code) counter.
-func (r *Reporter) Observe(method string, code codes.Code, d time.Duration) {
-	r.duration.WithLabelValues(method).Observe(d.Seconds())
-	r.requests.WithLabelValues(method, code.String()).Inc()
+// count on the (method, code) counter. ctx is the request's, and supplies the
+// configured metadata label values; the two collectors carry different fixed
+// labels, so the values are resolved once and appended to each.
+func (r *Reporter) Observe(ctx context.Context, method string, code codes.Code, d time.Duration) {
+	tags := r.tags.AppendValues(ctx, nil)
+	r.duration.WithLabelValues(append([]string{method}, tags...)...).Observe(d.Seconds())
+	r.requests.WithLabelValues(append([]string{method, code.String()}, tags...)...).Inc()
 }
 
 // StreamInterceptor returns a stream server interceptor that times the handler
@@ -73,7 +80,7 @@ func (r *Reporter) StreamInterceptor() grpc.StreamServerInterceptor {
 	) error {
 		start := time.Now()
 		err := handler(srv, ss)
-		r.Observe(info.FullMethod, status.Code(err), time.Since(start))
+		r.Observe(ss.Context(), info.FullMethod, status.Code(err), time.Since(start))
 		return err
 	}
 }
