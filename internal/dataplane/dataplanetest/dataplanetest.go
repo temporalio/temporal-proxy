@@ -148,8 +148,6 @@ func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 	app := fx.New(
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(cfg),
-		fx.Supply(fx.Annotate("127.0.0.1:0", metrics.AddrTag)),
-		fx.Supply(fx.Annotate("test", metrics.NamespaceTag)),
 		fx.Provide(
 			func() logger.Logger { return logger.NewNoopLogger() },
 			func() prometheus.Gatherer { return reg },
@@ -228,6 +226,17 @@ func applyDefaults(cfg *config.Config) {
 	// internal/router.
 	if len(cfg.AllowedServices) == 0 {
 		cfg.AllowedServices = config.Services(services.Known())
+	}
+
+	// Also a Load default, and Config.Validate requires both. The address is
+	// ephemeral so parallel apps never contend for a port, and the namespace
+	// matches the factory Start builds directly.
+	if cfg.Metrics.HostPort == "" {
+		cfg.Metrics.HostPort = "127.0.0.1:0"
+	}
+
+	if cfg.Metrics.Namespace == "" {
+		cfg.Metrics.Namespace = "test"
 	}
 }
 

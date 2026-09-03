@@ -30,6 +30,7 @@ func TestModule_ProvidesConfig(t *testing.T) {
 	require.Equal(t, &config.Config{
 		Listen:          config.ListenConfig{HostPort: ":7233"},
 		AllowedServices: config.Services(services.Default()),
+		Metrics:         defaultMetrics(),
 	}, got)
 }
 
