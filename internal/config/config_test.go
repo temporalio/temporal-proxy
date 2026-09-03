@@ -498,3 +498,54 @@ func urlStrings(us []url.URL) []string {
 
 	return out
 }
+
+func TestLoad_CloudAPIEnablesTranslation(t *testing.T) {
+	t.Parallel()
+
+	// Routing is untouched: there is one upstream and no rule. The cloudApi block
+	// alone is what makes ListNamespaces work.
+	const yaml = `
+hostPort: 127.0.0.1:7233
+routing:
+  default: frontend
+  system: frontend
+upstreams:
+  - name: frontend
+    hostPort: ns.acct.tmprl.cloud:7233
+    tls: {}
+cloudApi:
+  tls: {}
+`
+
+	cfg, err := config.Load(strings.NewReader(yaml))
+	require.NoError(t, err)
+	require.NoError(t, cfg.Validate())
+
+	require.Empty(t, cfg.Routing.Rules, "translation needs no routing rule")
+	require.NotNil(t, cfg.CloudAPI)
+
+	// hostPort is optional: where CloudService lives is a fixed fact, so the
+	// default stands unless an operator points at another environment.
+	require.Equal(t, config.DefaultCloudAPIHostPort, cfg.CloudAPI.Upstream().Listen.HostPort)
+}
+
+func TestLoad_CloudAPIRejectsCredentialsWithoutTLS(t *testing.T) {
+	t.Parallel()
+
+	const yaml = `
+hostPort: 127.0.0.1:7233
+routing:
+  default: frontend
+upstreams:
+  - name: frontend
+    hostPort: ns.acct.tmprl.cloud:7233
+cloudApi:
+  credentials:
+    static:
+      apiKey: sekrit
+`
+
+	cfg, err := config.Load(strings.NewReader(yaml))
+	require.NoError(t, err)
+	require.ErrorContains(t, cfg.Validate(), "requires TLS to the Cloud API")
+}

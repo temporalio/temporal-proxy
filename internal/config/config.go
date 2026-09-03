@@ -22,6 +22,7 @@ type (
 		Routing          Routing             `yaml:"routing"`
 		Upstreams        UpstreamList        `yaml:"upstreams"`
 		Auth             *AuthConfig         `yaml:"auth"`
+		CloudAPI         *CloudAPI           `yaml:"cloudApi"`
 	}
 )
 
@@ -86,6 +87,7 @@ func (c *Config) Validate() error {
 		validation.Nested("extensionServers", &c.ExtensionServers),
 		validation.Nested("routing", &c.Routing),
 		validation.WhenRules(func() bool { return c.Auth != nil }, validation.Nested("auth", c.Auth)),
+		validation.WhenRules(func() bool { return c.CloudAPI != nil }, validation.Nested("cloudApi", c.CloudAPI)),
 		validation.Nested("upstreams", &c.Upstreams),
 	}
 

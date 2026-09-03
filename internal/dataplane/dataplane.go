@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -20,6 +21,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/router"
 	"github.com/temporalio/temporal-proxy/internal/server"
 	"github.com/temporalio/temporal-proxy/internal/services"
+	"github.com/temporalio/temporal-proxy/internal/translation"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
@@ -60,6 +62,14 @@ type (
 		vault      *crypto.Vault
 		logger     logger.Logger
 		abort      func(error)
+	}
+
+	// cloudAPI is the connection translated methods are answered over, and the
+	// translations that use it. It is built once and shared by every upstream,
+	// since a translated method is captured wherever routing sent it.
+	cloudAPI struct {
+		conn     *connect.Conn
+		registry *translation.Registry
 	}
 
 	// upstreamTier is one upstream's proxy and the socket it binds.
@@ -117,6 +127,15 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		logger:   o.logger,
 	}
 
+	cloud, err := newCloudAPI(cfg, o)
+	if err != nil {
+		return nil, err
+	}
+
+	if cloud != nil {
+		dp.ready = append(dp.ready, cloud.conn)
+	}
+
 	conns := make(map[string]grpc.ClientConnInterface, len(cfg.Upstreams))
 	for i := range cfg.Upstreams {
 		up := &cfg.Upstreams[i]
@@ -126,7 +145,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 			return nil, fmt.Errorf("failed to resolve proxy socket path[%q]: %w", up.Name, err)
 		}
 
-		tier, ready, err := newUpstreamTier(cfg, o, up, path, reps)
+		tier, ready, err := newUpstreamTier(cfg, o, up, path, reps, cloud)
 		if err != nil {
 			return nil, err
 		}
@@ -301,6 +320,7 @@ func newUpstreamTier(
 	up *config.Upstream,
 	path string,
 	reps *reporters,
+	cloudAPI *cloudAPI,
 ) (*upstreamTier, *connect.Conn, error) {
 	// Request-independent dial options: namespace translation and outbound
 	// credentials. Per-request credentials are added by the resolver.
@@ -357,6 +377,16 @@ func newUpstreamTier(
 
 	dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(cdc))
 
+	// Method translation goes on last so it is the innermost interceptor: the
+	// namespace translator and the payload codec above it then see the method and
+	// message types the caller asked for, and only the hop onto the wire carries
+	// the substitute. It is installed on every upstream, because a translated
+	// method is captured wherever routing happened to send it and answered over
+	// the Cloud API connection rather than this one.
+	if cloudAPI != nil {
+		dialOpts = append(dialOpts, translation.DialOptions(cloudAPI.registry, translation.Via(cloudAPI.conn))...)
+	}
+
 	res, err := proxy.ResolverFor(up, dialOpts, o.logger)
 	if err != nil {
 		return nil, nil, err
@@ -390,4 +420,49 @@ func newUpstreamTier(
 	}
 
 	return &upstreamTier{name: up.Name, path: path, svr: svr}, ready, nil
+}
+
+// newCloudAPI dials Temporal Cloud's control plane and pairs it with the shipped
+// translations, or returns nil when no cloudApi block is configured and no
+// method is translated. The connection is built by the same resolver and
+// credential machinery as any upstream, but is not registered with the router:
+// nothing routes to it, and it is reached only by a translation.
+func newCloudAPI(cfg *config.Config, o *options) (*cloudAPI, error) {
+	if cfg.CloudAPI == nil {
+		return nil, nil
+	}
+
+	reg, err := translation.Default()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build method translations: %w", err)
+	}
+
+	up := cfg.CloudAPI.Upstream()
+
+	var dialOpts []grpc.DialOption
+	cp, err := outbound.CredentialProviderFor(up.Credentials)
+	if err != nil {
+		return nil, fmt.Errorf("invalid credentials for the Cloud API: %w", err)
+	}
+	if cp != nil {
+		dialOpts = append(dialOpts, outbound.DialOptions(cp)...)
+	}
+
+	res, err := proxy.ResolverFor(up, dialOpts, o.logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve the Cloud API: %w", err)
+	}
+
+	conn, err := connect.NewConn(o.pool.ConnOrCreate, res)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create the Cloud API client: %w", err)
+	}
+
+	o.logger.Info(
+		"translating methods to the Cloud API",
+		tag.String("hostPort", up.Listen.HostPort),
+		tag.String("methods", strings.Join(reg.Methods(), ", ")),
+	)
+
+	return &cloudAPI{conn: conn, registry: reg}, nil
 }
