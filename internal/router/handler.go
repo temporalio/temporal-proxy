@@ -93,7 +93,7 @@ func Handler(d Director, a services.Allowlist, rep *Reporter) grpc.StreamHandler
 		)
 		if err != nil {
 			if rep != nil {
-				rep.ForwardingError(target.Upstream, reasonStreamSetup)
+				rep.ForwardingError(ctx, target.Upstream, reasonStreamSetup)
 			}
 
 			return err
