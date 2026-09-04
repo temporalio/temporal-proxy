@@ -28,9 +28,13 @@ So forwarding the call is not enough; it has to be **translated**. Routing is no
 `CloudService.GetNamespaces`, sends it to the Cloud API instead, and converts the reply back into a
 `ListNamespacesResponse`.
 
-The `cloudApi:` block is what turns this on. Where `CloudService` lives is a fixed fact about Temporal Cloud rather than
-a policy an operator picks, so the destination travels with the translation instead of having to be restated as
-routing — which means there is no way to configure one half without the other.
+Nothing in `config.yaml` asks for this. A `.tmprl.cloud` address is recognised as Temporal Cloud, and translating what
+Cloud cannot serve follows from that — the same detection that turns on Cloud namespace validation. Where `CloudService`
+lives is a fixed fact about Temporal Cloud rather than a policy an operator picks, so the destination travels with the
+translation instead of having to be restated as configuration.
+
+The control plane is reached at `saas-api.tmprl.cloud:443` with the upstream's own API key, which authorises both. An
+optional `cloudApi:` block overrides that for a different Cloud environment.
 
 Everything else — including `GetSystemInfo`, which every SDK calls on connect — keeps going to the namespace frontend
 untouched.
@@ -170,6 +174,6 @@ way as in any other reply.
 | Symptom | Cause |
 | --- | --- |
 | `InvalidArgument: cloud API version must be specified` | The proxy stamps `temporal-cloud-api-version` itself; seeing this means the request reached saas-api without going through the translation. |
-| `Unimplemented: method ListNamespaces not implemented` | The request went to the frontend untranslated — the `cloudApi:` block is missing from the config. |
+| `Unimplemented: method ListNamespaces not implemented` | The request went to the frontend untranslated — the upstream was not recognised as Cloud. Set `cloud: true` on it if its address carries no Cloud domain (private link). |
 | `PermissionDenied` on `ListNamespaces` only | The API key needs account-level read access; namespace-scoped keys cannot list. |
 | Empty `namespaces` list, no error | The key is valid but scoped to nothing readable. |

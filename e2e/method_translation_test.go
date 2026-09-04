@@ -64,9 +64,13 @@ func TestEndToEndListNamespacesTranslatesOntoCloudService(t *testing.T) {
 	})
 
 	f := dataplanetest.StartApp(t, &config.Config{
-		Routing:   config.Routing{DefaultUpstream: "frontend", SystemUpstream: "frontend"},
-		Upstreams: config.UpstreamList{{Name: "frontend", Listen: config.ListenConfig{HostPort: frontend.Addr()}}},
-		CloudAPI:  &config.CloudAPI{Listen: config.ListenConfig{HostPort: cloud.addr}},
+		Routing: config.Routing{DefaultUpstream: "frontend", SystemUpstream: "frontend"},
+		Upstreams: config.UpstreamList{{
+			Name:   "frontend",
+			Cloud:  true,
+			Listen: config.ListenConfig{HostPort: frontend.Addr()},
+		}},
+		CloudAPI: &config.CloudAPI{Listen: config.ListenConfig{HostPort: cloud.addr}},
 	})
 
 	reply, err := f.Client().ListNamespaces(
@@ -108,9 +112,13 @@ func TestEndToEndOnlyTranslatedMethodsReachTheCloudAPI(t *testing.T) {
 	cloud := newCloudUpstream(t)
 
 	f := dataplanetest.StartApp(t, &config.Config{
-		Routing:   config.Routing{DefaultUpstream: "frontend", SystemUpstream: "frontend"},
-		Upstreams: config.UpstreamList{{Name: "frontend", Listen: config.ListenConfig{HostPort: frontend.Addr()}}},
-		CloudAPI:  &config.CloudAPI{Listen: config.ListenConfig{HostPort: cloud.addr}},
+		Routing: config.Routing{DefaultUpstream: "frontend", SystemUpstream: "frontend"},
+		Upstreams: config.UpstreamList{{
+			Name:   "frontend",
+			Cloud:  true,
+			Listen: config.ListenConfig{HostPort: frontend.Addr()},
+		}},
+		CloudAPI: &config.CloudAPI{Listen: config.ListenConfig{HostPort: cloud.addr}},
 	})
 
 	_, err := f.Client().GetSystemInfo(
@@ -124,23 +132,26 @@ func TestEndToEndOnlyTranslatedMethodsReachTheCloudAPI(t *testing.T) {
 	require.Nil(t, cloud.request(), "and must not be diverted to the Cloud API")
 }
 
-// TestEndToEndWithoutTheCloudAPIBlockNothingIsTranslated is the negative control
-// for the test above: the same fixture with the cloudApi block left out. It
-// establishes that the block is what diverts the call, rather than it reaching
+// TestEndToEndANonCloudUpstreamTranslatesNothing is the negative control for the
+// test above: the same fixture with an upstream that is not Cloud. It establishes
+// that being a Cloud upstream is what diverts the call, rather than it reaching
 // the Cloud API by some other path.
 //
 // It asserts on the Cloud fake rather than on the frontend, because the frontend
 // fake only records the handlers it implements: ListNamespaces falls through to
 // its embedded Unimplemented stub, so "the frontend recorded nothing" would hold
 // whether or not the call reached it.
-func TestEndToEndWithoutTheCloudAPIBlockNothingIsTranslated(t *testing.T) {
+func TestEndToEndANonCloudUpstreamTranslatesNothing(t *testing.T) {
 	t.Parallel()
 
 	cloud := newCloudUpstream(t)
 
 	f := dataplanetest.StartApp(t, &config.Config{
-		Routing:   config.Routing{DefaultUpstream: "frontend", SystemUpstream: "frontend"},
-		Upstreams: config.UpstreamList{{Name: "frontend", Listen: config.ListenConfig{HostPort: dataplanetest.NewUpstream(t).Addr()}}},
+		Routing: config.Routing{DefaultUpstream: "frontend", SystemUpstream: "frontend"},
+		Upstreams: config.UpstreamList{{
+			Name:   "frontend",
+			Listen: config.ListenConfig{HostPort: dataplanetest.NewUpstream(t).Addr()},
+		}},
 	})
 
 	// The frontend fake does not implement ListNamespaces, so this is the error a
@@ -152,7 +163,7 @@ func TestEndToEndWithoutTheCloudAPIBlockNothingIsTranslated(t *testing.T) {
 		grpc.WaitForReady(true),
 	)
 	require.Error(t, err)
-	require.Nil(t, cloud.request(), "with no cloudApi block, nothing may be translated")
+	require.Nil(t, cloud.request(), "a non-Cloud upstream must translate nothing")
 }
 
 // newCloudUpstream starts a fake CloudService on a loopback port and stops it

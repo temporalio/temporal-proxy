@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/temporalio/temporal-proxy/internal/cloud"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/pkg/validation"
@@ -499,11 +500,11 @@ func urlStrings(us []url.URL) []string {
 	return out
 }
 
-func TestLoad_CloudAPIEnablesTranslation(t *testing.T) {
+func TestLoad_CloudUpstreamNeedsNoTranslationConfig(t *testing.T) {
 	t.Parallel()
 
-	// Routing is untouched: there is one upstream and no rule. The cloudApi block
-	// alone is what makes ListNamespaces work.
+	// No routing rule and no cloudApi block. A .tmprl.cloud address is recognized
+	// as Cloud on its own, which is all translation needs.
 	const yaml = `
 hostPort: 127.0.0.1:7233
 routing:
@@ -513,8 +514,9 @@ upstreams:
   - name: frontend
     hostPort: ns.acct.tmprl.cloud:7233
     tls: {}
-cloudApi:
-  tls: {}
+    credentials:
+      static:
+        apiKey: sekrit
 `
 
 	cfg, err := config.Load(strings.NewReader(yaml))
@@ -522,11 +524,47 @@ cloudApi:
 	require.NoError(t, cfg.Validate())
 
 	require.Empty(t, cfg.Routing.Rules, "translation needs no routing rule")
-	require.NotNil(t, cfg.CloudAPI)
+	require.Nil(t, cfg.CloudAPI, "and no cloudApi block")
+	require.True(t, cfg.Upstreams[0].IsCloud())
 
-	// hostPort is optional: where CloudService lives is a fixed fact, so the
-	// default stands unless an operator points at another environment.
-	require.Equal(t, config.DefaultCloudAPIHostPort, cfg.CloudAPI.Upstream().Listen.HostPort)
+	// The control plane is derived from the upstream: its own address, and the
+	// upstream's credentials, since one API key authorizes both.
+	api := cfg.CloudAPI.Upstream(&cfg.Upstreams[0])
+	require.Equal(t, cloud.APIHostPort, api.Listen.HostPort)
+	require.Equal(t, cfg.Upstreams[0].Credentials, api.Credentials)
+	require.NotEqual(t, cfg.Upstreams[0].Name, api.Name, "distinct name keeps the pooled connections apart")
+}
+
+func TestLoad_CloudAPIOverridesTheDerivedControlPlane(t *testing.T) {
+	t.Parallel()
+
+	const yaml = `
+hostPort: 127.0.0.1:7233
+routing:
+  default: frontend
+upstreams:
+  - name: frontend
+    hostPort: ns.acct.tmprl.cloud:7233
+    tls: {}
+    credentials:
+      static:
+        apiKey: upstream-key
+cloudApi:
+  hostPort: saas-api.staging.tmprl.cloud:443
+  tls: {}
+  credentials:
+    static:
+      apiKey: control-plane-key
+`
+
+	cfg, err := config.Load(strings.NewReader(yaml))
+	require.NoError(t, err)
+	require.NoError(t, cfg.Validate())
+
+	api := cfg.CloudAPI.Upstream(&cfg.Upstreams[0])
+	require.Equal(t, "saas-api.staging.tmprl.cloud:443", api.Listen.HostPort)
+	require.NotEqual(t, cfg.Upstreams[0].Credentials, api.Credentials, "the override wins over inheritance")
+	require.True(t, cfg.CloudAPI.IsEndpoint())
 }
 
 func TestLoad_CloudAPIRejectsCredentialsWithoutTLS(t *testing.T) {

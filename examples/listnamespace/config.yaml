@@ -8,11 +8,15 @@
 # CloudService.GetNamespaces on saas-api instead.
 #
 # The proxy bridges the two. Requests are routed exactly as they would be without
-# this example; the proxy captures ListNamespaces on its way to whichever upstream
-# routing chose, rewrites it to CloudService.GetNamespaces, sends it to the Cloud
-# API instead, and converts the reply back into the ListNamespacesResponse the
-# caller expects. Callers keep speaking plain WorkflowService and need no
-# Cloud-specific code.
+# this example; the proxy captures ListNamespaces on its way to the upstream,
+# rewrites it to CloudService.GetNamespaces, sends it to Cloud's control plane
+# instead, and converts the reply back into the ListNamespacesResponse the caller
+# expects. Callers keep speaking plain WorkflowService and need no Cloud-specific
+# code.
+#
+# Note there is nothing in this file that asks for any of that. A .tmprl.cloud
+# address is recognized as Temporal Cloud, and translating what Cloud cannot serve
+# follows from that - the same detection that turns on Cloud namespace validation.
 #
 # Driven entirely by environment variables:
 #   TEMPORAL_NAMESPACE  a namespace's short name (e.g. "quickstart")
@@ -50,14 +54,14 @@ upstreams:
     #   rules:
     #     suffix: .${TEMPORAL_ACCOUNT}
 
-# Temporal Cloud's control plane. Configuring this block is what turns method
-# translation on; leave it out and nothing is translated. Nothing is routed here,
-# so it needs no name, listener, or socket - only a connection.
+# Optional: the proxy reaches Cloud's control plane at saas-api.tmprl.cloud:443
+# with the upstream's own API key, which is all a normal account needs. Uncomment
+# only to reach a different Cloud environment, or to give the control plane
+# credentials the upstream does not carry.
 #
-# hostPort defaults to saas-api.tmprl.cloud:443 and is only worth setting to
-# point at a different Cloud environment.
-cloudApi:
-  tls: {}
-  credentials:
-    static:
-      apiKey: ${TEMPORAL_API_KEY}
+# cloudApi:
+#   hostPort: saas-api.tmprl.cloud:443
+#   tls: {}
+#   credentials:
+#     static:
+#       apiKey: ${TEMPORAL_API_KEY}
