@@ -14,7 +14,7 @@
 // translation, payload codecs, and the reflective forwarder all keep seeing the
 // method and message types the caller actually asked for.
 //
-// The package is the mechanism only; it ships no translations of its own. A
-// [Translation] names the two methods and carries the conversions between their
-// message types, so what is translated lives with the domain that needs it.
+// The one translation the proxy ships is WorkflowService.ListNamespaces onto
+// CloudService.GetNamespaces, since Temporal Cloud serves the namespace list
+// from its own control plane rather than from a frontend.
 package translation
