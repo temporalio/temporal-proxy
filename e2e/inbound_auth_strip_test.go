@@ -15,16 +15,16 @@ import (
 )
 
 // TestEndToEndInboundAuthStrippedOutboundCredentialAttached drives a request
-// through the full stack (client -> inbound server with StaticToken auth ->
-// router -> per-upstream proxy -> fake TLS upstream) and proves the inbound and
-// outbound header strips compose: the caller's worker token authenticates at
-// the inbound server but never reaches the upstream, and the upstream sees
-// exactly one authorization value, the configured static API key.
+// through the full stack (client -> gateway with StaticToken auth -> router ->
+// per-upstream proxy -> fake TLS upstream) and proves the inbound and outbound
+// header strips compose: the caller's worker token authenticates at the
+// gateway but never reaches the upstream, and the upstream sees exactly one
+// authorization value, the configured static API key.
 //
 // TestProxyAttachesUpstreamCredential (in upstream_credential_socket_test.go)
 // dials the per-upstream proxy's socket directly and so cannot exercise the
-// inbound server or router at all; this test is the only one that proves both
-// strips hold together end to end.
+// gateway or router at all; this test is the only one that proves both strips
+// hold together end to end.
 func TestEndToEndInboundAuthStrippedOutboundCredentialAttached(t *testing.T) {
 	t.Parallel()
 

@@ -83,10 +83,11 @@ release:
   header: |
     ## Temporal Proxy {{ .Version }}
 
-    A gRPC proxy that sits between Temporal SDK clients, workers, and the UI on one side and one or more
-    upstream Temporal clusters (a local dev cluster, a self-hosted deployment, or Temporal Cloud) on the
-    other. It handles namespace translation and TLS termination so applications target a single local
-    endpoint while the proxy routes each request to the right upstream.
+    A gRPC proxy that sits between Temporal SDK Clients, Workers, and the Temporal UI on one side and one
+    or more upstream Temporal Services on the other. It handles Namespace translation, TLS termination,
+    and payload encryption so applications can target a single local endpoint while the proxy fans
+    requests out to the right upstream (a local dev Temporal Service, a self-hosted deployment, Temporal
+    Cloud, or some mix).
 
     ### Installation
 

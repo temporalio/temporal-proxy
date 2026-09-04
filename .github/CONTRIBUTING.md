@@ -30,7 +30,7 @@ upstream defined in `dev/config.yaml`:
 | `localhost:7234` | `test`                     | `cluster-2` |
 | `localhost:7235` | `test2`                    | `cluster-3` |
 
-The proxy itself listens on `localhost:8444` with TLS terminated using the dev certs in `dev/certs/`. The inbound server
+The proxy itself listens on `localhost:8444` with TLS terminated using the dev certs in `dev/certs/`. The gateway
 requires a client certificate (mTLS), so requests must present `dev/certs/client.crt`.
 
 In a second shell, use the `grpc` task to send requests. It wraps `buf curl` with the dev certs and gRPC-over-HTTP2
@@ -45,15 +45,15 @@ path. Pass `-H`/`--header` (repeatable) to attach gRPC metadata, for example `-H
 
 ### Confirming requests are forwarded upstream
 
-`GetSystemInfo` takes no namespace and is the cleanest proof that a request is relayed to the real Temporal frontend:
+`GetSystemInfo` takes no Namespace and is the cleanest proof that a request is relayed to the real Temporal Service:
 
 ```sh
 mise run grpc GetSystemInfo
 ```
 
-A response with the upstream's capabilities means the call traversed the proxy and reached the frontend.
+A response with the upstream's capabilities means the call traversed the proxy and reached the Temporal Service.
 
-To exercise a namespace-scoped call, use `DescribeNamespace`. Send the local alias; the proxy rewrites it to the
+To exercise a Namespace-scoped call, use `DescribeNamespace`. Send the local alias; the proxy rewrites it to the
 upstream name before forwarding, per the matched upstream's `upstream.namespaces.rules` in `dev/config.yaml`:
 
 ```sh
@@ -62,20 +62,20 @@ mise run grpc DescribeNamespace '{"namespace":"ns1"}'
 
 > [!NOTE]
 >
-> The default upstream applies `suffix: .remote`, so the local alias `ns1` reaches the frontend as `ns1.remote`, and the
-> name in the response is translated back to `ns1`. The `ns3 -> ns2.remote` override maps the local alias `ns3` to
-> `ns2.remote` upstream. `cluster-3` configures no rules, so calls routed there are forwarded verbatim.
+> The default upstream applies `suffix: .remote`, so the local alias `ns1` reaches the Temporal Service as `ns1.remote`,
+> and the name in the response is translated back to `ns1`. The `ns3 -> ns2.remote` override maps the local alias `ns3`
+> to `ns2.remote` upstream. `cluster-3` configures no rules, so calls routed there are forwarded verbatim.
 
 ### Confirming per-request routing
 
 The proxy picks an upstream per request from the `routing` rules in `dev/config.yaml`, evaluated in order (first match
 wins):
 
-1. namespace `test` -> `cluster-2`
+1. Namespace `test` -> `cluster-2`
 2. metadata `x-cluster: 3` -> `cluster-3`
 
-Everything else, including requests with no namespace (such as `GetSystemInfo`), falls through to the `default` upstream
-(`cluster-1`). A namespace-scoped call to `test` lands on the second dev server:
+Everything else, including requests with no Namespace (such as `GetSystemInfo`), falls through to the `default` upstream
+(`cluster-1`). A Namespace-scoped call to `test` lands on the second dev server:
 
 ```sh
 mise run grpc DescribeNamespace '{"namespace":"test"}'
@@ -83,8 +83,8 @@ mise run grpc DescribeNamespace '{"namespace":"test"}'
 
 #### Routing on metadata
 
-The second rule routes on request metadata rather than namespace, so any request carrying `x-cluster: 3` goes to
-`cluster-3` regardless of namespace. `cluster-3` (`localhost:7235`) is the only dev server with the `test2` namespace,
+The second rule routes on request metadata rather than Namespace, so any request carrying `x-cluster: 3` goes to
+`cluster-3` regardless of Namespace. `cluster-3` (`localhost:7235`) is the only dev server with the `test2` Namespace,
 which makes the routing observable:
 
 ```sh
@@ -100,7 +100,7 @@ The differing results confirm the metadata rule selected the upstream. Metadata 
 
 ### Checking the gateway (not proxied)
 
-The health service is answered locally by the inbound server, so it verifies the gateway is up but does not prove
+The gateway answers the health service locally, so a response proves it is accepting but says nothing about
 forwarding. It uses a different schema, so call `buf curl` directly:
 
 ```sh

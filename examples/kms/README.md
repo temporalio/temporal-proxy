@@ -20,7 +20,7 @@ flowchart LR
 ## Prerequisites
 
 - Go and a checkout of this repository; the proxy and the example both run from source.
-- The `temporal` CLI, for the dev server and for inspecting workflow history.
+- The `temporal` CLI, for the dev server and for inspecting Workflow history.
 - No cloud account and no credentials: everything in this example runs on localhost.
 
 Everything under `examples` is one Go module, and its `go.mod` builds the proxy from this working tree with a `replace`
@@ -53,7 +53,7 @@ export KMS_MASTER_SECRET=example-master-secret
 ```
 
 The proxy only needs `KMS_API_KEY`, the bearer token it presents to the extension server. The extension server needs
-both: the same API key to authenticate callers, and the master secret every namespace's wrapping key is derived from.
+both: the same API key to authenticate callers, and the master secret every Namespace's wrapping key is derived from.
 
 ## Run
 
@@ -91,11 +91,11 @@ KMS_API_KEY=example-token go run ./cmd/proxy serve -c examples/kms/config.yaml
 ```
 
 The two `Running with insecure credentials` warnings are expected, not a sign anything is broken: they describe the
-local gateway and an internal socket, the plaintext hops between the worker/starter and the proxy on this machine. They
+local gateway and an internal socket, the plaintext hops between the Worker/starter and the proxy on this machine. They
 say nothing about whether payloads get sealed or about the TLS connection to the extension server; both of those are
 unaffected.
 
-Terminal 4, in `examples/kms`, starts the worker:
+Terminal 4, in `examples/kms`, starts the Worker:
 
 ```bash
 go run ./worker
@@ -105,7 +105,7 @@ go run ./worker
 2026/07/29 15:26:27 worker listening on task queue "kms-example" (namespace "default")
 ```
 
-With all four running, start the workflow from `examples/kms`:
+With all four running, start the Workflow from `examples/kms`:
 
 ```bash
 go run ./starter
@@ -120,18 +120,18 @@ Your run ID and timestamps will differ.
 
 ## What just happened
 
-The worker and starter never saw an encryption key: they dialed the proxy at `127.0.0.1:7234` in plaintext and exchanged
-the plain string `"Temporal"` and the plain string `"Hello, Temporal!"`. For the workflow's first payload, the proxy:
+The Worker and starter never saw an encryption key: they dialed the proxy at `127.0.0.1:7234` in plaintext and exchanged
+the plain string `"Temporal"` and the plain string `"Hello, Temporal!"`. For the Workflow's first payload, the proxy:
 
 1. generated a random 32-byte DEK;
 2. called the extension server's `Encrypt` RPC over TLS, with a bearer token, asking it to wrap that DEK under the
-   namespace `default` - this is the only thing that crossed the wire to `127.0.0.1:9443`, no payload plaintext ever
+   Namespace `default` - this is the only thing that crossed the wire to `127.0.0.1:9443`, no payload plaintext ever
    went there;
 3. sealed the payload locally with the DEK and recorded the wrapped DEK, and the key's URI, in the payload's metadata;
    and
 4. sent the sealed payload on to the dev server at `127.0.0.1:7233`.
 
-Every later payload in the same run, the activity's input and result and the workflow's own result, reused the cached
+Every later payload in the same run, the Activity's input and result and the Workflow's own result, reused the cached
 DEK instead of asking the extension server to wrap a new one; see "The cache is working" below.
 
 ## See the ciphertext
@@ -203,8 +203,8 @@ The one wrap is the number to watch, and it is the same on every run. The unwrap
 to run. The read-side cache is filled after the first miss and has no single-flight, so payloads opened concurrently can
 all miss it together and each ask the extension server for the same DEK.
 
-Meanwhile the workflow's history carries four payloads sealed under that one DEK: the workflow input, the activity's
-input and result, and the workflow's result each carry an `encryption-dek` entry in their metadata. Two separate
+Meanwhile the Workflow's history carries four payloads sealed under that one DEK: the Workflow input, the Activity's
+input and result, and the Workflow's result each carry an `encryption-dek` entry in their metadata. Two separate
 settings in `config.yaml` are behind that, and they govern different sides of the exchange. `duration: 1h` is how long
 the proxy reuses one sealed-side DEK before wrapping a fresh one, which is why sealing four payloads in this run only
 cost one wrap call. `cacheSize: 200` is unrelated to sealing: it bounds a separate LRU of unwrapped DEKs the proxy keeps
@@ -225,22 +225,22 @@ Every ciphertext the provider produces is a self-contained frame:
 [ version: 1 byte ][ namespace length: 2 bytes ][ namespace ][ nonce: 12 bytes ][ ciphertext + GCM tag ]
 ```
 
-`Decrypt` receives nothing but that ciphertext, no namespace and no other context, so `Unwrap` has to read the namespace
-back out of the frame before it can derive the matching key. The namespace also doubles as the GCM additional data, so a
-ciphertext relabelled with a different namespace fails to open rather than silently decrypting under the wrong key. It
-is also why the `default` namespace's ciphertext above is 70 bytes while the `payments` namespace's, in the optional
-section below, is 71: the only difference is one extra byte of namespace name carried inside the frame.
+`Decrypt` receives nothing but that ciphertext, no Namespace and no other context, so `Unwrap` has to read the Namespace
+back out of the frame before it can derive the matching key. The Namespace also doubles as the GCM additional data, so a
+ciphertext relabelled with a different Namespace fails to open rather than silently decrypting under the wrong key. It
+is also why the `default` Namespace's ciphertext above is 70 bytes while the `payments` Namespace's, in the optional
+section below, is 71: the only difference is one extra byte of Namespace name carried inside the frame.
 
-Three things worth being honest about. First, a namespace is not secret, but a real provider that would rather not carry
+Three things worth being honest about. First, a Namespace is not secret, but a real provider that would rather not carry
 a plaintext tenant name in its ciphertexts could use an opaque key identifier instead and resolve it internally. Second,
 the `payloads` segment in `config.yaml`'s key URI (`extension://kms/payloads`) never reaches the extension server; the
-provider selects a key by namespace alone, nothing else. That segment exists only on the proxy's side, as the identifier
+provider selects a key by Namespace alone, nothing else. That segment exists only on the proxy's side, as the identifier
 it uses to pick the same key policy again when opening a payload later, but it does have to be globally unique across
 `default` and every entry in `overrides`: two policies sharing a URI fail proxy startup with a `duplicate key id` error
-(see the optional section below). Third, the namespace the provider receives is always the local, pre-translation
-namespace, never a translated remote name; this example configures no translation so it never comes up here, but a
-provider paired with namespace translation has to key on that same local name, or its per-namespace keys end up
-misaligned with the namespace a caller actually asked for.
+(see the optional section below). Third, the Namespace the provider receives is always the local, pre-translation
+Namespace, never a translated remote name; this example configures no translation so it never comes up here, but a
+provider paired with Namespace translation has to key on that same local name, or its per-Namespace keys end up
+misaligned with the Namespace a caller actually asked for.
 
 ## When it breaks
 
@@ -258,12 +258,12 @@ namespace: default, failed to encrypt DEK, id: extension://kms/payloads, err: rp
 desc = invalid credentials
 ```
 
-The workflow never starts; no execution shows up in `temporal workflow list`. The error surfaces only on the starter's
+The Workflow never starts; no execution shows up in `temporal workflow list`. The error surfaces only on the starter's
 side. The proxy's own log stays silent about it.
 
 **Wrong certificate name.** Removing `serverName: localhost` from `config.yaml`'s extension server block does not stop
 the proxy from starting: nothing dials the extension server until the first payload needs a key, so a mismatched server
-name is invisible at boot. The first workflow start after that just hangs and times out, rather than failing with a
+name is invisible at boot. The first Workflow start after that just hangs and times out, rather than failing with a
 clear error:
 
 ```text
@@ -289,10 +289,10 @@ This provider is a teaching aid, not a key manager:
 - the master secret lives in a plain environment variable (`KMS_MASTER_SECRET`);
 - that secret also has to be actual secret material: HKDF extracts entropy from it rather than adding any, so it needs
   to be at least 32 bytes of cryptographic randomness, for example from `openssl rand -base64 32`, not a human-chosen
-  passphrase. A passphrase here is directly brute-forceable, and recovering it yields every per-namespace key at once.
+  passphrase. A passphrase here is directly brute-forceable, and recovering it yields every per-Namespace key at once.
   This example's own value, `example-master-secret`, is a passphrase, and that is fine only because this is a localhost
   demo, not something to copy into a real deployment;
-- nothing on the provider side rotates: the same secret derives the same per-namespace key forever; and
+- nothing on the provider side rotates: the same secret derives the same per-Namespace key forever; and
 - losing that secret loses every payload ever sealed under it, with no recovery path.
 
 Also worth flagging: the extension server here authenticates only with a bearer token over TLS, which is the right
@@ -305,14 +305,14 @@ For a real deployment, point the proxy's `encryption` block at one of the built-
 
 ## Running it again
 
-The starter always uses the fixed workflow ID `kms-example-greeting`. Run it again after the previous run has completed
-and nothing special happens: the server's default workflow ID reuse policy allows a new run once the old one has closed,
+The starter always uses the fixed Workflow ID `kms-example-greeting`. Run it again after the previous run has completed
+and nothing special happens: the server's default Workflow ID reuse policy allows a new run once the old one has closed,
 so you get a fresh run ID and `Hello, Temporal!` again with no cleanup required.
 
-The case worth knowing about is a still-open execution, for example one started while the worker was stopped. Here
+The case worth knowing about is a still-open execution, for example one started while the Worker was stopped. Here
 neither the SDK nor the CLI report an already-started error the way you might expect: `ExecuteWorkflow` and
 `temporal workflow start` both attach to the open run instead of rejecting the request, so the starter just blocks
-waiting for a result that will not arrive until a worker picks the run up. If that happens, either bring the worker back
+waiting for a result that will not arrive until a Worker picks the run up. If that happens, either bring the Worker back
 so the open run can finish, clear it directly with:
 
 ```bash
@@ -321,13 +321,13 @@ temporal workflow terminate --workflow-id kms-example-greeting --namespace defau
 
 or restart the dev server, whose state lives entirely in memory.
 
-## Optional: per-namespace keys
+## Optional: per-Namespace keys
 
 Restarting the dev server below discards the `kms-example-greeting` execution from the sections above, since its state
 lives entirely in memory; that is fine for this section, which stands on its own, but do it only once you are done
 inspecting that execution.
 
-Start the dev server with a second namespace:
+Start the dev server with a second Namespace:
 
 ```bash
 temporal server start-dev -n payments
@@ -353,8 +353,8 @@ encryption:
 
 The override's URI has to differ from the default key's URI even though both point at the same extension server: as
 noted above, reusing `extension://kms/payloads` for both fails proxy startup with
-`duplicate key id: extension://kms/payloads`. Restart the proxy, then start a workflow against the new namespace; no
-worker is needed for this check, since the key exchange happens on the way in:
+`duplicate key id: extension://kms/payloads`. Restart the proxy, then start a Workflow against the new Namespace; no
+Worker is needed for this check, since the key exchange happens on the way in:
 
 ```bash
 temporal workflow start --address 127.0.0.1:7234 --namespace payments --task-queue kms-example \
@@ -369,7 +369,7 @@ wrapped a DEK: namespace=default plaintext=32B ciphertext=70B
 wrapped a DEK: namespace=payments plaintext=32B ciphertext=71B
 ```
 
-Same master secret, same extension server connection, but a different derived key per namespace. Clean up with:
+Same master secret, same extension server connection, but a different derived key per Namespace. Clean up with:
 
 ```bash
 temporal workflow terminate --workflow-id kms-payments-demo --namespace payments --address 127.0.0.1:7234
