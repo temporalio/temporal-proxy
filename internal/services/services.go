@@ -10,6 +10,7 @@ import (
 	// incidental.
 	_ "go.temporal.io/api/operatorservice/v1"
 	_ "go.temporal.io/api/workflowservice/v1"
+	_ "go.temporal.io/cloud-sdk/api/cloudservice/v1"
 	_ "google.golang.org/grpc/reflection/grpc_reflection_v1"
 	_ "google.golang.org/grpc/reflection/grpc_reflection_v1alpha"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -23,6 +24,9 @@ const (
 	// OperatorService backs `temporal operator ...` and the UI's search
 	// attribute and Nexus endpoint views.
 	OperatorService = "temporal.api.operatorservice.v1.OperatorService"
+
+	// CloudService backs saas-temporal API's for management of the hosted solution.
+	CloudService = "temporal.api.cloud.cloudservice.v1.CloudService"
 
 	// Reflection is the current gRPC server reflection service.
 	Reflection = "grpc.reflection.v1.ServerReflection"
@@ -43,14 +47,14 @@ var aliases = map[string][]string{
 // normal client, worker, CLI, or UI needs. Reflection is excluded because
 // service discovery is opt-in.
 func Default() []string {
-	return []string{WorkflowService, OperatorService}
+	return []string{WorkflowService, OperatorService, CloudService}
 }
 
 // Known returns every service the proxy can forward, which is every service
 // whose descriptors this package links in. It is the universe configuration may
 // select from, and the set the namespace completeness guard audits.
 func Known() []string {
-	return []string{WorkflowService, OperatorService, Reflection}
+	return []string{WorkflowService, OperatorService, CloudService, Reflection}
 }
 
 // All returns every forwardable service name, including each service's

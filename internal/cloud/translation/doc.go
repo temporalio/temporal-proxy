@@ -16,6 +16,10 @@
 // innermost, so namespace translation, payload codecs, and the reflective
 // forwarder all keep seeing the method and message types the caller asked for.
 //
+// The one translation the proxy ships is WorkflowService.ListNamespaces onto
+// CloudService.GetNamespaces, since Temporal Cloud serves the namespace list
+// from its own control plane rather than from a frontend.
+//
 // The mechanism itself knows nothing about Cloud, and is kept separate from the
 // parent package so that using [cloud.IsEndpoint] or [cloud.ValidateNamespace]
 // does not pull gRPC and protobuf into a caller that only wanted to check a
