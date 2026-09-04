@@ -1,0 +1,74 @@
+# Proxy configuration that makes WorkflowService.ListNamespaces work on Temporal
+# Cloud, which does not serve it.
+#
+# Cloud pins a request's namespace to the endpoint's hostname and rejects any
+# request whose body namespace differs. ListNamespaces has no namespace field, so
+# its body namespace is always empty and it can never satisfy that check - on any
+# Cloud endpoint. Cloud exposes the same functionality as
+# CloudService.GetNamespaces on saas-api instead.
+#
+# The proxy bridges the two. Requests are routed exactly as they would be without
+# this example; the proxy captures ListNamespaces on its way to the upstream,
+# rewrites it to CloudService.GetNamespaces, sends it to Cloud's control plane
+# instead, and converts the reply back into the ListNamespacesResponse the caller
+# expects. Callers keep speaking plain WorkflowService and need no Cloud-specific
+# code.
+#
+# Note there is nothing in this file that asks for any of that. A .tmprl.cloud
+# address is recognized as Temporal Cloud, and translating what Cloud cannot serve
+# follows from that - the same detection that turns on Cloud namespace validation.
+#
+# Driven entirely by environment variables:
+#   TEMPORAL_NAMESPACE  a namespace's short name (e.g. "quickstart")
+#   TEMPORAL_ACCOUNT    the Cloud account id (the part after the dot in the
+#                       fully-qualified namespace, e.g. "a1b2c")
+#   TEMPORAL_API_KEY    a Temporal Cloud API key
+#
+# The local gateway is plaintext with no credentials, so a client can curl it
+# directly; the proxy adds TLS and the API key on the way to Cloud.
+hostPort: 127.0.0.1:7233
+
+# Ordinary routing, unchanged. There is no rule for ListNamespaces and none is
+# needed: where CloudService lives is a fixed fact about Temporal Cloud rather
+# than a policy, so the translation carries the destination itself.
+routing:
+  default: frontend
+  system: frontend
+
+upstreams:
+  # The regular Temporal frontend for this namespace. Serves all normal traffic.
+  - name: frontend
+    hostPort: ${TEMPORAL_NAMESPACE}.${TEMPORAL_ACCOUNT}.tmprl.cloud:7233
+    tls: {}
+    credentials:
+      static:
+        apiKey: ${TEMPORAL_API_KEY}
+
+    # Optional: uncomment to have the namespace names in the ListNamespaces reply
+    # come back in short local form ("payments") rather than the Cloud
+    # fully-qualified form ("payments.<account>"). Namespace translation runs
+    # outside the method translation, so it sees the converted
+    # ListNamespacesResponse and rewrites every namespace name in it.
+    #
+    # namespaces:
+    #   rules:
+    #     suffix: .${TEMPORAL_ACCOUNT}
+
+# Optional. Translation is on for a Cloud upstream and reaches the control plane
+# at saas-api.tmprl.cloud:443 with the upstream's own API key, which is all a
+# normal account needs. This block is only for overriding that:
+#
+#   enabled: false   forward ListNamespaces untranslated and let it fail the way
+#                    it does without the proxy. An on-prem upstream is not Cloud,
+#                    so it is never translated and needs nothing here.
+#   cloudApi:        reach a different Cloud environment, or give the control
+#                    plane credentials or TLS the upstream does not carry.
+#
+# apiTranslations:
+#   enabled: true
+#   cloudApi:
+#     hostPort: saas-api.tmprl.cloud:443
+#     tls: {}
+#     credentials:
+#       static:
+#         apiKey: ${TEMPORAL_API_KEY}
