@@ -241,3 +241,48 @@ func testingKeyURL(t *testing.T) url.URL {
 
 	return *u
 }
+
+// cloudAPIUnusedWarning is the message New logs for a Cloud API override no
+// upstream can use. TestLogger matches an entry's message in full, so it is
+// spelled once here rather than approximated at each assertion.
+const cloudAPIUnusedWarning = "apiTranslations is configured but no upstream is Temporal Cloud, so no method will be translated"
+
+// TestNewWarnsWhenCloudAPIHasNoCloudUpstream covers a block that changes nothing.
+// The Cloud API is reached only by a translation, and only a Cloud upstream
+// installs one, so configuring the override without such an upstream leaves an
+// operator waiting for behaviour that cannot arrive.
+func TestNewWarnsWhenCloudAPIHasNoCloudUpstream(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	cfg.APITranslations = &config.APITranslations{}
+
+	log := logger.NewTestLogger()
+	deps := newTestDeps(t, cfg)
+	deps.logger = log
+
+	_, err := dataplane.New(deps.ctx, cfg, deps.opts()...)
+	require.NoError(t, err)
+
+	require.True(t, log.Contains(cloudAPIUnusedWarning),
+		"a block that changes nothing must not pass unremarked")
+}
+
+// TestNewIsQuietWhenCloudAPIHasACloudUpstream is the control: the same block with
+// an upstream that can use it must not warn.
+func TestNewIsQuietWhenCloudAPIHasACloudUpstream(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	cfg.APITranslations = &config.APITranslations{}
+	cfg.Upstreams[0].Cloud = true
+
+	log := logger.NewTestLogger()
+	deps := newTestDeps(t, cfg)
+	deps.logger = log
+
+	_, err := dataplane.New(deps.ctx, cfg, deps.opts()...)
+	require.NoError(t, err)
+
+	require.False(t, log.Contains(cloudAPIUnusedWarning))
+}

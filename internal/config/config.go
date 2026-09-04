@@ -22,6 +22,7 @@ type (
 		Routing          Routing             `yaml:"routing"`
 		Upstreams        UpstreamList        `yaml:"upstreams"`
 		Auth             *AuthConfig         `yaml:"auth"`
+		APITranslations  *APITranslations    `yaml:"apiTranslations"`
 	}
 )
 
@@ -86,6 +87,10 @@ func (c *Config) Validate() error {
 		validation.Nested("extensionServers", &c.ExtensionServers),
 		validation.Nested("routing", &c.Routing),
 		validation.WhenRules(func() bool { return c.Auth != nil }, validation.Nested("auth", c.Auth)),
+		validation.WhenRules(
+			func() bool { return c.APITranslations != nil },
+			validation.Nested("apiTranslations", c.APITranslations),
+		),
 		validation.Nested("upstreams", &c.Upstreams),
 	}
 

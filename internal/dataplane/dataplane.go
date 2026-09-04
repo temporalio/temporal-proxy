@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
+	"strings"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -20,6 +22,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/router"
 	"github.com/temporalio/temporal-proxy/internal/server"
 	"github.com/temporalio/temporal-proxy/internal/services"
+	"github.com/temporalio/temporal-proxy/internal/translation"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
@@ -60,6 +63,17 @@ type (
 		vault      *crypto.Vault
 		logger     logger.Logger
 		abort      func(error)
+	}
+
+	// keyedResolver overrides a resolver's pool cache key. A static resolver keys
+	// by dial target, which is unique among upstreams but not among control-plane
+	// connections: every Cloud upstream dials the same address, so without this
+	// they would share whichever was created first, and with it whichever
+	// credentials that one carried.
+	keyedResolver struct {
+		connect.Resolver
+
+		key string
 	}
 
 	// upstreamTier is one upstream's proxy and the socket it binds.
@@ -108,6 +122,15 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 	mux, err := router.CompileMux(cfg.Routing)
 	if err != nil {
 		return nil, err
+	}
+
+	// A translation block with no Cloud upstream changes nothing and would leave
+	// an operator waiting for behaviour that cannot arrive, so say so rather than
+	// ignoring it silently. Disabling translation is exempt: turning off something
+	// that was never on is a coherent thing to write.
+	if cfg.APITranslations != nil && cfg.APITranslations.IsEnabled() &&
+		!slices.ContainsFunc(cfg.Upstreams, func(up config.Upstream) bool { return up.IsCloud() }) {
+		o.logger.Warn("apiTranslations is configured but no upstream is Temporal Cloud, so no method will be translated")
 	}
 
 	dp := &Dataplane{
@@ -357,6 +380,23 @@ func newUpstreamTier(
 
 	dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(cdc))
 
+	// Cloud does not serve every WorkflowService method on a frontend, so the ones
+	// it answers elsewhere are translated and sent to its control plane instead.
+	// This follows the upstream's own Cloud detection: an upstream that is Cloud
+	// needs this, and one that is not would be broken by it.
+	//
+	// It goes on last so it is the innermost interceptor: the namespace translator
+	// and the payload codec above it then see the method and message types the
+	// caller asked for, and only the hop onto the wire carries the substitute.
+	if up.IsCloud() && cfg.APITranslations.IsEnabled() {
+		reg, conn, err := cloudAPIConn(cfg, o, up)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		dialOpts = append(dialOpts, translation.DialOptions(reg, translation.Via(conn))...)
+	}
+
 	res, err := proxy.ResolverFor(up, dialOpts, o.logger)
 	if err != nil {
 		return nil, nil, err
@@ -390,4 +430,60 @@ func newUpstreamTier(
 	}
 
 	return &upstreamTier{name: up.Name, path: path, svr: svr}, ready, nil
+}
+
+// Resolve returns the overriding cache key with the wrapped resolver's target and
+// options.
+func (r keyedResolver) Resolve(ctx context.Context) (string, string, []grpc.DialOption, error) {
+	_, target, opts, err := r.Resolver.Resolve(ctx)
+	return r.key, target, opts, err
+}
+
+// cloudAPIConn builds the connection translated methods for up are answered
+// over, along with the translations that use it. The connection is dialled by
+// the same resolver and credential machinery as an upstream but is not
+// registered with the router: nothing routes to it, and it is reached only by a
+// translation.
+//
+// It is not opened eagerly. Translation is incidental to an upstream's normal
+// traffic, so a control plane that is unreachable must not stop the proxy
+// serving everything else.
+func cloudAPIConn(cfg *config.Config, o *options, up *config.Upstream) (*translation.Registry, *connect.Conn, error) {
+	reg, err := translation.Default()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to build method translations: %w", err)
+	}
+
+	api := cfg.APITranslations.Cloud().Upstream(up)
+
+	var dialOpts []grpc.DialOption
+	cp, err := outbound.CredentialProviderFor(api.Credentials)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid credentials for the Cloud API of upstream %q: %w", up.Name, err)
+	}
+	if cp != nil {
+		dialOpts = append(dialOpts, outbound.DialOptions(cp)...)
+	}
+
+	res, err := proxy.ResolverFor(api, dialOpts, o.logger)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to resolve the Cloud API of upstream %q: %w", up.Name, err)
+	}
+
+	conn, err := connect.NewConn(o.pool.ConnOrCreate, keyedResolver{Resolver: res, key: api.Name})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create the Cloud API client of upstream %q: %w", up.Name, err)
+	}
+
+	log := o.logger.With(tag.String("upstream", up.Name), tag.String("hostPort", api.Listen.HostPort))
+	if !cfg.APITranslations.Cloud().IsEndpoint() {
+		// Nothing but a Cloud deployment serves CloudService, but a test double or
+		// a private environment legitimately carries no Cloud domain, so this is
+		// reported rather than rejected.
+		log.Warn("the configured Cloud API is not a Temporal Cloud endpoint")
+	}
+
+	log.Info("translating methods to the Cloud API", tag.String("methods", strings.Join(reg.Methods(), ", ")))
+
+	return reg, conn, nil
 }
