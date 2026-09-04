@@ -1,7 +1,7 @@
 # Temporal Cloud via the proxy
 
-Connect a worker to a Temporal Cloud namespace through the proxy using an API key. The worker and starter carry **no**
-Cloud configuration: they talk plaintext to `localhost:7233`, and the proxy adds TLS, the API key, and the namespace
+Connect a Worker to a Temporal Cloud Namespace through the proxy using an API key. The Worker and starter carry **no**
+Cloud configuration: they talk plaintext to `localhost:7233`, and the proxy adds TLS, the API key, and the Namespace
 rewrite on the way to Cloud.
 
 ```mermaid
@@ -16,17 +16,17 @@ flowchart LR
 
 ## Prerequisites
 
-- A Temporal Cloud namespace. Note its fully-qualified name, shown in the Cloud UI as `<namespace>.<account>` (for
+- A Temporal Cloud Namespace. Note its fully-qualified name, shown in the Cloud UI as `<namespace>.<account>` (for
   example `quickstart.a1b2c`); you split it across two environment variables below. See
   [Namespaces](https://docs.temporal.io/cloud/namespaces).
-- An API key, and API key authentication enabled on the namespace (namespaces default to mTLS, so this is a separate
+- An API key, and API key authentication enabled on the Namespace (Namespaces default to mTLS, so this is a separate
   step). See [API keys](https://docs.temporal.io/cloud/api-keys).
 - Go, and a checkout of this repository (the proxy runs from source).
 
 ## Configure
 
-Set three environment variables. `TEMPORAL_NAMESPACE` is your namespace's short name and `TEMPORAL_ACCOUNT` is the
-account id after the dot in the fully-qualified name (a namespace `quickstart.a1b2c` means
+Set three environment variables. `TEMPORAL_NAMESPACE` is your Namespace's short name and `TEMPORAL_ACCOUNT` is the
+account id after the dot in the fully-qualified name (a Namespace `quickstart.a1b2c` means
 `TEMPORAL_NAMESPACE=quickstart` and `TEMPORAL_ACCOUNT=a1b2c`):
 
 ```bash
@@ -47,7 +47,7 @@ cd ../../ && go run ./cmd/proxy serve -c examples/cloud/config.yaml
 The proxy logs `Running with insecure credentials` for the local gateway and its internal sockets. That is expected:
 those are local hops. The connection to Temporal Cloud is TLS.
 
-Start the worker:
+Start the Worker:
 
 ```bash
 go run ./worker
@@ -65,37 +65,37 @@ The starter prints:
 Hello, Temporal!
 ```
 
-The workflow execution is also visible in the Temporal Cloud UI for your namespace.
+The Workflow execution is also visible in the Temporal Cloud UI for your Namespace.
 
 ## What just happened
 
-The worker and starter connected to the proxy on `localhost:7233` with no TLS and no credentials, using the short
-namespace name `quickstart`. For each request the proxy:
+The Worker and starter connected to the proxy on `localhost:7233` with no TLS and no credentials, using the short
+Namespace name `quickstart`. For each request the proxy:
 
 1. terminated the local plaintext connection and dialed Temporal Cloud over TLS;
 2. attached the API key as an `Authorization: Bearer` header; and
-3. rewrote the namespace from `quickstart` to `quickstart.<account>` (and back on responses).
+3. rewrote the Namespace from `quickstart` to `quickstart.<account>` (and back on responses).
 
 ## How the config routes
 
-`config.yaml` uses two upstreams, which is the pattern for reaching Temporal Cloud by namespace endpoint:
+`config.yaml` uses two upstreams, which is the pattern for reaching Temporal Cloud by Namespace endpoint:
 
 - **`cloud`** handles namespaced requests. Its `hostPort` is a template (`{{ .RemoteNamespace }}.tmprl.cloud:7233`)
-  resolved per request from the translated namespace, so one config serves any number of namespaces - point more workers
-  at the proxy with different namespaces and each reaches its own Cloud endpoint, no config change.
-- **`system`** handles the namespace-less calls the SDK makes (for example `GetSystemInfo` on connect). With no
-  namespace there is nothing to derive a host from, so this upstream uses a fixed endpoint. Any namespace endpoint in
+  resolved per request from the translated Namespace, so one config serves any number of Namespaces - point more Workers
+  at the proxy with different Namespaces and each reaches its own Cloud endpoint, no config change.
+- **`system`** handles the Namespace-less calls the SDK makes (for example `GetSystemInfo` on connect). With no
+  Namespace there is nothing to derive a host from, so this upstream uses a fixed endpoint. Any Namespace endpoint in
   the account answers these calls.
 
 > [!NOTE]
 >
-> With a single namespace both upstreams resolve to the same host; the split is what lets the same config scale to many.
+> With a single Namespace both upstreams resolve to the same host; the split is what lets the same config scale to many.
 
 ## Optional: encrypt payloads to Cloud
 
-`config.yaml` ends with a commented-out `encryption:` block. Uncomment it and restart the proxy to encrypt workflow and
-activity payloads on the hop to Cloud: the worker and starter keep exchanging cleartext, the proxy seals payloads before
-they leave and opens them on the way back, and Cloud only ever stores ciphertext (workflow inputs and results show as
+`config.yaml` ends with a commented-out `encryption:` block. Uncomment it and restart the proxy to encrypt Workflow and
+Activity payloads on the hop to Cloud: the Worker and starter keep exchanging cleartext, the proxy seals payloads before
+they leave and opens them on the way back, and Cloud only ever stores ciphertext (Workflow inputs and results show as
 encrypted bytes in the Cloud UI).
 
 The block uses a `testing://` key, which holds its key material in the config itself with no cloud KMS. That is fine for

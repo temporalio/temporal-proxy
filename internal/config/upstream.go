@@ -9,10 +9,10 @@ import (
 )
 
 type (
-	// Upstream describes a single upstream Temporal cluster the proxy connects
-	// workers to along with configuration for that remote cluster. Name
-	// identifies the upstream so routing rules can refer to it; it must be
-	// unique within the config.
+	// Upstream describes a single upstream Temporal Service the proxy connects
+	// workers to, along with the configuration for reaching it. Name identifies
+	// the upstream so routing rules can refer to it; it must be unique within
+	// the config.
 	//
 	// Cloud declares the upstream to be Temporal Cloud, which turns on
 	// Cloud-specific namespace rules. It is only needed for an address
@@ -34,7 +34,8 @@ type (
 	}
 
 	// NamespaceRules translates namespace names between the local view that
-	// workers use and the remote names registered on the upstream cluster.
+	// workers use and the remote names registered on the upstream Temporal
+	// Service.
 	//
 	// The default translation is to wrap or unwrap a Prefix and Suffix:
 	// Remote("payments") returns Prefix+"payments"+Suffix, and Local of that

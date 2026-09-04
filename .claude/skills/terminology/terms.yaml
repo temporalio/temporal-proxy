@@ -1,0 +1,56 @@
+# The project's canonical vocabulary, enforced by `mise run lint:terms`.
+# Every exception carries the reason it exists, so the next person can tell a
+# deliberate choice from an oversight.
+
+# The checker lints what `git ls-files` reports, so .gitignore and
+# .git/info/exclude already keep build output, worktrees, and local notes out.
+# Only paths git tracks but we still do not want checked belong here.
+ignorePaths:
+  # Historical records. They describe the design as it was proposed, and are
+  # never edited to match shipped code.
+  - rfc/
+  # The rule set, its tests, and the skill all quote the rejected terms in order
+  # to reject them. Only reachable once the skill is committed, since .claude/
+  # is otherwise ignored, but wrong the moment it is.
+  - .claude/skills/terminology/
+
+banned:
+  - phrase: Temporal cluster
+    use: Temporal Service
+  - phrase: upstream cluster
+    use: upstream Temporal Service
+  - phrase: remote cluster
+    use: remote Temporal Service
+  - phrase: inbound server
+    use: gateway
+    except:
+      # gRPC's own name for the two ends of a forwarded call is the inbound
+      # server stream and the outbound client stream. Nothing to do with the
+      # gateway, and the phrasing is the clearest available.
+      - internal/rpc/
+  - phrase: front door
+    use: gateway
+  - phrase: frontdoor
+    use: gateway
+  - phrase: Temporal frontend
+    use: Temporal Service
+    except:
+      # Standing in for the Temporal frontend is the whole point of the fakes.
+      - _test.go
+      - dataplanetest/
+  - phrase: upstream frontend
+    use: upstream Temporal Service
+    except:
+      - _test.go
+      - dataplanetest/
+
+# Temporal's core nouns are proper nouns in prose. Markdown only: Go comments in
+# this repository use lowercase throughout and are consistent as they are.
+capitalize:
+  - word: namespace
+  - word: worker
+  - word: workflow
+    except:
+      # GitHub Actions calls its pipelines workflows. Not Temporal Workflows.
+      - .github/
+  - word: activity

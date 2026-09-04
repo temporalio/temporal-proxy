@@ -30,7 +30,7 @@ const (
 )
 
 // TestEndToEndPayloadEncryption drives a QueryWorkflow call through the full
-// stack (client -> inbound server -> router -> per-upstream proxy -> fake
+// stack (client -> gateway -> router -> per-upstream proxy -> fake
 // upstream) with encryption enabled via a local testing:// key, and proves the
 // interceptor is wired in both directions: the upstream receives sealed
 // QueryArgs (outbound encryption), and the client receives the original

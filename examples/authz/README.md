@@ -5,8 +5,8 @@ steps Temporal OSS splits across its `ClaimMapper` and `Authorizer` plugins. Her
 run yourself, an extension server, which the proxy asks about every stream it accepts: one RPC maps the claims and
 returns the verdict.
 
-What that buys is access decided per namespace and per method. A worker scoped to one namespace cannot touch another,
-and an auditor can read history but cannot start a workflow.
+What that buys is access decided per Namespace and per method. A Worker scoped to one Namespace cannot touch another,
+and an auditor can read history but cannot start a Workflow.
 
 ```mermaid
 flowchart LR
@@ -56,10 +56,10 @@ export AUTHZ_ADMIN=$(go run ./gentoken -sub acme-admin -system admin)
 
 | Token | Holds | What it can do |
 | --- | --- | --- |
-| `acme-worker` | `worker`, `reader`, `writer` in `default` | run a worker and start workflows in `default` |
+| `acme-worker` | `worker`, `reader`, `writer` in `default` | run a Worker and start Workflows in `default` |
 | `acme-auditor` | `reader` in `default` | read history in `default`, and nothing else |
 | `acme-payments` | `reader`, `writer` in `payments` | nothing in `default` |
-| `acme-admin` | `admin` at the system scope | everything, in every namespace |
+| `acme-admin` | `admin` at the system scope | everything, in every Namespace |
 
 `-claims` writes the token body to stderr while the token itself goes to stdout, so redirecting the token away leaves
 just the claims. It is the clearest way to see what you minted:
@@ -134,7 +134,7 @@ go run ./cmd/proxy serve -c examples/authz/config.yaml
 The two `Running with insecure credentials` warnings are expected: they describe the local gateway and an internal
 socket, the plaintext hops on this machine. They say nothing about whether callers are being authorized.
 
-Terminal 4, in `examples/authz`, starts the worker with the worker token:
+Terminal 4, in `examples/authz`, starts the Worker with the Worker token:
 
 ```bash
 AUTHZ_TOKEN=$AUTHZ_WORKER go run ./worker
@@ -145,7 +145,7 @@ AUTHZ_TOKEN=$AUTHZ_WORKER go run ./worker
 2026/08/13 14:25:38 INFO  Started Worker Namespace default TaskQueue authz-example WorkerID 63509@MutoBookPro.local@
 ```
 
-With all four running, start the workflow from `examples/authz`:
+With all four running, start the Workflow from `examples/authz`:
 
 ```bash
 AUTHZ_TOKEN=$AUTHZ_WORKER go run ./starter
@@ -161,7 +161,7 @@ Your run ID and timestamps will differ.
 ## What just happened
 
 Every stream the proxy accepted became one `Auth` RPC. The extension server's log is the whole story of the run, with
-the worker's repeated task-queue polls removed:
+the Worker's repeated task-queue polls removed:
 
 ```text
 {"level":"info","component":"examples","method":"/temporal.api.workflowservice.v1.WorkflowService/GetSystemInfo","time":"2026-08-13T14:25:38-04:00","message":"Allowed without reading a credential"}
@@ -203,7 +203,7 @@ claims{
 }
 ```
 
-Roles are a bitmask, so they combine, and system roles apply in every namespace. A role name the server does not
+Roles are a bitmask, so they combine, and system roles apply in every Namespace. A role name the server does not
 recognize is logged and skipped rather than failing the token, which is what Temporal's own JWT claim mapper does with a
 permission it cannot parse. That is forgiving in a way you can see. Mint a token with `writer` deliberately misspelled:
 
@@ -229,7 +229,7 @@ about what the caller is trying to reach.
 1. If the method is one every caller needs, allow it, before the credential is read.
 2. Turn the credential into claims, or fail.
 3. Look up what the method costs.
-4. `have := claims.system | claims.namespaces[namespace]` for a namespace-scoped method, `claims.system` alone for a
+4. `have := claims.system | claims.namespaces[namespace]` for a Namespace-scoped method, `claims.system` alone for a
    cluster-scoped one.
 5. Allow when `have >= need`.
 
@@ -251,7 +251,7 @@ read-only needs `reader`, write needs `writer`, anything else needs `admin`.
 
 A method the table does not list is charged as cluster-scoped admin, so a gap denies a caller rather than waving it
 through. That default is load bearing, and it fires in practice: the first version of this example was missing
-`RecordWorkerHeartbeat`, and the worker complained on startup while everything else kept working.
+`RecordWorkerHeartbeat`, and the Worker complained on startup while everything else kept working.
 
 ```text
 2026/08/13 14:20:59 WARN  Failed to send heartbeat Error caller is not permitted
@@ -302,7 +302,7 @@ systems, and it never reaches the caller.
 
 ## When it breaks
 
-**A token for the wrong namespace.** The `payments` token is not weaker than the auditor's; it is simply irrelevant
+**A token for the wrong Namespace.** The `payments` token is not weaker than the auditor's; it is simply irrelevant
 here, and it reads as holding nothing:
 
 ```bash
@@ -313,7 +313,7 @@ AUTHZ_TOKEN=$AUTHZ_PAYMENTS go run ./starter
 {"level":"warn","method":"/temporal.api.workflowservice.v1.WorkflowService/StartWorkflowExecution","code":"PermissionDenied","reason":"external auth: subject \"acme-payments\" holds none in namespace default, and /temporal.api.workflowservice.v1.WorkflowService/StartWorkflowExecution calls for writer","time":"2026-08-13T14:23:31-04:00","message":"inbound authentication rejected"}
 ```
 
-The `payments` namespace does not even exist on the dev server, and it did not need to: the proxy refused the call
+The `payments` Namespace does not even exist on the dev server, and it did not need to: the proxy refused the call
 before routing it anywhere.
 
 **An expired token.** Mint one that lasts a second, wait, and use it:
@@ -368,13 +368,13 @@ fails closed. Nothing is admitted, and the code says retryable rather than refus
 {"level":"warn","method":"/temporal.api.workflowservice.v1.WorkflowService/PollWorkflowTaskQueue","code":"Unavailable","reason":"external auth: connection error: desc = \"transport: Error while dialing: dial tcp 127.0.0.1:9444: connect: connection refused\"","time":"2026-08-13T14:22:00-04:00","message":"inbound authentication rejected"}
 ```
 
-The worker keeps trying, which is the right thing for it to do:
+The Worker keeps trying, which is the right thing for it to do:
 
 ```text
 2026/08/13 14:21:59 WARN  Failed to poll for task. Namespace default TaskQueue authz-example WorkerID 62321@MutoBookPro.local@ WorkerType WorkflowWorker Error authentication temporarily unavailable
 ```
 
-Start the extension server again and the worker recovers on its own. An authorizer that fails open would have been
+Start the extension server again and the Worker recovers on its own. An authorizer that fails open would have been
 worse than one that is down.
 
 ## What this is not
@@ -393,18 +393,18 @@ This is a teaching aid, not an authorization system:
   credential here, but adding it alone is not enough: the proxy will not put a credential on a plaintext connection, so
   guarding this server also means serving TLS and adding `tls` and `credentials` blocks to the extension server's entry
   in `config.yaml`. The kms example shows that arrangement in full, including generating throwaway certificates.
-- **Every stream is a separate `Auth` RPC**, including every worker poll, and nothing caches a verdict. That is fine
+- **Every stream is a separate `Auth` RPC**, including every Worker poll, and nothing caches a verdict. That is fine
   against an in-process check like this one and worth measuring before pointing it at a slow identity backend.
 
 ## Running it again
 
-The starter always uses the fixed workflow ID `authz-example-greeting`. Run it again after the previous run has
-completed and you get a fresh run ID, since the server's default workflow ID reuse policy allows a new run once the old
-one has closed.
+The starter always uses the fixed Workflow ID `authz-example-greeting`. Run it again after the previous run has
+completed and you get a fresh run ID, since the dev server's default Workflow ID reuse policy allows a new run once the
+old one has closed.
 
-The case worth knowing about is a still-open execution, for example one started while the worker was stopped, or while
-the worker's token could not poll. `ExecuteWorkflow` attaches to the open run rather than reporting an error, so the
-starter blocks waiting for a result no worker is producing. Bring a worker back with a token that can poll, or clear
+The case worth knowing about is a still-open execution, for example one started while the Worker was stopped, or while
+the Worker's token could not poll. `ExecuteWorkflow` attaches to the open run rather than reporting an error, so the
+starter blocks waiting for a result no Worker is producing. Bring a Worker back with a token that can poll, or clear
 the run:
 
 ```bash
