@@ -17,6 +17,7 @@ type (
 	// Config is the top-level proxy configuration.
 	Config struct {
 		Listen           ListenConfig        `yaml:",inline"`
+		APITranslations  *APITranslations    `yaml:"apiTranslations"`
 		AllowedServices  Services            `yaml:"allowedServices"`
 		Auth             *AuthConfig         `yaml:"auth"`
 		Encryption       Encryption          `yaml:"encryption"`
@@ -97,6 +98,10 @@ func (c *Config) Validate() error {
 		validation.Nested("metrics", &c.Metrics),
 		validation.Nested("routing", &c.Routing),
 		validation.WhenRules(func() bool { return c.Auth != nil }, validation.Nested("auth", c.Auth)),
+		validation.WhenRules(
+			func() bool { return c.APITranslations != nil },
+			validation.Nested("apiTranslations", c.APITranslations),
+		),
 		validation.Nested("upstreams", &c.Upstreams),
 	}
 
