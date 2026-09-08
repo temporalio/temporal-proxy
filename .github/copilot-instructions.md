@@ -91,6 +91,23 @@ exposes a `Module`.
   so goroutines can't leak on shutdown.
 - Prefer immutable data passed by value over shared mutable state.
 
+## Terminology
+
+- The project keeps a canonical vocabulary in
+  `.claude/skills/terminology/SKILL.md`: each accepted term next to the aliases
+  it replaces, and the standing exceptions. Invoke the `terminology` skill when
+  reviewing if your tooling supports skills, otherwise read that file. Flag
+  rejected aliases against it rather than from memory; the list is deliberately
+  not duplicated here so there is one source of truth.
+- Temporal's core nouns are proper nouns in markdown prose: Namespace, Worker,
+  Workflow, Activity, Client. Go doc comments deliberately use the lowercase
+  spelling and are internally consistent, so leave those as they are.
+- `mise run lint:terms` enforces the mechanical half and runs as part of
+  `mise run lint`. It cannot tell a Temporal Client from a gRPC client, nor
+  judge a term the rule set does not list, so those stay review comments.
+- Watch for the overloaded words the checker cannot catch: "the server" and
+  "the rule" are ambiguous in this codebase and should always be qualified.
+
 ## Consistency with the Codebase
 
 - Follow patterns already established here: fx for wiring, the `pkg/validation`

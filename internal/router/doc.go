@@ -1,7 +1,7 @@
 // Package router transparently forwards inbound gRPC traffic to an upstream
 // connection without decoding it.
 //
-// It provides two pieces that are wired onto the inbound server:
+// It provides two pieces that are wired onto the gateway:
 //
 //   - Codec returns a hybrid [google.golang.org/grpc/encoding.CodecV2] that
 //     passes relayed frames through as raw bytes and delegates every other

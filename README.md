@@ -150,7 +150,7 @@ carry no Cloud configuration talk plaintext to `localhost:7233`, and the proxy a
 rewrite on the way to Cloud. Follow its README to run it end to end.
 
 The [KMS extension server example](examples/kms) shows the pluggable key management path end to end: a local dev server,
-a key provider you run, and workflow payloads that the Temporal Service only ever stores as ciphertext. It is built on
+a key provider you run, and Workflow payloads that the Temporal Service only ever stores as ciphertext. It is built on
 [`pkg/ext`](pkg/ext), which supplies the gRPC surface, the credential check, TLS, and graceful shutdown, so writing your
 own extension server means implementing the key handling and little else.
 
@@ -167,7 +167,7 @@ history but not start a Workflow.
 | upstream         | A configured destination the proxy forwards to: a Temporal Service (local dev, self-hosted, or Temporal Cloud), or another Temporal Proxy.                                                     |
 | system upstream  | The upstream that handles Namespace-less requests, such as the SDK's `GetSystemInfo` call on connect.                                                                                          |
 | extension server | A gRPC service you run that the proxy calls out to for a capability it has no built-in backend for: wrapping DEKs, or deciding if a call may proceed. Build one with [`pkg/ext`](pkg/ext).     |
-| Temporal Service | A Temporal frontend the proxy connects to.                                                                                                                                                     |
+| Temporal Service | A Temporal deployment the proxy connects to: a local dev server, a self-hosted deployment, or Temporal Cloud.                                                                                  |
 
 ## Development
 

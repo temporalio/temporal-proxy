@@ -23,7 +23,7 @@ upstreams:
         # Always add .remote on the way out, and remove it on the way in.
         suffix: .remote
         overrides:
-          # Makes ns2 and ns3 both use ns2.remote on the remote cluster.
+          # Makes ns2 and ns3 both use ns2.remote on the upstream Temporal Service.
           - local: ns3
             remote: ns2.remote
 
@@ -34,7 +34,7 @@ upstreams:
         # Always add .remote on the way out, and remove it on the way in.
         suffix: .remote
         overrides:
-          # Makes ns2 and ns3 both use ns2.remote on the remote cluster.
+          # Makes ns2 and ns3 both use ns2.remote on the upstream Temporal Service.
           - local: ns3
             remote: ns2.remote
 

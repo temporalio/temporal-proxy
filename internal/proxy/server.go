@@ -15,9 +15,9 @@ import (
 
 type (
 	// Server proxies the Temporal WorkflowService. It re-serves an upstream
-	// frontend on a local unix socket, letting local workers connect without TLS
-	// while the upstream hop stays secured. The upstream connection(s) it
-	// forwards to are owned by the shared [connect.Pool], not by this Server.
+	// Temporal Service on a local unix socket, letting local workers connect
+	// without TLS while the upstream hop stays secured. The upstream connection(s)
+	// it forwards to are owned by the shared [connect.Pool], not by this Server.
 	Server struct {
 		svr  *server.Server
 		path string // path to unix socket
