@@ -43,6 +43,10 @@ banned:
     except:
       - _test.go
       - dataplanetest/
+  - phrase: metric namespace
+    use: metric prefix
+  - phrase: metrics namespace
+    use: metric prefix
 
 # Temporal's core nouns are proper nouns in prose. Markdown only: Go comments in
 # this repository use lowercase throughout and are consistent as they are.

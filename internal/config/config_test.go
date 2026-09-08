@@ -33,6 +33,7 @@ func TestLoad(t *testing.T) {
 			want: &config.Config{
 				Listen:          config.ListenConfig{HostPort: ":8080"},
 				AllowedServices: config.Services(services.Default()),
+				Metrics:         defaultMetrics(),
 			},
 		},
 		{
@@ -43,7 +44,10 @@ func TestLoad(t *testing.T) {
 		{
 			name: "empty hostPort",
 			yaml: "hostPort: \"\"\n",
-			want: &config.Config{AllowedServices: config.Services(services.Default())},
+			want: &config.Config{
+				AllowedServices: config.Services(services.Default()),
+				Metrics:         defaultMetrics(),
+			},
 		},
 	}
 
@@ -143,6 +147,7 @@ func TestLoadFile(t *testing.T) {
 			want: &config.Config{
 				Listen:          config.ListenConfig{HostPort: ":7233"},
 				AllowedServices: config.Services(services.Default()),
+				Metrics:         defaultMetrics(),
 			},
 		},
 		{
@@ -199,6 +204,7 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "valid hostPort, no TLS",
 			cfg: &config.Config{
+				Metrics:   defaultMetrics(),
 				Listen:    config.ListenConfig{HostPort: ":8080"},
 				Upstreams: validUpstreams,
 			},
@@ -206,6 +212,7 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "invalid hostPort surfaces from ListenConfig",
 			cfg: &config.Config{
+				Metrics:   defaultMetrics(),
 				Listen:    config.ListenConfig{HostPort: "localhost"},
 				Upstreams: validUpstreams,
 			},
@@ -214,6 +221,7 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "broken TLS surfaces with tls subject stamped by parent",
 			cfg: &config.Config{
+				Metrics: defaultMetrics(),
 				Listen: config.ListenConfig{
 					HostPort: ":8080",
 					TLS:      &config.TLSConfig{}, // empty -> "a server certificate is required"
@@ -227,6 +235,7 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "hostPort and TLS failures aggregate",
 			cfg: &config.Config{
+				Metrics: defaultMetrics(),
 				Listen: config.ListenConfig{
 					HostPort: "localhost",
 					TLS:      &config.TLSConfig{},
@@ -241,14 +250,16 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "no upstreams surfaces on the upstreams field",
 			cfg: &config.Config{
-				Listen: config.ListenConfig{HostPort: ":8080"},
+				Metrics: defaultMetrics(),
+				Listen:  config.ListenConfig{HostPort: ":8080"},
 			},
 			wantTuples: [][2]string{{"", "upstreams"}},
 		},
 		{
 			name: "missing upstream hostPort surfaces with indexed upstream subject",
 			cfg: &config.Config{
-				Listen: config.ListenConfig{HostPort: ":8080"},
+				Metrics: defaultMetrics(),
+				Listen:  config.ListenConfig{HostPort: ":8080"},
 				Upstreams: []config.Upstream{{
 					Name: "primary",
 				}},
@@ -258,7 +269,8 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "empty upstream name surfaces with indexed upstream subject",
 			cfg: &config.Config{
-				Listen: config.ListenConfig{HostPort: ":8080"},
+				Metrics: defaultMetrics(),
+				Listen:  config.ListenConfig{HostPort: ":8080"},
 				Upstreams: []config.Upstream{{
 					Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
 				}},
@@ -268,7 +280,8 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "duplicate upstream names surface on the upstreams[name] field",
 			cfg: &config.Config{
-				Listen: config.ListenConfig{HostPort: ":8080"},
+				Metrics: defaultMetrics(),
+				Listen:  config.ListenConfig{HostPort: ":8080"},
 				Upstreams: []config.Upstream{
 					{Name: "dup", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
 					{Name: "dup", Listen: config.ListenConfig{HostPort: "127.0.0.1:7234"}},
@@ -279,6 +292,7 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "enabled encryption without default surfaces with encryption subject",
 			cfg: &config.Config{
+				Metrics:    defaultMetrics(),
 				Listen:     config.ListenConfig{HostPort: ":8080"},
 				Encryption: config.Encryption{Enabled: true},
 				Upstreams:  validUpstreams,
@@ -288,6 +302,7 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "invalid default policy surfaces with composed encryption.default subject",
 			cfg: &config.Config{
+				Metrics:    defaultMetrics(),
 				Listen:     config.ListenConfig{HostPort: ":8080"},
 				Encryption: config.Encryption{Default: &badPolicy},
 				Upstreams:  validUpstreams,
@@ -297,7 +312,8 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "templated upstream hostPort is accepted",
 			cfg: &config.Config{
-				Listen: config.ListenConfig{HostPort: ":8080"},
+				Metrics: defaultMetrics(),
+				Listen:  config.ListenConfig{HostPort: ":8080"},
 				Upstreams: []config.Upstream{{
 					Name:   "templated",
 					Listen: config.ListenConfig{HostPort: "{{ .RemoteNamespace }}.acme-cloud.tmprl.cloud:7233"},
@@ -334,6 +350,7 @@ func TestConfig_Validate_RoutingReferences(t *testing.T) {
 	base := func(r config.Routing) *config.Config {
 		return &config.Config{
 			Listen:  config.ListenConfig{HostPort: ":8080"},
+			Metrics: defaultMetrics(),
 			Routing: r,
 			Upstreams: []config.Upstream{
 				{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
@@ -413,6 +430,7 @@ func TestConfig_Validate_ExternalAuthReferences(t *testing.T) {
 	base := func(ext *config.ExternalAuthConfig) *config.Config {
 		return &config.Config{
 			Listen:    config.ListenConfig{HostPort: ":8080"},
+			Metrics:   defaultMetrics(),
 			Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
 			ExtensionServers: config.ExtensionServerList{
 				{Name: "policy", Listen: config.ListenConfig{HostPort: "127.0.0.1:9000"}},
@@ -457,7 +475,8 @@ func TestConfig_ValidateRejectsDuplicateHostPorts(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{
-		Listen: config.ListenConfig{HostPort: "127.0.0.1:8443"},
+		Listen:  config.ListenConfig{HostPort: "127.0.0.1:8443"},
+		Metrics: defaultMetrics(),
 		Upstreams: []config.Upstream{
 			{Name: "a", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
 			{Name: "b", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
@@ -489,6 +508,10 @@ func TestUpstream_IsTemplated(t *testing.T) {
 }
 
 func (e *errReader) Read(_ []byte) (int, error) { return 0, e.err }
+
+func defaultMetrics() config.Metrics {
+	return config.Metrics{HostPort: ":9090", Namespace: "tmprl_proxy"}
+}
 
 func urlStrings(us []url.URL) []string {
 	out := make([]string, len(us))
