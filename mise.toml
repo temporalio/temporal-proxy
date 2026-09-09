@@ -161,4 +161,19 @@ run = "buf generate"
 
 [tasks.build]
 description = "Build binaries"
+run = [
+  { task = "build:examples" },
+  { task = "build:proxy" },
+]
+
+[tasks."build:proxy"]
+description = "Build release binaries"
 run = "goreleaser release --snapshot --clean --skip=publish"
+
+# The examples are a second module with a replace directive onto this tree, so a
+# dependency bump here can leave their go.mod stale. Building them keeps that
+# from going unnoticed. It runs first because it fails in seconds.
+[tasks."build:examples"]
+description = "Build the examples module"
+dir = "examples"
+run = "go build ./..."
