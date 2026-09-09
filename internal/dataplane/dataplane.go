@@ -154,7 +154,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 	)
 
 	gateway, err := server.New(
-		server.WithCredentials(cfg.Listen.TLS.Listener()),
+		server.WithCredentials(cfg.Listen.Listener()),
 		server.WithServerCodec(router.Codec()),
 		// Health entries come from the allowlist, so what the gateway reports a
 		// status for is exactly what it will forward.

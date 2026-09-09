@@ -27,7 +27,6 @@ upstreams:
   # so the same config serves any number of namespaces.
   - name: cloud
     hostPort: "{{ .RemoteNamespace }}.tmprl.cloud:7233"
-    tls: {}
     namespaces:
       rules:
         # Rewrite the short local name to the Cloud fully-qualified name,
@@ -42,7 +41,6 @@ upstreams:
   # here we reuse TEMPORAL_NAMESPACE's endpoint.
   - name: system
     hostPort: ${TEMPORAL_NAMESPACE}.${TEMPORAL_ACCOUNT}.tmprl.cloud:7233
-    tls: {}
     credentials:
       static:
         apiKey: ${TEMPORAL_API_KEY}

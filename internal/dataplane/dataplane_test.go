@@ -204,7 +204,7 @@ func testConfig() *config.Config {
 		Routing: config.Routing{DefaultUpstream: "primary"},
 		Upstreams: config.UpstreamList{{
 			Name:   "primary",
-			Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
+			Listen: config.ListenConfig{HostPort: "127.0.0.1:7233", Insecure: true},
 		}},
 	}
 }

@@ -111,11 +111,13 @@ func TestExtensionServer_ValidateCredentialsRequireTLS(t *testing.T) {
 		}
 	}
 
-	t.Run("credentials without tls is rejected", func(t *testing.T) {
+	// An absent tls block is TLS against the system roots, which is a safe place
+	// to put a credential, so nothing more has to be said.
+	t.Run("credentials without a tls block is accepted", func(t *testing.T) {
 		t.Parallel()
 
 		s := base()
-		require.ErrorContains(t, s.Validate(), "requires TLS")
+		require.NoError(t, s.Validate())
 	})
 
 	t.Run("credentials with tls is accepted", func(t *testing.T) {
@@ -125,6 +127,25 @@ func TestExtensionServer_ValidateCredentialsRequireTLS(t *testing.T) {
 		s.Listen.TLS = &config.TLSConfig{ServerName: "audit.internal"}
 		require.NoError(t, s.Validate())
 	})
+
+	// Only an explicit opt-out puts a credential on the wire in the clear.
+	t.Run("credentials with insecure is rejected", func(t *testing.T) {
+		t.Parallel()
+
+		s := base()
+		s.Listen.Insecure = true
+		require.ErrorContains(t, s.Validate(), "requires TLS")
+	})
+}
+
+func TestExtensionServer_ValidateInsecureConflictsWithTLS(t *testing.T) {
+	t.Parallel()
+
+	s := config.ExtensionServer{
+		Name:   "audit",
+		Listen: config.ListenConfig{HostPort: "audit.internal:9090", Insecure: true, TLS: &config.TLSConfig{}},
+	}
+	require.ErrorContains(t, s.Validate(), "cannot be set together with tls")
 }
 
 func TestExtensionServer_ValidateOutboundTLS(t *testing.T) {

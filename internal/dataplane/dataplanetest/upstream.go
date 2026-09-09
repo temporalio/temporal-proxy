@@ -120,9 +120,12 @@ func (u *Upstream) Requests() []proto.Message {
 	return slices.Clone(u.requests)
 }
 
-// TLSConfig is the client-side configuration needed to dial this upstream, or
-// nil when it serves plaintext.
-func (u *Upstream) TLSConfig() *config.TLSConfig { return u.tls }
+// Listen is the client-side configuration needed to dial this upstream. A
+// plaintext fake has to say so explicitly, because a target with no TLS block
+// verifies the peer against the system root pool.
+func (u *Upstream) Listen() config.ListenConfig {
+	return config.ListenConfig{HostPort: u.Addr(), Insecure: u.tls == nil, TLS: u.tls}
+}
 
 func (u *Upstream) record(ctx context.Context, req proto.Message) {
 	md, _ := metadata.FromIncomingContext(ctx)

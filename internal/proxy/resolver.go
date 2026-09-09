@@ -114,7 +114,7 @@ func ResolverFor(upstream *config.Upstream, opts []grpc.DialOption, log logger.L
 	// One Dialer per upstream owns the TLS-mode decision and parses its
 	// certificate material once, so a templated upstream reuses it across every
 	// per-request dial (only the rendered server name varies).
-	dialer := upstream.Listen.TLS.Dialer()
+	dialer := upstream.Listen.Dialer()
 
 	if upstream.IsTemplated() {
 		translator := func(s string) string { return s }

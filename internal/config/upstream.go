@@ -18,6 +18,9 @@ type (
 	// Cloud-specific namespace rules. It is only needed for an address
 	// [cloud.IsEndpoint] does not recognize, such as a private-link hostname; a
 	// .tmprl.cloud address is detected without it.
+	//
+	// The proxy dials an upstream over TLS unless Listen says otherwise, so a
+	// plaintext upstream must set its Insecure field.
 	Upstream struct {
 		Name        string            `yaml:"name"`
 		Cloud       bool              `yaml:"cloud"`
@@ -81,11 +84,12 @@ func (u *Upstream) Validate() error {
 			validation.Nested("credentials", u.Credentials),
 		),
 		validation.WhenRules(
-			func() bool { return u.Credentials != nil && u.Listen.TLS == nil },
+			func() bool { return u.Credentials != nil && u.Listen.Insecure },
 			func() validation.Errors {
 				return validation.Errors{{Field: "credentials", Message: "requires TLS to the upstream"}}
 			},
 		),
+		u.Listen.insecureRule(),
 		validation.WhenRules(u.IsCloud, u.cloudRules()...),
 	)
 }

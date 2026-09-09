@@ -58,7 +58,7 @@ func Config(up *Upstream) *config.Config {
 		Routing: config.Routing{DefaultUpstream: DefaultUpstream},
 		Upstreams: config.UpstreamList{{
 			Name:   DefaultUpstream,
-			Listen: config.ListenConfig{HostPort: up.Addr(), TLS: up.TLSConfig()},
+			Listen: up.Listen(),
 		}},
 	}
 }
