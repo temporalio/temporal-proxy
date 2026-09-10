@@ -71,12 +71,14 @@ func TestListNamespacesResponseMapsNamespaceFields(t *testing.T) {
 	require.Equal(t, map[string]string{"team": "payments"}, ns.GetNamespaceInfo().GetData())
 	require.Equal(t, 30*24*time.Hour, ns.GetConfig().GetWorkflowExecutionRetentionTtl().AsDuration())
 	require.True(t, ns.GetIsGlobalNamespace(), "replicated across more than one region")
-	require.Nil(t, ns.GetReplicationConfig(), "Cloud reports regional replicas, not replication clusters")
+	require.NotNil(t, ns.ReplicationConfig, "present, so a client that dereferences it does not crash")
+	require.Empty(t, ns.GetReplicationConfig().GetActiveClusterName(), "Cloud reports regional replicas, not replication clusters")
+	require.Empty(t, ns.GetReplicationConfig().GetClusters(), "Cloud reports regional replicas, not replication clusters")
 
 	require.Equal(t, []byte("next"), reply.GetNextPageToken())
 }
 
-func TestListNamespacesResponseOmitsUnreportedRetention(t *testing.T) {
+func TestListNamespacesResponseDoesNotClaimAnUnreportedRetention(t *testing.T) {
 	t.Parallel()
 
 	up := &cloudservice.GetNamespacesResponse{
@@ -94,9 +96,37 @@ func TestListNamespacesResponseOmitsUnreportedRetention(t *testing.T) {
 	require.NoError(t, listNamespacesResponse(&workflowservice.ListNamespacesRequest{}, up, reply))
 
 	ns := reply.GetNamespaces()[0]
-	require.Nil(t, ns.GetConfig(), "no retention reported is not a zero retention")
+	require.NotNil(t, ns.Config, "the config is present even when Cloud reports nothing to put in it")
+	require.Nil(t, ns.GetConfig().GetWorkflowExecutionRetentionTtl(), "no retention reported is not a zero retention")
 	require.False(t, ns.GetIsGlobalNamespace())
 	require.Empty(t, reply.GetNextPageToken())
+}
+
+// TestListNamespacesResponseFillsWhatAClientDereferences guards the reply against
+// a client that reads a sub-message without checking it for nil first. A Temporal
+// frontend populates NamespaceInfo, Config and ReplicationConfig on every path,
+// so clients are written as though they are always there: the temporal CLI's
+// `operator namespace list` reads resp.ReplicationConfig.ActiveClusterName
+// directly and segfaults on a reply that leaves it out. Cloud reporting nothing
+// for a field is said with an empty message, never an absent one.
+func TestListNamespacesResponseFillsWhatAClientDereferences(t *testing.T) {
+	t.Parallel()
+
+	up := &cloudservice.GetNamespacesResponse{
+		// A name and nothing else: the least Cloud can report, and so the reply
+		// with the most left out.
+		Namespaces: []*cloudnamespace.Namespace{{Namespace: "payments.a1b2c"}},
+	}
+
+	reply := &workflowservice.ListNamespacesResponse{}
+	require.NoError(t, listNamespacesResponse(&workflowservice.ListNamespacesRequest{}, up, reply))
+
+	require.Len(t, reply.GetNamespaces(), 1)
+	ns := reply.GetNamespaces()[0]
+
+	require.NotNil(t, ns.NamespaceInfo, "a client reads NamespaceInfo without a nil check")
+	require.NotNil(t, ns.Config, "a client reads Config without a nil check")
+	require.NotNil(t, ns.ReplicationConfig, "a client reads ReplicationConfig without a nil check")
 }
 
 func TestListNamespacesResponseAppliesTheDeletedFilter(t *testing.T) {

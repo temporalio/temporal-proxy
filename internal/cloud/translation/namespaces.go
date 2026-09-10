@@ -5,6 +5,7 @@ import (
 
 	enumspb "go.temporal.io/api/enums/v1"
 	namespacepb "go.temporal.io/api/namespace/v1"
+	replicationpb "go.temporal.io/api/replication/v1"
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	cloudservice "go.temporal.io/cloud-sdk/api/cloudservice/v1"
 	cloudnamespace "go.temporal.io/cloud-sdk/api/namespace/v1"
@@ -90,13 +91,23 @@ func listNamespacesResponse(
 // response ListNamespaces returns per namespace, with state already mapped by
 // the caller so the deleted filter and this conversion agree on it.
 //
-// Only fields Cloud actually reports are set. Cloud has no namespace UUID,
+// Only fields Cloud actually reports carry a value. Cloud has no namespace UUID,
 // description, or owner email to give, and it describes replication as regional
 // replicas rather than as the clusters ReplicationConfig names, so
 // IsGlobalNamespace is derived from how many replicas there are while
-// ReplicationConfig is left unset rather than filled with region ids a client
+// ReplicationConfig is left empty rather than filled with region ids a client
 // would read as cluster names. FailoverVersion and FailoverHistory have no
 // Cloud equivalent at all.
+//
+// Empty is not the same as absent, though, and the difference is load-bearing:
+// every sub-message a Temporal Service would populate is allocated here even
+// when there is nothing to put in it. A frontend builds NamespaceInfo, Config
+// and ReplicationConfig unconditionally on every path (the server funnels them
+// all through namespaceHandler.createResponse), so clients are written against a
+// reply where they are always present - the temporal CLI reads
+// resp.ReplicationConfig.ActiveClusterName with no nil check and dies on a nil
+// one. An empty message says "Cloud did not report this" just as well as an
+// absent one, without breaking a client that has never had to handle absence.
 func describeNamespace(
 	ns *cloudnamespace.Namespace,
 	state enumspb.NamespaceState,
@@ -112,16 +123,16 @@ func describeNamespace(
 			State: state,
 			Data:  ns.GetTags(),
 		},
+		Config:            &namespacepb.NamespaceConfig{},
+		ReplicationConfig: &replicationpb.NamespaceReplicationConfig{},
 		IsGlobalNamespace: len(spec.GetReplicas()) > 1,
 	}
 
 	// Cloud reports retention in whole days, and zero means it did not report one
-	// rather than "retain nothing"; leaving the config unset says that, where a
-	// zero duration would claim a retention Cloud never stated.
+	// rather than "retain nothing", so the ttl stays unset where a zero duration
+	// would claim a retention Cloud never stated.
 	if days := spec.GetRetentionDays(); days > 0 {
-		out.Config = &namespacepb.NamespaceConfig{
-			WorkflowExecutionRetentionTtl: durationpb.New(time.Duration(days) * hoursPerDay),
-		}
+		out.Config.WorkflowExecutionRetentionTtl = durationpb.New(time.Duration(days) * hoursPerDay)
 	}
 
 	return out
