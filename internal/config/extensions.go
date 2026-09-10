@@ -37,7 +37,8 @@ type (
 
 // Validate checks a single extension server: a name is required, hostPort must
 // be a literal host:port with no template action, and any TLS block must be
-// valid for dialing out. Credentials without TLS are rejected. Failures are
+// valid for dialing out. Credentials over an insecure connection are rejected,
+// as is asking for insecure while supplying TLS material. Failures are
 // unattributed, leaving the caller to stamp the path - ExtensionServerList
 // supplies the index.
 func (s *ExtensionServer) Validate() error {
@@ -54,11 +55,12 @@ func (s *ExtensionServer) Validate() error {
 			validation.Nested("credentials", s.Credentials),
 		),
 		validation.WhenRules(
-			func() bool { return s.Credentials != nil && s.Listen.TLS == nil },
+			func() bool { return s.Credentials != nil && s.Listen.Insecure },
 			func() validation.Errors {
 				return validation.Errors{{Field: "credentials", Message: "requires TLS to the extension server"}}
 			},
 		),
+		s.Listen.insecureRule(),
 	)
 }
 

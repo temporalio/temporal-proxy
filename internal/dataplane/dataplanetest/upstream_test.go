@@ -20,7 +20,8 @@ func TestTLSUpstreamIsReachableWithItsOwnTLSConfig(t *testing.T) {
 	t.Parallel()
 
 	up := dataplanetest.NewTLSUpstream(t)
-	require.NotNil(t, up.TLSConfig())
+	require.NotNil(t, up.Listen().TLS)
+	require.False(t, up.Listen().Insecure)
 
 	f := dataplanetest.Start(t, dataplanetest.Config(up))
 
@@ -62,8 +63,10 @@ func TestUpstreamRecordsAndEchoesQueryWorkflow(t *testing.T) {
 	require.True(t, proto.Equal(args, got.GetQuery().GetQueryArgs()))
 }
 
-func TestUpstreamPlaintextHasNoTLSConfig(t *testing.T) {
+func TestUpstreamPlaintextAsksForInsecure(t *testing.T) {
 	t.Parallel()
 
-	require.Nil(t, dataplanetest.NewUpstream(t).TLSConfig())
+	listen := dataplanetest.NewUpstream(t).Listen()
+	require.Nil(t, listen.TLS)
+	require.True(t, listen.Insecure, "a plaintext fake must opt out of TLS explicitly")
 }

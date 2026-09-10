@@ -19,6 +19,7 @@ routing:
 upstreams:
   - name: local
     hostPort: 127.0.0.1:7233 # temporal server start-dev
+    insecure: true # start-dev serves plaintext; the proxy dials TLS by default
 
 # The authorization backend. The proxy opens this connection at startup, so an
 # extension server that is not running yet fails the proxy's start rather than
@@ -30,6 +31,7 @@ upstreams:
 extensionServers:
   - name: authz
     hostPort: 127.0.0.1:9444
+    insecure: true
 
 # Inbound authentication and authorization, delegated to the extension server
 # above. Without this block the proxy admits every caller.

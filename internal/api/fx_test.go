@@ -175,13 +175,21 @@ func TestModuleRejectsInvalidExtensionServers(t *testing.T) {
 			wantErr: "is not a valid host:port",
 		},
 		{
-			name: "credentials without TLS",
+			name: "credentials on an insecure connection",
 			server: config.ExtensionServer{
 				Name:        "audit",
-				Listen:      config.ListenConfig{HostPort: "127.0.0.1:9090"},
+				Listen:      config.ListenConfig{HostPort: "127.0.0.1:9090", Insecure: true},
 				Credentials: &config.CredentialConfig{Static: &config.StaticCredentialConfig{APIKey: "k"}},
 			},
 			wantErr: "requires TLS",
+		},
+		{
+			name: "insecure together with tls",
+			server: config.ExtensionServer{
+				Name:   "audit",
+				Listen: config.ListenConfig{HostPort: "127.0.0.1:9090", Insecure: true, TLS: &config.TLSConfig{}},
+			},
+			wantErr: "cannot be set together with tls",
 		},
 	}
 

@@ -28,7 +28,7 @@ func TestEndToEndTemplatedUpstreamRoutesByRenderedAddress(t *testing.T) {
 		Routing: config.Routing{DefaultUpstream: "dynamic"},
 		Upstreams: config.UpstreamList{{
 			Name:   "dynamic",
-			Listen: config.ListenConfig{HostPort: `{{ index .Metadata "x-upstream" }}`},
+			Listen: config.ListenConfig{HostPort: `{{ index .Metadata "x-upstream" }}`, Insecure: true},
 		}},
 	})
 

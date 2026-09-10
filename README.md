@@ -132,6 +132,7 @@ config:
   upstreams:
     - name: local
       hostPort: localhost:7234
+      insecure: true
   routing:
     default: local
 ```

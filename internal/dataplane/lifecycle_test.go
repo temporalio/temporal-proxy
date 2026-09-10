@@ -196,8 +196,8 @@ func TestStopClosesEveryUpstreamSocket(t *testing.T) {
 	// stale reference still fails Config.Validate.
 	cfg.Routing = config.Routing{}
 	cfg.Upstreams = config.UpstreamList{
-		{Name: "a", Listen: config.ListenConfig{HostPort: dataplanetest.NewUpstream(t).Addr()}},
-		{Name: "b", Listen: config.ListenConfig{HostPort: dataplanetest.NewUpstream(t).Addr()}},
+		{Name: "a", Listen: dataplanetest.NewUpstream(t).Listen()},
+		{Name: "b", Listen: dataplanetest.NewUpstream(t).Listen()},
 	}
 
 	dp, err := dataplane.New(t.Context(), cfg, newTestDeps(t, cfg).opts()...)

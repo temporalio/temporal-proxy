@@ -23,6 +23,7 @@ routing:
 upstreams:
   - name: local
     hostPort: 127.0.0.1:7233 # temporal server start-dev
+    insecure: true # start-dev serves plaintext; the proxy dials TLS by default
 
 # The pluggable key management backend. The proxy builds this connection when it
 # builds its key policies, so a malformed address, credentials without TLS, or an

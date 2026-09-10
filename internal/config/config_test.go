@@ -67,6 +67,31 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+// Load is the only path that exercises the yaml tag, so a typo there would
+// silently leave every plaintext upstream dialing TLS.
+func TestLoad_UpstreamInsecure(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(strings.NewReader(
+		"upstreams:\n  - name: local\n    hostPort: localhost:7233\n    insecure: true\n",
+	))
+	require.NoError(t, err)
+	require.True(t, cfg.Upstreams[0].Listen.Insecure)
+}
+
+// Load does not validate, so this covers the whole path from the yaml keys to
+// the rule that rejects them together.
+func TestValidate_UpstreamInsecureWithTLSIsRejected(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(strings.NewReader(
+		"routing:\n  default: local\n" +
+			"upstreams:\n  - name: local\n    hostPort: localhost:7233\n    insecure: true\n    tls: {}\n",
+	))
+	require.NoError(t, err)
+	require.ErrorContains(t, cfg.Validate(), "cannot be set together with tls")
+}
+
 func TestLoad_EncryptionURLs(t *testing.T) {
 	t.Parallel()
 

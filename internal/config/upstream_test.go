@@ -499,10 +499,12 @@ func TestUpstreamCredentialsRequireTLS(t *testing.T) {
 		}
 	}
 
-	t.Run("credentials without tls is rejected", func(t *testing.T) {
+	// An absent tls block is TLS against the system roots, which is a safe place
+	// to put a credential, so nothing more has to be said.
+	t.Run("credentials without a tls block is accepted", func(t *testing.T) {
 		t.Parallel()
 		u := base()
-		require.ErrorContains(t, u.Validate(), "requires TLS")
+		require.NoError(t, u.Validate())
 	})
 
 	t.Run("credentials with tls is accepted", func(t *testing.T) {
@@ -511,6 +513,24 @@ func TestUpstreamCredentialsRequireTLS(t *testing.T) {
 		u.Listen.TLS = &config.TLSConfig{ServerName: "my-ns.acct.tmprl.cloud"}
 		require.NoError(t, u.Validate())
 	})
+
+	// Only an explicit opt-out puts a credential on the wire in the clear.
+	t.Run("credentials with insecure is rejected", func(t *testing.T) {
+		t.Parallel()
+		u := base()
+		u.Listen.Insecure = true
+		require.ErrorContains(t, u.Validate(), "requires TLS")
+	})
+}
+
+func TestUpstreamInsecureConflictsWithTLS(t *testing.T) {
+	t.Parallel()
+
+	u := config.Upstream{
+		Name:   "u",
+		Listen: config.ListenConfig{HostPort: "host:7233", Insecure: true, TLS: &config.TLSConfig{}},
+	}
+	require.ErrorContains(t, u.Validate(), "cannot be set together with tls")
 }
 
 func TestUpstreamOutboundTLS(t *testing.T) {

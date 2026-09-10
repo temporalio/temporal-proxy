@@ -116,13 +116,14 @@ func extensionConn(pool *connect.Pool, s *config.ExtensionServer) (*connect.Conn
 		opts = append(opts, outbound.DialOptions(cp)...)
 	}
 
-	// A nil TLS block resolves to a plaintext dialer, so this is safe unset.
+	// Only a TLS block can override SNI, and the dialer ignores the name when it
+	// is not verifying a peer, so this is safe unset.
 	serverName := ""
 	if s.Listen.TLS != nil {
 		serverName = s.Listen.TLS.ServerName
 	}
 
-	cred, err := s.Listen.TLS.Dialer().DialOption(serverName)
+	cred, err := s.Listen.Dialer().DialOption(serverName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build credentials for extension server %q: %w", s.Name, err)
 	}
