@@ -699,9 +699,20 @@ func serve(t *testing.T, srv *grpc.Server, lis *bufconn.Listener) {
 // the handler records.
 func newTestReporter(t *testing.T, upstreams ...string) (*router.Reporter, *prometheus.Registry) {
 	t.Helper()
+	return newTaggedTestReporter(t, metrics.Tags{}, upstreams...)
+}
+
+// newTaggedTestReporter is newTestReporter for the cases that care what tags do
+// to the label set and to pre-resolution.
+func newTaggedTestReporter(
+	t *testing.T,
+	tags metrics.Tags,
+	upstreams ...string,
+) (*router.Reporter, *prometheus.Registry) {
+	t.Helper()
 	reg := prometheus.NewRegistry()
 	factory := metrics.New("tmprl_proxy", promauto.With(reg)).ForSubsystem("router")
-	return router.NewReporter(factory, upstreams), reg
+	return router.NewReporter(factory, upstreams, tags), reg
 }
 
 // newRelayToUpstream stands up a fake upstream (configured by registerUpstream),

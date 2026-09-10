@@ -141,6 +141,22 @@ func TestNewRejectsConfiguredKeysWithoutVault(t *testing.T) {
 		})
 	}
 }
+
+func TestNewRejectsATagLabelCollidingWithACollectorsOwn(t *testing.T) {
+	t.Parallel()
+
+	// A tag claiming a label a collector already declares makes the Desc
+	// invalid, so registration panics. That is caught in the same place a
+	// duplicate registration is, and the message has to name this cause too:
+	// config cannot check it without knowing every collector's label set.
+	cfg := testConfig()
+	cfg.Metrics.Tags = []config.MetricTag{{Header: "x-method", Label: "method"}}
+
+	deps := newTestDeps(t, cfg)
+	_, err := dataplane.New(deps.ctx, deps.cfg, deps.opts()...)
+	require.ErrorContains(t, err, "metrics tag label colliding with a collector's own")
+}
+
 func TestNewTwiceOverOneMetricsFactoryDoesNotPanic(t *testing.T) {
 	t.Parallel()
 
