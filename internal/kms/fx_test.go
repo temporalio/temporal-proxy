@@ -58,7 +58,7 @@ func TestModule_EnabledWithoutKeys_DoesNotScheduleRotation(t *testing.T) {
 
 	var v *crypto.Vault
 	app := fx.New(append(
-		moduleOptions(t, cfg, logger.NewNoopLogger(), api.Connections{}),
+		moduleOptions(t, cfg, logger.NewNoopLogger(), api.Connections{}, prometheus.NewRegistry()),
 		fx.Populate(&v),
 		fx.NopLogger,
 	)...)
@@ -214,10 +214,17 @@ func TestModule_MixesExtensionAndKeeperKeysInOnePolicy(t *testing.T) {
 	require.NotNil(t, v)
 }
 
-// moduleOptions are the dependencies Module needs, wired for a test: a private
-// metrics registry so collectors cannot collide with another test's, the given
-// logger, and conns for any extension key URIs.
-func moduleOptions(t *testing.T, cfg *config.Config, log logger.Logger, conns api.Connections) []fx.Option {
+// moduleOptions are the dependencies Module needs, wired for a test: metrics on
+// reg, the given logger, and conns for any extension key URIs. Callers pass a
+// registry of their own so collectors cannot collide with another test's, and so
+// a test that cares can read what the vault reported.
+func moduleOptions(
+	t *testing.T,
+	cfg *config.Config,
+	log logger.Logger,
+	conns api.Connections,
+	reg *prometheus.Registry,
+) []fx.Option {
 	t.Helper()
 
 	return []fx.Option{
@@ -225,7 +232,7 @@ func moduleOptions(t *testing.T, cfg *config.Config, log logger.Logger, conns ap
 		fx.Supply(cfg),
 		fx.Provide(func() logger.Logger { return log }),
 		fx.Provide(func() *metrics.Factory {
-			return metrics.New("test", promauto.With(prometheus.NewRegistry()))
+			return metrics.New("test", promauto.With(reg))
 		}),
 		fx.Supply(conns),
 		kms.Module,
@@ -248,7 +255,7 @@ func buildVault(
 
 	var v *crypto.Vault
 	app := fx.New(append(
-		moduleOptions(t, cfg, log, conns),
+		moduleOptions(t, cfg, log, conns, prometheus.NewRegistry()),
 		fx.Populate(&v),
 		fx.NopLogger,
 	)...)
@@ -261,9 +268,18 @@ func buildVault(
 func startVault(t *testing.T, cfg *config.Config) *crypto.Vault {
 	t.Helper()
 
+	return startVaultWithRegistry(t, cfg, prometheus.NewRegistry())
+}
+
+// startVaultWithRegistry is [startVault] with the metrics registry in the
+// caller's hands, for a test that asserts on what the vault reported rather than
+// on what it returned.
+func startVaultWithRegistry(t *testing.T, cfg *config.Config, reg *prometheus.Registry) *crypto.Vault {
+	t.Helper()
+
 	var v *crypto.Vault
 	app := fxtest.New(t, append(
-		moduleOptions(t, cfg, logger.NewNoopLogger(), api.Connections{}),
+		moduleOptions(t, cfg, logger.NewNoopLogger(), api.Connections{}, reg),
 		fx.Populate(&v),
 	)...)
 
@@ -273,11 +289,69 @@ func startVault(t *testing.T, cfg *config.Config) *crypto.Vault {
 	return v
 }
 
+// TestModule_OmittedCacheSizeStillCachesDEKs guards the DEK cache against the
+// config layer switching it off by saying nothing. crypto.NewVault defaults the
+// cache to crypto.DefaultCacheSize, but createVault passes the configured size
+// unconditionally, so an absent cacheSize used to arrive as zero - which
+// WithCacheSize documents as "disable" - and every payload opened cost a KEK
+// unwrap. Most configs omit the field, examples/kms/config.yaml among them.
+func TestModule_OmittedCacheSizeStillCachesDEKs(t *testing.T) {
+	t.Parallel()
+
+	cfg := encryptionConfig(true, keyPolicy(t, 1))
+	cfg.Encryption.CacheSize = nil
+
+	reg := prometheus.NewRegistry()
+	v := startVaultWithRegistry(t, cfg, reg)
+
+	msg, err := v.Seal(t.Context(), "ns", []byte("secret"))
+	require.NoError(t, err)
+
+	// The first Open populates the cache and the second must be served from it.
+	for range 2 {
+		got, err := v.Open(t.Context(), msg)
+		require.NoError(t, err)
+		require.Equal(t, []byte("secret"), got)
+	}
+
+	hits := gather(t, reg, "test_encryption_dek_cache_hits_total")
+	require.NotNil(t, hits, "a disabled cache reports no hits at all")
+	require.Equal(t, 1.0, hits.GetMetric()[0].GetCounter().GetValue(), "the second open must come from the cache")
+}
+
+// TestModule_ZeroCacheSizeDisablesTheCache is the other half: zero remains a way
+// to turn the cache off, now that it has to be written down rather than implied
+// by an absent field.
+func TestModule_ZeroCacheSizeDisablesTheCache(t *testing.T) {
+	t.Parallel()
+
+	cfg := encryptionConfig(true, keyPolicy(t, 1))
+	cfg.Encryption.CacheSize = new(0)
+
+	reg := prometheus.NewRegistry()
+	v := startVaultWithRegistry(t, cfg, reg)
+
+	msg, err := v.Seal(t.Context(), "ns", []byte("secret"))
+	require.NoError(t, err)
+
+	for range 2 {
+		_, err := v.Open(t.Context(), msg)
+		require.NoError(t, err)
+	}
+
+	// The counters are created eagerly, so they exist at zero whether the cache is
+	// off or merely idle - which is exactly why a disabled cache is logged at
+	// startup. Assert the value, not the family.
+	hits := gather(t, reg, "test_encryption_dek_cache_hits_total")
+	require.NotNil(t, hits)
+	require.Zero(t, hits.GetMetric()[0].GetCounter().GetValue(), "there is no cache to hit")
+}
+
 // encryptionConfig builds a Config whose encryption is governed by policy.
 func encryptionConfig(enabled bool, policy config.KeyPolicy) *config.Config {
 	return &config.Config{Encryption: config.Encryption{
 		Enabled:   enabled,
-		CacheSize: 10,
+		CacheSize: new(10),
 		Default:   &policy,
 	}}
 }

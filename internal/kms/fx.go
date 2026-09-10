@@ -62,7 +62,7 @@ var Module = fx.Options(
 				return nil, err
 			}
 
-			v, err := createVault(p.Config, r, reporter)
+			v, err := createVault(p.Config, r, reporter, p.Logger)
 			if err != nil {
 				_ = r.Close()
 				return nil, err
@@ -149,10 +149,26 @@ func runRotation(ctx context.Context, v vaultRefresher, interval time.Duration, 
 // createVault builds a vault from the registry, applying the configured cache
 // size and, when a default key policy is set, its DEK duration and renewal lead
 // time.
-func createVault(c *config.Config, r *crypto.KEKRegistry, reporter *Reporter) (*crypto.Vault, error) {
+//
+// A disabled cache is logged rather than left to be inferred. It is a legitimate
+// choice, but an expensive one - every Open becomes a KEK round trip - and the
+// cache metrics cannot report it: hits and misses both sit at zero whether the
+// cache is off or merely idle, so this line is the only thing that distinguishes
+// them.
+func createVault(
+	c *config.Config,
+	r *crypto.KEKRegistry,
+	reporter *Reporter,
+	log logger.Logger,
+) (*crypto.Vault, error) {
+	size := c.Encryption.DEKCacheSize()
+	if size == 0 {
+		log.Warn("DEK cache is disabled by cacheSize: 0; every payload opened costs a KEK unwrap")
+	}
+
 	opts := make([]crypto.VaultOption, 0, 3+len(c.Encryption.Overrides))
 	opts = append(opts,
-		crypto.WithCacheSize(c.Encryption.CacheSize),
+		crypto.WithCacheSize(size),
 		crypto.WithObserver(reporter),
 	)
 

@@ -87,6 +87,12 @@ type (
 	}
 )
 
+// DefaultCacheSize is the number of decrypted DEKs a Vault retains when no
+// [WithCacheSize] option is given. It is exported so that a caller which
+// defaults the option for itself - configuration, say - inherits this number
+// rather than restating it and drifting from it.
+const DefaultCacheSize = 100
+
 // NewVault constructs a Vault backed by r, applying opts in order. A DEK is
 // pre-generated for every namespace registered via [WithKeyConfig]. NewVault
 // returns an error if any option is invalid (for example, a duplicate namespace
@@ -97,7 +103,7 @@ func NewVault(r *KEKRegistry, opts ...VaultOption) (*Vault, error) {
 	}
 
 	vopts := &vaultOptions{
-		cacheSize: 100,
+		cacheSize: DefaultCacheSize,
 		config:    make(map[string]KeyConfig),
 		nowFn:     time.Now,
 		observer:  nopObserver{},

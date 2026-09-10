@@ -128,7 +128,7 @@ func TestNewRejectsConfiguredKeysWithoutVault(t *testing.T) {
 			cfg := testConfig()
 			cfg.Encryption = config.Encryption{
 				Enabled:   enabled,
-				CacheSize: 10,
+				CacheSize: new(10),
 				Default: &config.KeyPolicy{
 					URI:         testingKeyURL(t),
 					Duration:    time.Hour,

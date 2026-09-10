@@ -2,13 +2,100 @@ package config_test
 
 import (
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/pkg/crypto"
 )
+
+// TestEncryption_DEKCacheSize covers what an absent cacheSize means. The field is
+// a pointer precisely so that absent and zero can differ: zero disables the DEK
+// cache, and an absent field must not.
+func TestEncryption_DEKCacheSize(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		enc  *config.Encryption
+		want int
+	}{
+		{
+			name: "absent inherits the vault's own default",
+			enc:  &config.Encryption{},
+			want: crypto.DefaultCacheSize,
+		},
+		{
+			name: "zero disables the cache, deliberately",
+			enc:  &config.Encryption{CacheSize: new(0)},
+			want: 0,
+		},
+		{
+			name: "a configured size is used as written",
+			enc:  &config.Encryption{CacheSize: new(25)},
+			want: 25,
+		},
+		{
+			name: "a nil block is as absent as an empty one",
+			enc:  nil,
+			want: crypto.DefaultCacheSize,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, tt.enc.DEKCacheSize())
+		})
+	}
+}
+
+// TestLoad_DEKCacheSizeDefault is the same question asked of the YAML, where the
+// distinction actually arises: an omitted key never reaches an unmarshaler, so
+// nothing but the pointer separates "said nothing" from "said zero".
+func TestLoad_DEKCacheSizeDefault(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		yaml string
+		want int
+	}{
+		{
+			name: "an absent encryption block",
+			yaml: "hostPort: :8080\n",
+			want: crypto.DefaultCacheSize,
+		},
+		{
+			name: "an encryption block that omits cacheSize",
+			yaml: "hostPort: :8080\nencryption:\n  enabled: true\n",
+			want: crypto.DefaultCacheSize,
+		},
+		{
+			name: "cacheSize written as zero",
+			yaml: "hostPort: :8080\nencryption:\n  cacheSize: 0\n",
+			want: 0,
+		},
+		{
+			name: "cacheSize written as a size",
+			yaml: "hostPort: :8080\nencryption:\n  cacheSize: 25\n",
+			want: 25,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := config.Load(strings.NewReader(tt.yaml))
+			require.NoError(t, err)
+			require.Equal(t, tt.want, cfg.Encryption.DEKCacheSize())
+		})
+	}
+}
 
 func TestEncryptionValidate(t *testing.T) {
 	t.Parallel()
@@ -30,7 +117,7 @@ func TestEncryptionValidate(t *testing.T) {
 		},
 		{
 			name:    "negative cache size",
-			cfg:     config.Encryption{CacheSize: -1},
+			cfg:     config.Encryption{CacheSize: new(-1)},
 			wantErr: "cacheSize",
 		},
 		{
