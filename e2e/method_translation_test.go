@@ -68,7 +68,7 @@ func TestEndToEndListNamespacesTranslatesOntoCloudService(t *testing.T) {
 		Upstreams: config.UpstreamList{{
 			Name:   "frontend",
 			Cloud:  true,
-			Listen: config.ListenConfig{HostPort: frontend.Addr()},
+			Listen: frontend.Listen(),
 		}},
 		APITranslations: cloudAPIAt(cloud.addr),
 	})
@@ -116,7 +116,7 @@ func TestEndToEndOnlyTranslatedMethodsReachTheCloudAPI(t *testing.T) {
 		Upstreams: config.UpstreamList{{
 			Name:   "frontend",
 			Cloud:  true,
-			Listen: config.ListenConfig{HostPort: frontend.Addr()},
+			Listen: frontend.Listen(),
 		}},
 		APITranslations: cloudAPIAt(cloud.addr),
 	})
@@ -150,7 +150,7 @@ func TestEndToEndANonCloudUpstreamTranslatesNothing(t *testing.T) {
 		Routing: config.Routing{DefaultUpstream: "frontend", SystemUpstream: "frontend"},
 		Upstreams: config.UpstreamList{{
 			Name:   "frontend",
-			Listen: config.ListenConfig{HostPort: dataplanetest.NewUpstream(t).Addr()},
+			Listen: dataplanetest.NewUpstream(t).Listen(),
 		}},
 	})
 
@@ -249,7 +249,7 @@ func TestEndToEndNamespaceRulesApplyToATranslatedReply(t *testing.T) {
 		Upstreams: config.UpstreamList{{
 			Name:       "frontend",
 			Cloud:      true,
-			Listen:     config.ListenConfig{HostPort: dataplanetest.NewUpstream(t).Addr()},
+			Listen:     dataplanetest.NewUpstream(t).Listen(),
 			Namespaces: config.NamespaceConfig{Rules: config.NamespaceRules{Suffix: ".a1b2c"}},
 		}},
 		APITranslations: cloudAPIAt(cloud.addr),
@@ -267,11 +267,12 @@ func TestEndToEndNamespaceRulesApplyToATranslatedReply(t *testing.T) {
 		"the namespace translator must still see the converted reply")
 }
 
-// cloudAPIAt points method translation at a fake control plane. Nil TLS dials it
-// in plaintext, which the real address never would.
+// cloudAPIAt points method translation at a fake control plane. The fake serves
+// plaintext, so it has to say so: a dialled target with no tls block verifies
+// against the system roots, which is what the real address wants.
 func cloudAPIAt(hostPort string) *config.APITranslations {
 	return &config.APITranslations{
-		CloudAPI: &config.CloudAPI{Listen: config.ListenConfig{HostPort: hostPort}},
+		CloudAPI: &config.CloudAPI{Listen: config.ListenConfig{HostPort: hostPort, Insecure: true}},
 	}
 }
 
@@ -293,7 +294,7 @@ func TestEndToEndTranslationCanBeDisabled(t *testing.T) {
 		Upstreams: config.UpstreamList{{
 			Name:   "frontend",
 			Cloud:  true,
-			Listen: config.ListenConfig{HostPort: dataplanetest.NewUpstream(t).Addr()},
+			Listen: dataplanetest.NewUpstream(t).Listen(),
 		}},
 		APITranslations: translations,
 	})

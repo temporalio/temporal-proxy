@@ -54,12 +54,14 @@ type CloudAPI struct {
 // Credentials are inherited from src because a Temporal Cloud API key authorizes
 // the control plane as well as the frontend. TLS is not: the control plane is a
 // different host, so src's server name or client certificate would not apply to
-// it, and a default outbound TLS configuration is used instead.
+// it, and the dial default stands instead - verification against the system root
+// pool, which is what the real control plane presents.
 //
-// When this block is present its own tls is authoritative, absent included, the
-// same way it is on an upstream - an absent tls dials in plaintext. That is only
-// reachable for a control plane with no credentials, since Validate rejects
-// credentials without TLS, so a key still cannot be sent in the clear.
+// When this block is present its tls and insecure are authoritative, the same way
+// they are on an upstream: an absent tls still verifies against the system roots,
+// and plaintext has to be asked for. That is only reachable for a control plane
+// with no credentials, since Validate rejects credentials on an insecure hop, so
+// a key still cannot be sent in the clear.
 //
 // The name is derived from src rather than fixed, so two Cloud upstreams with
 // different credentials get distinct connections instead of sharing whichever
@@ -68,7 +70,7 @@ func (c *CloudAPI) Upstream(src *Upstream) *Upstream {
 	up := &Upstream{
 		Name:        src.Name + "/cloud-api",
 		Cloud:       true,
-		Listen:      ListenConfig{HostPort: cloud.APIHostPort, TLS: &TLSConfig{}},
+		Listen:      ListenConfig{HostPort: cloud.APIHostPort},
 		Credentials: src.Credentials,
 	}
 
@@ -81,6 +83,7 @@ func (c *CloudAPI) Upstream(src *Upstream) *Upstream {
 	}
 
 	up.Listen.TLS = c.Listen.TLS
+	up.Listen.Insecure = c.Listen.Insecure
 
 	if c.Credentials != nil {
 		up.Credentials = c.Credentials

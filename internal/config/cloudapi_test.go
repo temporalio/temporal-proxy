@@ -35,7 +35,7 @@ func TestCloudAPIUpstreamDefaults(t *testing.T) {
 
 	api := unset.Upstream(src)
 	require.Equal(t, cloud.APIHostPort, api.Listen.HostPort)
-	require.NotNil(t, api.Listen.TLS, "the real control plane is always TLS")
+	require.False(t, api.Listen.Insecure, "the real control plane is always TLS")
 	require.True(t, api.IsCloud())
 }
 
@@ -52,7 +52,6 @@ routing:
 upstreams:
   - name: frontend
     hostPort: ns.acct.tmprl.cloud:7233
-    tls: {}
     credentials:
       static:
         apiKey: sekrit
@@ -84,14 +83,12 @@ routing:
 upstreams:
   - name: frontend
     hostPort: ns.acct.tmprl.cloud:7233
-    tls: {}
     credentials:
       static:
         apiKey: upstream-key
 apiTranslations:
   cloudApi:
     hostPort: saas-api.staging.tmprl.cloud:443
-    tls: {}
     credentials:
       static:
         apiKey: control-plane-key
@@ -107,9 +104,11 @@ apiTranslations:
 	require.True(t, cfg.APITranslations.Cloud().IsEndpoint())
 }
 
-func TestLoad_CloudAPIRejectsCredentialsWithoutTLS(t *testing.T) {
+func TestLoad_CloudAPIRejectsCredentialsOnAnInsecureHop(t *testing.T) {
 	t.Parallel()
 
+	// An absent tls block is TLS, so plaintext is what has to be asked for - and
+	// asking for it with a key configured is what the rule refuses.
 	const yaml = `
 hostPort: 127.0.0.1:7233
 routing:
@@ -119,6 +118,7 @@ upstreams:
     hostPort: ns.acct.tmprl.cloud:7233
 apiTranslations:
   cloudApi:
+    insecure: true
     credentials:
       static:
         apiKey: sekrit
@@ -154,7 +154,6 @@ routing:
 upstreams:
   - name: frontend
     hostPort: ns.acct.tmprl.cloud:7233
-    tls: {}
 apiTranslations:
   enabled: false
 `
