@@ -53,18 +53,17 @@ upstreams:
     #   rules:
     #     suffix: .${TEMPORAL_ACCOUNT}
 
-# Optional. Translation is on for a Cloud upstream and reaches the control plane
-# at saas-api.tmprl.cloud:443 with the upstream's own API key, which is all a
-# normal account needs. This block is only for overriding that:
+# Optional, and there is no switch in it. Translation happens when the upstream
+# serving namespace-less requests - the system upstream above, or the default
+# when none is named - is Temporal Cloud, and it reaches the control plane at
+# saas-api.tmprl.cloud:443 with that upstream's own API key. Routing ListNamespaces
+# at a Temporal Service that serves it is how an operator opts out, which is the
+# same statement made where it belongs.
 #
-#   enabled: false   forward ListNamespaces untranslated and let it fail the way
-#                    it does without the proxy. An on-prem upstream is not Cloud,
-#                    so it is never translated and needs nothing here.
-#   cloudApi:        reach a different Cloud environment, or give the control
-#                    plane credentials or TLS the upstream does not carry.
+# This block is only for what detection cannot know: which Cloud environment the
+# control plane lives in, and the API key an mTLS upstream has none to inherit.
 #
 # apiTranslations:
-#   enabled: true
 #   cloudApi:
 #     hostPort: saas-api.tmprl.cloud:443
 #     credentials:

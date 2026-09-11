@@ -34,9 +34,11 @@ Cloud cannot serve follows from that — the same detection that turns on Cloud 
 travels with the translation instead of having to be restated as configuration.
 
 The control plane is reached at `saas-api.tmprl.cloud:443` with the upstream's own API key, which authorises both. An
-optional `apiTranslations:` block overrides that — `enabled: false` to forward the call untranslated, or a nested
-`cloudApi:` to reach a different Cloud environment. An on-prem upstream is not Cloud, so it is never translated and
-needs nothing here.
+optional `apiTranslations.cloudApi:` block overrides where that is and what it authenticates with, for a different Cloud
+environment or for an mTLS upstream that has no API key to inherit. There is nothing to turn translation on or off: it
+happens when the upstream serving Namespace-less requests is Cloud, so an operator who wants the untranslated failure
+back routes those requests at a Temporal Service that serves them. An on-prem upstream is not Cloud, so it is never
+translated and needs nothing here.
 
 Everything else — including `GetSystemInfo`, which every SDK calls on connect — keeps going to the Temporal Service
 untouched.
@@ -69,7 +71,7 @@ go run ./cmd/proxy serve -c examples/listnamespace/config.yaml
 The first log line confirms the translation is armed:
 
 ```json
-{"level":"info","hostPort":"saas-api.tmprl.cloud:443",
+{"level":"info","upstream":"frontend","hostPort":"saas-api.tmprl.cloud:443",
  "methods":"/temporal.api.workflowservice.v1.WorkflowService/ListNamespaces",
  "message":"translating methods to the Cloud API"}
 ```
