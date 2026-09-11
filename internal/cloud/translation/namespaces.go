@@ -17,11 +17,17 @@ import (
 )
 
 const (
+	// cloudService is Temporal Cloud's control plane API. Its name is spelled here
+	// rather than taken from internal/services because the proxy calls it and does
+	// not forward it: no allowlist admits it, and nothing resolves its descriptors,
+	// since the conversions below name the message types outright.
+	cloudService = "temporal.api.cloud.cloudservice.v1.CloudService"
+
 	// listNamespacesMethod is the WorkflowService method local callers use to list
 	// namespaces, and getNamespacesMethod is the CloudService method that answers
 	// it on Temporal Cloud, whose frontends do not serve the namespace list.
 	listNamespacesMethod = "/" + services.WorkflowService + "/ListNamespaces"
-	getNamespacesMethod  = "/" + services.CloudService + "/GetNamespaces"
+	getNamespacesMethod  = "/" + cloudService + "/GetNamespaces"
 
 	// cloudPageLimit is the largest page CloudService.GetNamespaces accepts. A
 	// larger request is rejected outright, so a caller asking for more is clamped

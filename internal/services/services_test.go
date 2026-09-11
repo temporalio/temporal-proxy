@@ -43,10 +43,7 @@ func TestResolveRejectsNonService(t *testing.T) {
 func TestDefaultIsForwardableSubsetOfKnown(t *testing.T) {
 	t.Parallel()
 
-	require.Equal(t,
-		[]string{services.WorkflowService, services.OperatorService, services.CloudService},
-		services.Default(),
-	)
+	require.Equal(t, []string{services.WorkflowService, services.OperatorService}, services.Default())
 	require.Subset(t, services.Known(), services.Default())
 }
 

@@ -113,9 +113,9 @@ func TestAllowlistServiceNames(t *testing.T) {
 		want    []string
 	}{
 		{
-			name:    "the default set names every default service",
+			name:    "the default set names the two default services",
 			allowed: services.Default(),
-			want:    []string{services.CloudService, services.OperatorService, services.WorkflowService},
+			want:    []string{services.OperatorService, services.WorkflowService},
 		},
 		{
 			name:    "reflection names both spellings, since both are admitted",
