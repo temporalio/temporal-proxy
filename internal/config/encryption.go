@@ -22,13 +22,14 @@ var validKeySchemes = append(crypto.DefaultSchemes(), extensionKeyScheme)
 type (
 	// Encryption configures envelope encryption of payloads. When Enabled, a
 	// Default key policy is required and governs how DEKs are provisioned and
-	// rotated. CacheSize bounds the in-memory DEK cache. Overrides maps a
-	// namespace to a key policy that supersedes Default for that namespace; the
-	// keys are pre-translation (local) namespace names, matching the namespace
-	// the vault seals under at request time.
+	// rotated. CacheSize bounds the in-memory DEK cache; see [Encryption.DEKCacheSize]
+	// for what an absent one means. Overrides maps a namespace to a key policy
+	// that supersedes Default for that namespace; the keys are pre-translation
+	// (local) namespace names, matching the namespace the vault seals under at
+	// request time.
 	Encryption struct {
 		Enabled   bool                 `yaml:"enabled"`
-		CacheSize int                  `yaml:"cacheSize"`
+		CacheSize *int                 `yaml:"cacheSize"`
 		Default   *KeyPolicy           `yaml:"default"`
 		Overrides map[string]KeyPolicy `yaml:"overrides"`
 	}
@@ -46,12 +47,33 @@ type (
 	}
 )
 
+// DEKCacheSize is the DEK cache size to apply: the configured size when there is
+// one, and [crypto.DefaultCacheSize] when the field is absent. Zero disables the
+// cache, so every Open unwraps its DEK through the KEK.
+//
+// The distinction is why the field is a pointer. Zero is a meaningful value here
+// and a plain int cannot tell an operator who wrote nothing from one who wrote
+// zero - so an absent field would read as "disable the cache" and silently
+// override the vault's own default, turning every payload the proxy opens into a
+// KMS round trip. Absent means "no opinion", and disabling the cache has to be
+// written down.
+func (e *Encryption) DEKCacheSize() int {
+	if e == nil || e.CacheSize == nil {
+		return crypto.DefaultCacheSize
+	}
+
+	return *e.CacheSize
+}
+
 // Validate requires a non-negative cache size, a Default policy whenever
 // encryption is Enabled, and (when a Default is present at all) that the policy
 // itself is valid.
 func (e *Encryption) Validate() error {
 	rules := []validation.Rule{
-		validation.Field("cacheSize", e.CacheSize, validation.GTE(0)),
+		// Checked through the accessor rather than the field, so an absent size is
+		// the default (which passes) while a negative one still fails, without
+		// dereferencing a pointer that may not be there.
+		validation.Field("cacheSize", e.DEKCacheSize(), validation.GTE(0)),
 		validation.WhenRules(
 			func() bool { return e.Enabled },
 			validation.Field("default", e.Default, validation.Required[*KeyPolicy]()),

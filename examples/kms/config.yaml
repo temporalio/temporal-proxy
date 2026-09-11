@@ -52,6 +52,13 @@ extensionServers:
 # extension server never receives that name; it selects keys by namespace.
 encryption:
   enabled: true
+
+  # cacheSize bounds the in-memory DEK cache, and defaults to 100 when omitted,
+  # as here. Each entry saves a KEK unwrap - a call to the extension server
+  # below - on every payload opened with that DEK. Setting it to 0 turns the
+  # cache off, which makes every payload opened cost a round trip.
+  # cacheSize: 100
+
   default:
     uri: extension://kms/payloads
     duration: 1h
