@@ -11,13 +11,16 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"github.com/temporalio/temporal-proxy/internal/auth"
+	"github.com/temporalio/temporal-proxy/internal/cloud/translation"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/dataplane"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
+	"github.com/temporalio/temporal-proxy/internal/rpc"
 	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
@@ -246,17 +249,30 @@ func testingKeyURL(t *testing.T) url.URL {
 // cloudAPIUnusedWarning is the message New logs for a Cloud API override no
 // upstream can use. TestLogger matches an entry's message in full, so it is
 // spelled once here rather than approximated at each assertion.
-const cloudAPIUnusedWarning = "apiTranslations is configured but no upstream is Temporal Cloud, so no method will be translated"
+const cloudAPIUnusedWarning = "apiTranslations is configured but namespace-less requests are not served by " +
+	"a Temporal Cloud upstream, so no method will be translated"
+
+// stagingCloudAPI is an override that says something, which is what an inert
+// block has to be to be worth warning about: one that says nothing is
+// indistinguishable from no block at all, and describes the defaults anyway.
+func stagingCloudAPI() config.APITranslations {
+	return config.APITranslations{
+		CloudAPI: config.CloudAPI{
+			Listen: config.ListenConfig{HostPort: "saas-api.staging.tmprl.cloud:443"},
+		},
+	}
+}
 
 // TestNewWarnsWhenCloudAPIHasNoCloudUpstream covers a block that changes nothing.
-// The Cloud API is reached only by a translation, and only a Cloud upstream
-// installs one, so configuring the override without such an upstream leaves an
-// operator waiting for behaviour that cannot arrive.
+// The Cloud API is reached only by a translation, and only the Cloud upstream
+// serving namespace-less requests installs one, so configuring the override
+// without such an upstream leaves an operator waiting for behaviour that cannot
+// arrive.
 func TestNewWarnsWhenCloudAPIHasNoCloudUpstream(t *testing.T) {
 	t.Parallel()
 
 	cfg := testConfig()
-	cfg.APITranslations = &config.APITranslations{}
+	cfg.APITranslations = stagingCloudAPI()
 
 	log := logger.NewTestLogger()
 	deps := newTestDeps(t, cfg)
@@ -269,13 +285,63 @@ func TestNewWarnsWhenCloudAPIHasNoCloudUpstream(t *testing.T) {
 		"a block that changes nothing must not pass unremarked")
 }
 
+// TestNewIsQuietWhenTheOverrideSaysNothing is the other side of the trigger. An
+// apiTranslations block with nothing in it describes the defaults, so there is
+// no override going unused and nothing to report.
+func TestNewIsQuietWhenTheOverrideSaysNothing(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	cfg.APITranslations = config.APITranslations{}
+
+	log := logger.NewTestLogger()
+	deps := newTestDeps(t, cfg)
+	deps.logger = log
+
+	_, err := dataplane.New(deps.ctx, cfg, deps.opts()...)
+	require.NoError(t, err)
+
+	require.False(t, log.Contains(cloudAPIUnusedWarning))
+}
+
+// TestNewWarnsWhenTheCloudUpstreamServesNoNamespacelessRequests covers the
+// hybrid: Temporal Cloud is configured, but namespace-less requests are routed to
+// a Temporal Service that serves them itself. Nothing is translated there, which
+// is correct - and it makes a Cloud API override inert, which is worth saying.
+func TestNewWarnsWhenTheCloudUpstreamServesNoNamespacelessRequests(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	cfg.APITranslations = stagingCloudAPI()
+	cfg.Upstreams = append(cfg.Upstreams, config.Upstream{
+		Name:   "cloud",
+		Cloud:  true,
+		Listen: config.ListenConfig{HostPort: "ns.acct.tmprl.cloud:7233"},
+	})
+	cfg.Routing.Rules = []config.RoutingRule{{
+		Upstream: "cloud",
+		Match:    config.RoutingMatch{Namespace: "*.acct"},
+	}}
+
+	log := logger.NewTestLogger()
+	deps := newTestDeps(t, cfg)
+	deps.logger = log
+
+	_, err := dataplane.New(deps.ctx, cfg, deps.opts()...)
+	require.NoError(t, err)
+
+	require.True(t, log.Contains(cloudAPIUnusedWarning),
+		"the Cloud upstream is not where namespace-less requests land")
+}
+
 // TestNewIsQuietWhenCloudAPIHasACloudUpstream is the control: the same block with
-// an upstream that can use it must not warn.
+// an upstream that can use it must not warn. testConfig names no system upstream,
+// so this also covers namespace-less requests falling through to the default.
 func TestNewIsQuietWhenCloudAPIHasACloudUpstream(t *testing.T) {
 	t.Parallel()
 
 	cfg := testConfig()
-	cfg.APITranslations = &config.APITranslations{}
+	cfg.APITranslations = stagingCloudAPI()
 	cfg.Upstreams[0].Cloud = true
 
 	log := logger.NewTestLogger()
@@ -286,4 +352,38 @@ func TestNewIsQuietWhenCloudAPIHasACloudUpstream(t *testing.T) {
 	require.NoError(t, err)
 
 	require.False(t, log.Contains(cloudAPIUnusedWarning))
+}
+
+// TestEveryTranslatedMethodIsNamespaceless guards the assumption the installation
+// gate rests on. Translation is installed only for the upstream serving
+// namespace-less requests, which covers every translated method exactly while
+// every translated method is namespace-less - true today because a method Cloud
+// refuses on a namespace endpoint is one carrying no namespace to pin to it.
+//
+// A namespace-bearing translation would be routed by its namespace, land on an
+// upstream with no translation installed, and never fire. It has to fail here
+// first, where the gate can be revisited.
+func TestEveryTranslatedMethodIsNamespaceless(t *testing.T) {
+	t.Parallel()
+
+	reg, err := translation.Default()
+	require.NoError(t, err)
+	require.NotEmpty(t, reg.Methods(), "a registry with nothing in it would pass vacuously")
+
+	for _, fullMethod := range reg.Methods() {
+		service, method, ok := rpc.ServiceMethod(fullMethod)
+		require.True(t, ok, "%q is not a gRPC full method", fullMethod)
+
+		d, err := protoregistry.GlobalFiles.FindDescriptorByName(protoreflect.FullName(service))
+		require.NoError(t, err)
+
+		sd, ok := d.(protoreflect.ServiceDescriptor)
+		require.True(t, ok)
+
+		md := sd.Methods().ByName(protoreflect.Name(method))
+		require.NotNil(t, md)
+
+		require.Nil(t, md.Input().Fields().ByName("namespace"),
+			"%s carries a namespace, so the namespace-less upstream is no longer where it lands", fullMethod)
+	}
 }

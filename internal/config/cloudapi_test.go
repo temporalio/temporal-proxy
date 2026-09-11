@@ -18,8 +18,8 @@ import (
 func TestCloudAPIUpstreamsAreDistinctPerSource(t *testing.T) {
 	t.Parallel()
 
-	a := (&config.CloudAPI{}).Upstream(&config.Upstream{Name: "alpha"})
-	b := (&config.CloudAPI{}).Upstream(&config.Upstream{Name: "beta"})
+	a := config.CloudAPI{}.Upstream(&config.Upstream{Name: "alpha"})
+	b := config.CloudAPI{}.Upstream(&config.Upstream{Name: "beta"})
 
 	require.Equal(t, a.Listen.HostPort, b.Listen.HostPort, "both reach the same control plane")
 	require.NotEqual(t, a.Name, b.Name, "but must not share a pooled connection")
@@ -30,13 +30,28 @@ func TestCloudAPIUpstreamsAreDistinctPerSource(t *testing.T) {
 func TestCloudAPIUpstreamDefaults(t *testing.T) {
 	t.Parallel()
 
-	var unset *config.CloudAPI
+	var unset config.CloudAPI
 	src := &config.Upstream{Name: "frontend"}
 
 	api := unset.Upstream(src)
 	require.Equal(t, cloud.APIHostPort, api.Listen.HostPort)
 	require.False(t, api.Listen.Insecure, "the real control plane is always TLS")
 	require.True(t, api.IsCloud())
+}
+
+// TestAPITranslationsZeroValueIsTheUnconfiguredCase pins what the block an
+// operator did not write answers. Every deployment that says nothing about
+// apiTranslations reaches these on the zero value, so it has to describe the
+// defaults rather than need a check in front of it.
+func TestAPITranslationsZeroValueIsTheUnconfiguredCase(t *testing.T) {
+	t.Parallel()
+
+	var absent config.APITranslations
+
+	require.True(t, absent.CloudAPI.IsZero(), "an absent block configures no control plane of its own")
+	require.NoError(t, absent.Validate())
+	require.True(t, absent.CloudAPI.IsSaasAPI(), "and the derived control plane is Cloud's own")
+	require.Equal(t, cloud.APIHostPort, absent.CloudAPI.Upstream(&config.Upstream{Name: "frontend"}).Listen.HostPort)
 }
 
 func TestLoad_CloudUpstreamNeedsNoTranslationConfig(t *testing.T) {
@@ -62,12 +77,12 @@ upstreams:
 	require.NoError(t, cfg.Validate())
 
 	require.Empty(t, cfg.Routing.Rules, "translation needs no routing rule")
-	require.Nil(t, cfg.APITranslations, "and no cloudApi block")
+	require.True(t, cfg.APITranslations.CloudAPI.IsZero(), "and no cloudApi block")
 	require.True(t, cfg.Upstreams[0].IsCloud())
 
 	// The control plane is derived from the upstream: its own address, and the
 	// upstream's credentials, since one API key authorizes both.
-	api := cfg.APITranslations.Cloud().Upstream(&cfg.Upstreams[0])
+	api := cfg.APITranslations.CloudAPI.Upstream(&cfg.Upstreams[0])
 	require.Equal(t, cloud.APIHostPort, api.Listen.HostPort)
 	require.Equal(t, cfg.Upstreams[0].Credentials, api.Credentials)
 	require.NotEqual(t, cfg.Upstreams[0].Name, api.Name, "distinct name keeps the pooled connections apart")
@@ -98,10 +113,10 @@ apiTranslations:
 	require.NoError(t, err)
 	require.NoError(t, cfg.Validate())
 
-	api := cfg.APITranslations.Cloud().Upstream(&cfg.Upstreams[0])
+	api := cfg.APITranslations.CloudAPI.Upstream(&cfg.Upstreams[0])
 	require.Equal(t, "saas-api.staging.tmprl.cloud:443", api.Listen.HostPort)
 	require.NotEqual(t, cfg.Upstreams[0].Credentials, api.Credentials, "the override wins over inheritance")
-	require.True(t, cfg.APITranslations.Cloud().IsEndpoint())
+	require.True(t, cfg.APITranslations.CloudAPI.IsSaasAPI())
 }
 
 func TestLoad_CloudAPIRejectsCredentialsOnAnInsecureHop(t *testing.T) {
@@ -127,41 +142,4 @@ apiTranslations:
 	cfg, err := config.Load(strings.NewReader(yaml))
 	require.NoError(t, err)
 	require.ErrorContains(t, cfg.Validate(), "requires TLS")
-}
-
-func TestAPITranslationsIsEnabled(t *testing.T) {
-	t.Parallel()
-
-	// Default-on: translation makes a method work that cannot work otherwise, so
-	// an operator opts out of a fix rather than into one.
-	var absent *config.APITranslations
-	require.True(t, absent.IsEnabled(), "an absent block translates")
-	require.True(t, (&config.APITranslations{}).IsEnabled(), "so does one that says nothing about it")
-
-	on, off := true, false
-	require.True(t, (&config.APITranslations{Enabled: &on}).IsEnabled())
-	require.False(t, (&config.APITranslations{Enabled: &off}).IsEnabled(), "only an explicit false opts out")
-}
-
-func TestLoad_APITranslationsCanBeDisabled(t *testing.T) {
-	t.Parallel()
-
-	// A Cloud upstream that would otherwise be translated, opting out.
-	const yaml = `
-hostPort: 127.0.0.1:7233
-routing:
-  default: frontend
-upstreams:
-  - name: frontend
-    hostPort: ns.acct.tmprl.cloud:7233
-apiTranslations:
-  enabled: false
-`
-
-	cfg, err := config.Load(strings.NewReader(yaml))
-	require.NoError(t, err)
-	require.NoError(t, cfg.Validate())
-
-	require.True(t, cfg.Upstreams[0].IsCloud(), "still detected as Cloud")
-	require.False(t, cfg.APITranslations.IsEnabled(), "but opted out of translation")
 }

@@ -5,19 +5,28 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
-// APITranslations governs rewriting a method an upstream does not serve into the
-// one that does. It is optional and usually absent: an upstream that
-// [Upstream.IsCloud] recognizes has the methods Temporal Cloud does not serve on
-// a frontend translated automatically, over a connection derived from it.
+// APITranslations configures rewriting a method an upstream does not serve into
+// the one that does. It is optional and usually absent, and it carries no switch:
+// whether a method is translated is derived from the rest of the configuration
+// rather than declared.
 //
-// Enabled turns that off. It defaults to on, so an absent block and an absent
-// enabled both translate; only "enabled: false" does not. Nothing else can
-// disable it, because whether an upstream needs translation is detected rather
-// than configured - this is the operator's override of that detection, for a
-// Cloud upstream whose untranslated failure is preferred to a translated answer.
+// What derives it is [Routing.NamespacelessUpstream]. The methods Temporal Cloud
+// does not serve on a namespace endpoint are the ones carrying no namespace, so
+// they land on the upstream serving namespace-less requests, and that upstream
+// being Cloud is both necessary and sufficient for a translation to be reachable.
+// An operator who wants the untranslated failure back routes those requests at a
+// Temporal Service that serves them, which is the same statement made where it
+// belongs.
+//
+// This block exists for the two things detection cannot know: which Cloud
+// environment the control plane lives in, and the API key an mTLS upstream has
+// none of to inherit.
+//
+// The zero value is the block an operator did not write, which is what almost
+// every configuration has, and it answers for the default - so nothing here is a
+// pointer and no caller has to check before asking. The same holds for [CloudAPI].
 type APITranslations struct {
-	Enabled  *bool     `yaml:"enabled"`
-	CloudAPI *CloudAPI `yaml:"cloudApi"`
+	CloudAPI CloudAPI `yaml:"cloudApi"`
 }
 
 // CloudAPI overrides how the proxy reaches Temporal Cloud's control plane, which
@@ -66,16 +75,12 @@ type CloudAPI struct {
 // The name is derived from src rather than fixed, so two Cloud upstreams with
 // different credentials get distinct connections instead of sharing whichever
 // was dialled first.
-func (c *CloudAPI) Upstream(src *Upstream) *Upstream {
+func (c CloudAPI) Upstream(src *Upstream) *Upstream {
 	up := &Upstream{
 		Name:        src.Name + "/cloud-api",
 		Cloud:       true,
 		Listen:      ListenConfig{HostPort: cloud.APIHostPort},
 		Credentials: src.Credentials,
-	}
-
-	if c == nil {
-		return up
 	}
 
 	if c.Listen.HostPort != "" {
@@ -92,12 +97,12 @@ func (c *CloudAPI) Upstream(src *Upstream) *Upstream {
 	return up
 }
 
-// IsEndpoint reports whether the configured control plane addresses Temporal
-// Cloud. It is false only when an operator pointed the block somewhere else,
-// which is legitimate for a test double or a private environment, so callers
-// report it rather than reject it.
-func (c *CloudAPI) IsEndpoint() bool {
-	if c == nil || c.Listen.HostPort == "" {
+// IsSaasAPI reports whether the configured control plane addresses Temporal
+// Cloud's own API rather than somewhere else. It is false only when an operator
+// pointed the block elsewhere, which is legitimate for a test double or a
+// private environment, so callers report it rather than reject it.
+func (c CloudAPI) IsSaasAPI() bool {
+	if c.Listen.HostPort == "" {
 		return true
 	}
 
@@ -116,35 +121,19 @@ func (c *CloudAPI) IsEndpoint() bool {
 // legitimately does not carry the Cloud domain, and the proxy has no way to tell
 // that apart from a typo. It is reported at startup instead, which mirrors how a
 // namespace Cloud would reject is handled for a templated upstream.
-func (c *CloudAPI) Validate() error {
+func (c CloudAPI) Validate() error {
 	return c.Upstream(&Upstream{Name: "cloudApi"}).Validate()
 }
 
-// IsEnabled reports whether method translation should be installed. An absent
-// block, or a block that does not mention enabled, translates; only an explicit
-// "enabled: false" does not. Default-on is deliberate - translation makes a
-// method work that cannot work otherwise, so an operator opts out of a fix
-// rather than into one.
-func (t *APITranslations) IsEnabled() bool {
-	return t == nil || t.Enabled == nil || *t.Enabled
-}
-
-// Cloud returns the Cloud API override, or nil when none is configured, so
-// callers need not branch on whether the enclosing block is present.
-func (t *APITranslations) Cloud() *CloudAPI {
-	if t == nil {
-		return nil
-	}
-
-	return t.CloudAPI
-}
-
-// Validate checks the Cloud API override when one is configured. Enabled needs no
-// checking: any value is meaningful, and its absence is the default.
-func (t *APITranslations) Validate() error {
-	if t.CloudAPI == nil {
-		return nil
-	}
-
+// Validate checks the Cloud API override as it will be dialled. An override
+// nobody wrote is the zero one, which describes the defaults and passes.
+func (t APITranslations) Validate() error {
 	return validation.Validate("", validation.Nested("cloudApi", t.CloudAPI))
+}
+
+// IsZero reports whether the override says nothing at all, which is what an
+// absent block leaves behind. Callers use it to tell a configuration that asked
+// for something from one that never mentioned it.
+func (c CloudAPI) IsZero() bool {
+	return c == CloudAPI{}
 }

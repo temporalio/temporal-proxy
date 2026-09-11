@@ -270,33 +270,37 @@ func TestEndToEndNamespaceRulesApplyToATranslatedReply(t *testing.T) {
 // cloudAPIAt points method translation at a fake control plane. The fake serves
 // plaintext, so it has to say so: a dialled target with no tls block verifies
 // against the system roots, which is what the real address wants.
-func cloudAPIAt(hostPort string) *config.APITranslations {
-	return &config.APITranslations{
-		CloudAPI: &config.CloudAPI{Listen: config.ListenConfig{HostPort: hostPort, Insecure: true}},
+func cloudAPIAt(hostPort string) config.APITranslations {
+	return config.APITranslations{
+		CloudAPI: config.CloudAPI{Listen: config.ListenConfig{HostPort: hostPort, Insecure: true}},
 	}
 }
 
-// TestEndToEndTranslationCanBeDisabled covers the operator override: a Cloud
-// upstream that would be translated, opting out. The call then fails the way it
-// does without the proxy, which is the point - an operator who prefers the
-// untranslated failure to a translated answer can have it.
-func TestEndToEndTranslationCanBeDisabled(t *testing.T) {
+// TestEndToEndACloudUpstreamServingNoNamespacelessRequestsTranslatesNothing is
+// the hybrid case, and what replaced the operator's on/off switch. Temporal Cloud
+// serves this deployment's namespaced traffic by rule, while namespace-less
+// requests are routed to a Temporal Service that answers them itself. Translation
+// follows the request rather than the upstream, so nothing is translated here and
+// the operator who wants Cloud's own answer back says so in routing.
+func TestEndToEndACloudUpstreamServingNoNamespacelessRequestsTranslatesNothing(t *testing.T) {
 	t.Parallel()
 
 	cloud := newCloudUpstream(t)
 
-	off := false
-	translations := cloudAPIAt(cloud.addr)
-	translations.Enabled = &off
-
 	f := dataplanetest.StartApp(t, &config.Config{
-		Routing: config.Routing{DefaultUpstream: "frontend", SystemUpstream: "frontend"},
-		Upstreams: config.UpstreamList{{
-			Name:   "frontend",
-			Cloud:  true,
-			Listen: dataplanetest.NewUpstream(t).Listen(),
-		}},
-		APITranslations: translations,
+		Routing: config.Routing{
+			DefaultUpstream: "onprem",
+			SystemUpstream:  "onprem",
+			Rules: []config.RoutingRule{{
+				Upstream: "cloud",
+				Match:    config.RoutingMatch{Namespace: "*.a1b2c"},
+			}},
+		},
+		Upstreams: config.UpstreamList{
+			{Name: "onprem", Listen: dataplanetest.NewUpstream(t).Listen()},
+			{Name: "cloud", Cloud: true, Listen: dataplanetest.NewUpstream(t).Listen()},
+		},
+		APITranslations: cloudAPIAt(cloud.addr),
 	})
 
 	_, err := f.Client().ListNamespaces(
@@ -304,6 +308,39 @@ func TestEndToEndTranslationCanBeDisabled(t *testing.T) {
 		&workflowservice.ListNamespacesRequest{},
 		grpc.WaitForReady(true),
 	)
-	require.Error(t, err, "the call is forwarded untranslated, and the frontend does not serve it")
+	require.Error(t, err, "the request went to the upstream serving namespace-less traffic, untranslated")
 	require.Nil(t, cloud.request(), "and the control plane is never reached")
+}
+
+// TestEndToEndTheDefaultUpstreamCarriesNamespacelessRequests covers the ordinary
+// single-upstream config, which names no system upstream at all. Namespace-less
+// requests fall through to the default, so translation has to follow them there
+// or ListNamespaces stays broken for the configuration most operators write.
+func TestEndToEndTheDefaultUpstreamCarriesNamespacelessRequests(t *testing.T) {
+	t.Parallel()
+
+	cloud := newCloudUpstream(t)
+	cloud.setPage(&cloudnamespace.Namespace{
+		Namespace: "payments.a1b2c",
+		State:     resource.ResourceState_RESOURCE_STATE_ACTIVE,
+	})
+
+	f := dataplanetest.StartApp(t, &config.Config{
+		Routing: config.Routing{DefaultUpstream: "frontend"},
+		Upstreams: config.UpstreamList{{
+			Name:   "frontend",
+			Cloud:  true,
+			Listen: dataplanetest.NewUpstream(t).Listen(),
+		}},
+		APITranslations: cloudAPIAt(cloud.addr),
+	})
+
+	reply, err := f.Client().ListNamespaces(
+		f.Context(),
+		&workflowservice.ListNamespacesRequest{},
+		grpc.WaitForReady(true),
+	)
+	require.NoError(t, err)
+	require.Len(t, reply.GetNamespaces(), 1)
+	require.NotNil(t, cloud.request(), "the default upstream is where a namespace-less request lands")
 }

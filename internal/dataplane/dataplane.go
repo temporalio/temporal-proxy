@@ -124,13 +124,14 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		return nil, err
 	}
 
-	// A translation block with no Cloud upstream changes nothing and would leave
-	// an operator waiting for behaviour that cannot arrive, so say so rather than
-	// ignoring it silently. Disabling translation is exempt: turning off something
-	// that was never on is a coherent thing to write.
-	if cfg.APITranslations != nil && cfg.APITranslations.IsEnabled() &&
-		!slices.ContainsFunc(cfg.Upstreams, func(up config.Upstream) bool { return up.IsCloud() }) {
-		o.logger.Warn("apiTranslations is configured but no upstream is Temporal Cloud, so no method will be translated")
+	// A translation block nothing will consult changes nothing and would leave an
+	// operator waiting for behaviour that cannot arrive, so say so rather than
+	// ignoring it silently.
+	if !cfg.APITranslations.CloudAPI.IsZero() && !translates(cfg) {
+		o.logger.Warn(
+			"apiTranslations is configured but namespace-less requests are not served by a Temporal Cloud upstream, " +
+				"so no method will be translated",
+		)
 	}
 
 	dp := &Dataplane{
@@ -382,13 +383,17 @@ func newUpstreamTier(
 
 	// Cloud does not serve every WorkflowService method on a frontend, so the ones
 	// it answers elsewhere are translated and sent to its control plane instead.
-	// This follows the upstream's own Cloud detection: an upstream that is Cloud
-	// needs this, and one that is not would be broken by it.
+	// Nothing configures that: the methods in question carry no namespace, so they
+	// land on the upstream namespace-less requests are routed to, and that upstream
+	// being Cloud is what makes them translatable. Installing this on any other
+	// upstream would build a control plane connection no request can reach, and on
+	// a Temporal Service that serves those methods itself it would divert a call
+	// that was already going to work.
 	//
 	// It goes on last so it is the innermost interceptor: the namespace translator
 	// and the payload codec above it then see the method and message types the
 	// caller asked for, and only the hop onto the wire carries the substitute.
-	if up.IsCloud() && cfg.APITranslations.IsEnabled() {
+	if up.IsCloud() && cfg.Routing.NamespacelessUpstream() == up.Name {
 		reg, conn, err := cloudAPIConn(cfg, o, up)
 		if err != nil {
 			return nil, nil, err
@@ -439,6 +444,18 @@ func (r keyedResolver) Resolve(ctx context.Context) (string, string, []grpc.Dial
 	return r.key, target, opts, err
 }
 
+// translates reports whether any upstream will have method translation
+// installed, which is the upstream serving namespace-less requests being
+// Temporal Cloud. It is the same question perUpstream asks of one upstream, so a
+// configuration this answers false for installs nothing anywhere.
+func translates(cfg *config.Config) bool {
+	name := cfg.Routing.NamespacelessUpstream()
+
+	return slices.ContainsFunc(cfg.Upstreams, func(up config.Upstream) bool {
+		return up.Name == name && up.IsCloud()
+	})
+}
+
 // cloudAPIConn builds the connection translated methods for up are answered
 // over, along with the translations that use it. The connection is dialled by
 // the same resolver and credential machinery as an upstream but is not
@@ -454,7 +471,7 @@ func cloudAPIConn(cfg *config.Config, o *options, up *config.Upstream) (*transla
 		return nil, nil, fmt.Errorf("failed to build method translations: %w", err)
 	}
 
-	api := cfg.APITranslations.Cloud().Upstream(up)
+	api := cfg.APITranslations.CloudAPI.Upstream(up)
 
 	var dialOpts []grpc.DialOption
 	cp, err := outbound.CredentialProviderFor(api.Credentials)
@@ -476,7 +493,7 @@ func cloudAPIConn(cfg *config.Config, o *options, up *config.Upstream) (*transla
 	}
 
 	log := o.logger.With(tag.String("upstream", up.Name), tag.String("hostPort", api.Listen.HostPort))
-	if !cfg.APITranslations.Cloud().IsEndpoint() {
+	if !cfg.APITranslations.CloudAPI.IsSaasAPI() {
 		// Nothing but a Cloud deployment serves CloudService, but a test double or
 		// a private environment legitimately carries no Cloud domain, so this is
 		// reported rather than rejected.
