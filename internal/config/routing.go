@@ -32,6 +32,25 @@ type (
 	}
 )
 
+// NamespacelessUpstream returns the upstream a request carrying no namespace
+// lands on when no rule claims it: the system upstream when one is named, and
+// the default upstream otherwise. It mirrors what [router.Mux] does with such a
+// request, so a caller deciding what to install for that destination and the
+// router deciding where to send it cannot disagree.
+//
+// A rule can claim a namespace-less request too - an empty rule namespace
+// matches every namespace, the empty one included - so this names the
+// destination such a request falls through to rather than the only one it can
+// reach. It is empty when neither is configured, which Config.Validate treats as
+// an unroutable namespace-less request rather than an error.
+func (r *Routing) NamespacelessUpstream() string {
+	if r.SystemUpstream != "" {
+		return r.SystemUpstream
+	}
+
+	return r.DefaultUpstream
+}
+
 // Validate checks every rule. Per-rule failures are stamped with a "rules[i]"
 // subject. It does not verify that the referenced upstreams exist; that check
 // needs the full set of upstream names and lives in Config.Validate.

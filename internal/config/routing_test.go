@@ -68,6 +68,50 @@ func TestRouting_Validate(t *testing.T) {
 	}
 }
 
+// TestRoutingNamespacelessUpstream pins where a request carrying no namespace
+// falls through to, which is what decides whether the methods Temporal Cloud
+// cannot serve get translated. The system upstream is optional, so the default
+// has to answer for it when it is unset - a config naming only a default is the
+// ordinary single-upstream one.
+func TestRoutingNamespacelessUpstream(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		routing config.Routing
+		want    string
+	}{
+		{
+			name:    "the system upstream serves them when one is named",
+			routing: config.Routing{DefaultUpstream: "default", SystemUpstream: "system"},
+			want:    "system",
+		},
+		{
+			name:    "the default serves them when no system upstream is named",
+			routing: config.Routing{DefaultUpstream: "default"},
+			want:    "default",
+		},
+		{
+			name:    "naming only a system upstream still serves them there",
+			routing: config.Routing{SystemUpstream: "system"},
+			want:    "system",
+		},
+		{
+			name:    "neither leaves them unroutable",
+			routing: config.Routing{},
+			want:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			require.Equal(t, tt.want, tt.routing.NamespacelessUpstream())
+		})
+	}
+}
+
 func TestRoutingRule_Validate(t *testing.T) {
 	t.Parallel()
 
