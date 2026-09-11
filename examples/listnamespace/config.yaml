@@ -39,7 +39,6 @@ upstreams:
   # The Temporal Service for this namespace. Serves all normal traffic.
   - name: frontend
     hostPort: ${TEMPORAL_NAMESPACE}.${TEMPORAL_ACCOUNT}.tmprl.cloud:7233
-    tls: {}
     credentials:
       static:
         apiKey: ${TEMPORAL_API_KEY}
@@ -68,7 +67,6 @@ upstreams:
 #   enabled: true
 #   cloudApi:
 #     hostPort: saas-api.tmprl.cloud:443
-#     tls: {}
 #     credentials:
 #       static:
 #         apiKey: ${TEMPORAL_API_KEY}
