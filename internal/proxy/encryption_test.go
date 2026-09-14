@@ -217,7 +217,7 @@ func TestEncryptionRecordsVaultOps(t *testing.T) {
 	t.Parallel()
 
 	reg := prometheus.NewRegistry()
-	reporter := proxy.NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"))
+	reporter := proxy.NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"), true)
 
 	vault := &fakeVault{}
 	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: vault, Encrypt: true, Reporter: reporter})
@@ -244,17 +244,46 @@ func TestEncryptionRecordsVaultOps(t *testing.T) {
 	require.True(t, hasLabels(ops, map[string]string{"operation": "encrypt", "result": "success", "namespace": "ns1"}))
 	require.True(t, hasLabels(ops, map[string]string{"operation": "decrypt", "result": "success", "namespace": "ns1"}))
 
-	dur := gatherFamily(t, reg, "proxy_encryption_vault_ops_duration_secs")
+	dur := gatherFamily(t, reg, "proxy_encryption_vault_ops_duration_seconds")
 	require.NotNil(t, dur)
 	require.True(t, hasLabels(dur, map[string]string{"operation": "encrypt", "namespace": "ns1"}))
 	require.True(t, hasLabels(dur, map[string]string{"operation": "decrypt", "namespace": "ns1"}))
+}
+
+func TestEncryptionBlanksNamespaceLabelWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	reporter := proxy.NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"), false)
+
+	vault := &fakeVault{}
+	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: vault, Encrypt: true, Reporter: reporter})
+	require.NoError(t, err)
+
+	ctx := metadata.AppendToOutgoingContext(t.Context(), meta.NamespaceHeader, "ns1")
+
+	req := startRequest(&common.Payload{Data: []byte("hi")})
+	resp := &workflowservice.StartWorkflowExecutionRequest{}
+	invoker := respondWith(testPayload("json/plain", `"plain"`))
+	require.NoError(t, interceptor(ctx, "/method", req, resp, nil, invoker))
+
+	// The request named ns1, but the label set is declared either way and the
+	// value is dropped, so every namespace collapses onto one series.
+	ops := gatherFamily(t, reg, "proxy_encryption_vault_ops_total")
+	require.NotNil(t, ops)
+	require.True(t, hasLabels(ops, map[string]string{"operation": "encrypt", "result": "success", "namespace": ""}))
+	require.False(t, hasLabels(ops, map[string]string{"operation": "encrypt", "result": "success", "namespace": "ns1"}))
+
+	dur := gatherFamily(t, reg, "proxy_encryption_vault_ops_duration_seconds")
+	require.NotNil(t, dur)
+	require.True(t, hasLabels(dur, map[string]string{"operation": "encrypt", "namespace": ""}))
 }
 
 func TestEncryptionSkipsMetricsForPassThrough(t *testing.T) {
 	t.Parallel()
 
 	reg := prometheus.NewRegistry()
-	reporter := proxy.NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"))
+	reporter := proxy.NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"), true)
 
 	vault := &fakeVault{}
 	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: vault, Encrypt: true, Reporter: reporter})
@@ -364,7 +393,7 @@ func respondWith(payloads ...*common.Payload) grpc.UnaryInvoker {
 // any other test's metrics.
 func newTestReporter(t *testing.T) *proxy.Reporter {
 	t.Helper()
-	return proxy.NewReporter(metrics.New("test", promauto.With(prometheus.NewRegistry())).ForSubsystem("encryption"))
+	return proxy.NewReporter(metrics.New("test", promauto.With(prometheus.NewRegistry())).ForSubsystem("encryption"), true)
 }
 
 // gatherFamily returns the metric family named name from reg, or nil if no

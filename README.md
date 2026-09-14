@@ -163,6 +163,59 @@ and then decides each call against them, the two steps Temporal OSS splits acros
 Four tokens show what that buys, including a Worker that cannot reach a second Namespace and an auditor that can read
 history but not start a Workflow.
 
+## Metrics
+
+The proxy serves Prometheus metrics on `/metrics`. Everything under `metrics:` in the config controls the endpoint and
+how series are labeled:
+
+| Key               | Default       | Meaning                                                                                     |
+| ----------------- | ------------- | ------------------------------------------------------------------------------------------- |
+| `hostPort`        | `:9090`       | Address the `/metrics` handler listens on.                                                  |
+| `namespace`       | `tmprl_proxy` | The metric prefix stamped onto every metric name. Unrelated to a Temporal Namespace.        |
+| `namespaceLabels` | `false`       | Whether series that can name a Temporal Namespace report it.                                |
+
+### Published series
+
+Every name below is prefixed with the metric prefix and its subsystem, so `requests_total` in the `server` subsystem is
+exposed as `tmprl_proxy_server_requests_total` by default.
+
+| Subsystem    | Metric                       | Type      | Labels                             |
+| ------------ | ---------------------------- | --------- | ---------------------------------- |
+| `server`     | `requests_total`             | counter   | `method`, `code`                   |
+| `server`     | `request_duration_seconds`   | histogram | `method`                           |
+| `router`     | `decisions_total`            | counter   | `upstream`, `outcome`              |
+| `router`     | `forwarding_errors_total`    | counter   | `upstream`, `reason`               |
+| `encryption` | `vault_ops_total`            | counter   | `operation`, `result`, `namespace` |
+| `encryption` | `vault_ops_duration_seconds` | histogram | `operation`, `namespace`           |
+| `encryption` | `kek_ops_total`              | counter   | `provider`, `operation`, `result`  |
+| `encryption` | `kek_ops_duration_seconds`   | histogram | `provider`, `operation`            |
+| `encryption` | `dek_ops_total`              | counter   | `operation`, `result`              |
+| `encryption` | `dek_ops_duration_seconds`   | histogram | `operation`                        |
+| `encryption` | `dek_rotations_total`        | counter   | `reason`                           |
+| `encryption` | `dek_cache_hits_total`       | counter   | none                               |
+| `encryption` | `dek_cache_misses_total`     | counter   | none                               |
+| `encryption` | `dek_cache_size`             | gauge     | none                               |
+
+The `encryption` subsystem only reports once encryption keys are configured.
+
+### Labels and cardinality
+
+`namespace` is always declared and reports an empty value when it is turned off. Prometheus treats an empty label
+value as the label not being there, so turning it on leaves the shape of a query that already ignores it unchanged.
+
+`namespace` is the local Namespace the Client asked for, before any Namespace translation, which is the same name you
+write under `encryption.overrides`. Two proxies fronting different Temporal Services can therefore both report a
+Namespace called `default`, so a shared Prometheus needs a label from the scrape job to tell those series apart.
+
+`namespaceLabels` is off by default because the label is unbounded: the value comes from the request, so every distinct
+Namespace a Client names becomes another series. Turn it on when you know that set is small. `method` is bounded the
+same way, only for trusted callers, which is why the gateway should not be exposed directly to untrusted Clients.
+
+### Stability
+
+These names and labels are a published contract, pinned by a test that fails on any change to them. Renames ship with a
+release note.
+
 ## Terms
 
 | Term             | Meaning                                                                                                                                                                                        |

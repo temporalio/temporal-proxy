@@ -27,7 +27,7 @@ func TestReporterKEKOp(t *testing.T) {
 	m := findMetric(t, calls, map[string]string{"provider": "aws", "operation": "wrap", "result": "success"})
 	require.Equal(t, 1.0, m.GetCounter().GetValue())
 
-	dur := gather(t, reg, "proxy_encryption_kek_ops_duration_secs")
+	dur := gather(t, reg, "proxy_encryption_kek_ops_duration_seconds")
 	require.NotNil(t, dur)
 	d := findMetric(t, dur, map[string]string{"provider": "aws", "operation": "wrap"})
 	require.Equal(t, uint64(1), d.GetHistogram().GetSampleCount())
@@ -126,7 +126,7 @@ func TestReporterEnvelopeOp(t *testing.T) {
 			r, reg := newTestReporter(t)
 			r.Observe(tt.event)
 
-			mf := gather(t, reg, "proxy_encryption_dek_ops_duration_secs")
+			mf := gather(t, reg, "proxy_encryption_dek_ops_duration_seconds")
 			require.NotNil(t, mf)
 			m := findMetric(t, mf, map[string]string{"operation": tt.operation})
 			require.Equal(t, tt.wantDurCount, m.GetHistogram().GetSampleCount())

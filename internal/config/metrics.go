@@ -5,10 +5,13 @@ import "github.com/temporalio/temporal-proxy/pkg/validation"
 // Metrics configures the Prometheus endpoint. HostPort is the address the
 // /metrics handler listens on, and Namespace is the prefix stamped onto every
 // collector: a Prometheus namespace, unrelated to a Temporal namespace. Load
-// defaults both, so neither is empty in a loaded config.
+// defaults both, so neither is empty in a loaded config. NamespaceLabels
+// decides whether metrics that can name a Temporal namespace report it, and is
+// off by default, which Prometheus reads as the label not being there.
 type Metrics struct {
-	HostPort  string `yaml:"hostPort"`
-	Namespace string `yaml:"namespace"`
+	HostPort        string `yaml:"hostPort"`
+	Namespace       string `yaml:"namespace"`
+	NamespaceLabels bool   `yaml:"namespaceLabels"`
 }
 
 // Validate requires a valid host:port and a non-empty namespace. Load defaults

@@ -3,6 +3,12 @@ package dataplane
 import (
 	"net"
 	"slices"
+
+	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/metrics"
+	"github.com/temporalio/temporal-proxy/internal/proxy"
+	"github.com/temporalio/temporal-proxy/internal/router"
+	"github.com/temporalio/temporal-proxy/internal/server"
 )
 
 // Listeners is the set of listeners Start bound, exported for tests that break
@@ -15,4 +21,23 @@ func (d *Dataplane) Listeners() []net.Listener {
 	defer d.mu.Unlock()
 
 	return slices.Clone(d.listeners)
+}
+
+// Reporters exposes the metric reporters built for one dataplane so tests can
+// pin the exact metric surface they register.
+type Reporters struct {
+	Router     *router.Reporter
+	Server     *server.Reporter
+	Encryption *proxy.Reporter
+}
+
+// NewReporters builds the reporters for c against f, exported so tests can
+// assert the metric names and labels a wired dataplane emits.
+func NewReporters(f *metrics.Factory, c *config.Config, encryption bool) (*Reporters, error) {
+	r, err := newReporters(f, c, encryption)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Reporters{Router: r.router, Server: r.server, Encryption: r.encryption}, nil
 }
