@@ -127,12 +127,12 @@ func TestForwardReportsRequestFailures(t *testing.T) {
 	}{
 		{
 			name: "a failed receive from the caller is reported",
-			ss:   &serverStream{ServerStream: testutil.ServerStream{RecvErr: errors.New("recv failed")}},
+			ss:   &serverStream{RecvErr: errors.New("recv failed")},
 			want: "recv failed",
 		},
 		{
 			name: "a failed send upstream is reported",
-			cs:   &clientStream{ClientStream: testutil.ClientStream{SendErr: errors.New("send failed")}},
+			cs:   &clientStream{SendErr: errors.New("send failed")},
 			ss:   &serverStream{queued: []frame{{payload: "orders"}}},
 			want: "send failed",
 		},
@@ -173,19 +173,19 @@ func TestForwardReportsResponseFailures(t *testing.T) {
 	}{
 		{
 			name: "a failed upstream header is reported",
-			cs:   &clientStream{ClientStream: testutil.ClientStream{HeaderErr: errors.New("header failed")}},
+			cs:   &clientStream{HeaderErr: errors.New("header failed")},
 			code: codes.Internal,
 			want: "header failed",
 		},
 		{
 			name: "a header the caller refuses is reported",
-			ss:   &serverStream{ServerStream: testutil.ServerStream{HeaderErr: errors.New("send header failed")}},
+			ss:   &serverStream{HeaderErr: errors.New("send header failed")},
 			code: codes.Internal,
 			want: "send header failed",
 		},
 		{
 			name: "a failed upstream receive is reported",
-			cs:   &clientStream{ClientStream: testutil.ClientStream{RecvErr: errors.New("recv failed")}},
+			cs:   &clientStream{RecvErr: errors.New("recv failed")},
 			code: codes.Internal,
 			want: "recv failed",
 		},
@@ -194,7 +194,7 @@ func TestForwardReportsResponseFailures(t *testing.T) {
 			// through with its code rather than being flattened to Internal.
 			name: "an upstream status is forwarded verbatim",
 			cs: &clientStream{
-				ClientStream: testutil.ClientStream{RecvErr: status.Error(codes.NotFound, "namespace not found")},
+				RecvErr: status.Error(codes.NotFound, "namespace not found"),
 			},
 			code: codes.NotFound,
 			want: "namespace not found",
@@ -202,7 +202,7 @@ func TestForwardReportsResponseFailures(t *testing.T) {
 		{
 			name: "a response the caller refuses is reported",
 			cs:   &clientStream{queued: []frame{{payload: "page-1"}}},
-			ss:   &serverStream{ServerStream: testutil.ServerStream{SendErr: errors.New("send failed")}},
+			ss:   &serverStream{SendErr: errors.New("send failed")},
 			code: codes.Internal,
 			want: "send failed",
 		},

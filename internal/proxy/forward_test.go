@@ -335,11 +335,13 @@ func TestStreamTreatsWrappedEOFAsHalfClose(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	ss := testutil.ServerStream{RecvErr: wrapped}
-	ss.Ctx = grpc.NewContextWithServerTransportStream(
-		t.Context(),
-		testutil.ServerTransportStream{FullMethodName: "/" + services.Reflection + "/ServerReflectionInfo"},
-	)
+	ss := testutil.ServerStream{
+		RecvErr: wrapped,
+		Ctx: grpc.NewContextWithServerTransportStream(
+			t.Context(),
+			testutil.ServerTransportStream{FullMethodName: "/" + services.Reflection + "/ServerReflectionInfo"},
+		),
+	}
 
 	require.NoError(t, fw.Handle(nil, ss))
 }
