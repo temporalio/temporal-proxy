@@ -1,6 +1,6 @@
 module github.com/temporalio/temporal-proxy/examples
 
-go 1.26.4
+go 1.27
 
 // The examples build against this working tree because pkg/api/kms/v1, which the
 // kms example serves, is not in a released tag yet. Outside this repository, drop

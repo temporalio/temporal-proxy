@@ -7,9 +7,9 @@ lockfile = true
 "github:mattn/goreman" = "latest"
 "github:temporalio/cli" = "latest"
 buf = "1.72"
-go = "1.26"
-golangci-lint = "2.12"
-goreleaser = "2.17"
+go = "1.27"
+golangci-lint = "2.13"
+goreleaser = "2.18"
 markdownlint-cli2 = "0.23"
 mkcert = "1.4"
 svu = "3.4"
@@ -161,10 +161,7 @@ run = "buf generate"
 
 [tasks.build]
 description = "Build binaries"
-run = [
-  { task = "build:examples" },
-  { task = "build:proxy" },
-]
+run = [{ task = "build:examples" }, { task = "build:proxy" }]
 
 [tasks."build:proxy"]
 description = "Build release binaries"

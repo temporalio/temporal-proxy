@@ -1,6 +1,8 @@
 package codec
 
 import (
+	"slices"
+
 	"go.temporal.io/api/common/v1"
 )
 
@@ -75,8 +77,8 @@ func (c Chain) Encode(payloads []*common.Payload) ([]*common.Payload, error) {
 // reverse order.
 func (c Chain) Decode(payloads []*common.Payload) ([]*common.Payload, error) {
 	var err error
-	for i := len(c.codecs) - 1; i >= 0; i-- {
-		if payloads, err = c.codecs[i].Decode(payloads); err != nil {
+	for _, v := range slices.Backward(c.codecs) {
+		if payloads, err = v.Decode(payloads); err != nil {
 			return nil, err
 		}
 	}
