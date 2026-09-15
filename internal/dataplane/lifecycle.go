@@ -52,6 +52,11 @@ func (d *Dataplane) Start(ctx context.Context) error {
 	d.addr = lis.Addr()
 	d.mu.Unlock()
 
+	// The liveness check dials this address, and only knows it now. Until it is
+	// set the check reports SERVING, so the wait for the upstreams above is never
+	// read as a wedge.
+	d.health.setAddr(lis.Addr())
+
 	d.serve("gateway", func() error { return d.gateway.Start(d.ctx, lis) })
 
 	return nil

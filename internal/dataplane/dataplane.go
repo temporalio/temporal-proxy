@@ -37,6 +37,7 @@ type (
 	Dataplane struct {
 		ctx       context.Context
 		gateway   *server.Server
+		health    *loopbackCheck
 		hostPort  string
 		upstreams []*upstreamTier
 		ready     []*connect.Conn
@@ -137,6 +138,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 
 	dp := &Dataplane{
 		ctx:      ctx,
+		health:   newLoopbackCheck(cfg, o.logger),
 		hostPort: cfg.Listen.HostPort,
 		abort:    o.abort,
 		logger:   o.logger,
@@ -184,6 +186,9 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		// Health entries come from the allowlist, so what the gateway reports a
 		// status for is exactly what it will forward.
 		server.WithHealthServices(o.allowlist.ServiceNames()...),
+		// Built before anything is bound, since the listener is created during
+		// Start; Start hands it the address then.
+		server.WithHealthCheck(dp.health),
 		server.WithStreamInterceptor(reps.server.StreamInterceptor()),
 		// Ahead of authentication: it resolves what the request is addressing, and
 		// an authenticator decides on that as well as on the caller's credentials.

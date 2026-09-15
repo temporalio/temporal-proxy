@@ -22,6 +22,7 @@ type (
 		Auth             *AuthConfig         `yaml:"auth"`
 		Encryption       Encryption          `yaml:"encryption"`
 		ExtensionServers ExtensionServerList `yaml:"extensionServers"`
+		Health           Health              `yaml:"health"`
 		Metrics          Metrics             `yaml:"metrics"`
 		Routing          Routing             `yaml:"routing"`
 		Upstreams        UpstreamList        `yaml:"upstreams"`
@@ -95,6 +96,7 @@ func (c *Config) Validate() error {
 		validation.Nested("", &c.AllowedServices),
 		validation.Nested("encryption", &c.Encryption),
 		validation.Nested("extensionServers", &c.ExtensionServers),
+		validation.Nested("health", &c.Health),
 		validation.Nested("metrics", &c.Metrics),
 		validation.Nested("routing", &c.Routing),
 		validation.WhenRules(func() bool { return c.Auth != nil }, validation.Nested("auth", c.Auth)),

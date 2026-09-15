@@ -335,6 +335,16 @@ func TestConfig_Validate(t *testing.T) {
 			wantTuples: [][2]string{{"encryption.default", "renewBefore"}},
 		},
 		{
+			name: "a health timeout that outlasts the interval surfaces with the health subject",
+			cfg: &config.Config{
+				Metrics:   defaultMetrics(),
+				Listen:    config.ListenConfig{HostPort: ":8080"},
+				Health:    config.Health{Interval: time.Second, Timeout: 2 * time.Second},
+				Upstreams: validUpstreams,
+			},
+			wantTuples: [][2]string{{"health", "timeout"}},
+		},
+		{
 			name: "templated upstream hostPort is accepted",
 			cfg: &config.Config{
 				Metrics: defaultMetrics(),
