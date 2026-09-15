@@ -66,3 +66,33 @@ func TestTargetFromIgnoresMetadata(t *testing.T) {
 	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs(meta.NamespaceHeader, "spoofed"))
 	require.Equal(t, meta.Target{}, meta.TargetFrom(ctx))
 }
+
+func TestWithVersionSetsTheHeader(t *testing.T) {
+	t.Parallel()
+
+	ctx := meta.WithVersion(t.Context(), "1.4.2")
+
+	md, _ := metadata.FromOutgoingContext(ctx)
+	require.Equal(t, []string{"1.4.2"}, md.Get(meta.VersionHeader))
+}
+
+func TestWithVersionReplacesAClientSuppliedValue(t *testing.T) {
+	t.Parallel()
+
+	// The forwarder relays the caller's inbound metadata onward, so a client
+	// sending the header itself must not reach the upstream alongside ours.
+	ctx := metadata.NewOutgoingContext(t.Context(), metadata.Pairs(meta.VersionHeader, "spoofed"))
+	ctx = meta.WithVersion(ctx, "1.4.2")
+
+	md, _ := metadata.FromOutgoingContext(ctx)
+	require.Equal(t, []string{"1.4.2"}, md.Get(meta.VersionHeader))
+}
+
+func TestWithVersionKeepsOtherMetadata(t *testing.T) {
+	t.Parallel()
+
+	ctx := meta.WithNamespace(t.Context(), "orders")
+	ctx = meta.WithVersion(ctx, "1.4.2")
+
+	require.Equal(t, "orders", meta.NamespaceFrom(ctx))
+}

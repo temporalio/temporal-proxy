@@ -16,9 +16,9 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X main.version={{.Version}}
-      - -X main.sha={{.Commit}}
-      - -X main.buildTime={{.Date}}
+      - -X github.com/temporalio/temporal-proxy/internal/version.Version={{.Version}}
+      - -X github.com/temporalio/temporal-proxy/internal/version.SHA={{.Commit}}
+      - -X github.com/temporalio/temporal-proxy/internal/version.BuildTime={{.Date}}
 
 archives:
   - id: default
