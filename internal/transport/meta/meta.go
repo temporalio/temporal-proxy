@@ -10,9 +10,15 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// NamespaceHeader is the outgoing metadata key that carries the local (pre-
-// translation) namespace from the router to the upstream proxy.
-const NamespaceHeader = "x-temporal-proxy-namespace"
+const (
+	// NamespaceHeader is the outgoing metadata key that carries the local (pre-
+	// translation) namespace from the router to the upstream proxy.
+	NamespaceHeader = "x-temporal-proxy-namespace"
+
+	// VersionHeader is the outgoing metadata key that carries the proxy's own
+	// build version to the upstream. Only a Temporal Cloud upstream is sent one.
+	VersionHeader = "x-temporal-proxy-version"
+)
 
 type (
 	// Target is what a request is addressing: the gRPC full method and the
@@ -49,6 +55,21 @@ func TargetFrom(ctx context.Context) Target {
 // replacing any value already present for NamespaceHeader (so a client cannot
 // influence routing by sending the header itself).
 func WithNamespace(ctx context.Context, namespace string) context.Context {
+	return withHeader(ctx, NamespaceHeader, namespace)
+}
+
+// WithVersion returns ctx with version set on its outgoing gRPC metadata for
+// VersionHeader. Like WithNamespace it replaces any value already there: the
+// forwarder relays the caller's own metadata onward, so a client sending the
+// header itself would otherwise reach the upstream alongside the real version.
+func WithVersion(ctx context.Context, version string) context.Context {
+	return withHeader(ctx, VersionHeader, version)
+}
+
+// withHeader returns ctx with key set to value on its outgoing gRPC metadata,
+// replacing any values already present for key. It copies the metadata rather
+// than writing through, since the map on ctx may be shared with other calls.
+func withHeader(ctx context.Context, key, value string) context.Context {
 	md, ok := metadata.FromOutgoingContext(ctx)
 	if !ok {
 		md = metadata.MD{}
@@ -56,7 +77,7 @@ func WithNamespace(ctx context.Context, namespace string) context.Context {
 		md = md.Copy()
 	}
 
-	md.Set(NamespaceHeader, namespace)
+	md.Set(key, value)
 	return metadata.NewOutgoingContext(ctx, md)
 }
 

@@ -4,31 +4,25 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/urfave/cli/v3"
-)
 
-// NB: These are set at build time by the CI/CD process.
-var (
-	buildTime string = time.Now().UTC().Format(time.RFC3339)
-	sha       string = "unknown"
-	version   string = "local"
+	"github.com/temporalio/temporal-proxy/internal/version"
 )
 
 func main() {
 	// nolint:errcheck // TODO: disable this for fmt calls in golangci.yaml
 	cli.VersionPrinter = func(cmd *cli.Command) {
 		fmt.Fprintln(cmd.Writer, cmd.Name, "-", cmd.Usage)
-		fmt.Fprintln(cmd.Writer, "Version:", version)
-		fmt.Fprintln(cmd.Writer, "Built At:", buildTime)
-		fmt.Fprintln(cmd.Writer, "Git SHA:", sha)
+		fmt.Fprintln(cmd.Writer, "Version:", version.Version)
+		fmt.Fprintln(cmd.Writer, "Built At:", version.BuildTime)
+		fmt.Fprintln(cmd.Writer, "Git SHA:", version.SHA)
 	}
 
 	app := &cli.Command{
 		Name:    "proxy",
 		Usage:   "The official Temporal proxy server",
-		Version: version,
+		Version: version.Version,
 		Commands: []*cli.Command{
 			serve(),
 		},

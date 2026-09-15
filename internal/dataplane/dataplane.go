@@ -25,6 +25,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/internal/transport/socket"
+	"github.com/temporalio/temporal-proxy/internal/version"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
@@ -338,11 +339,16 @@ func newUpstreamTier(
 	// namespace, so report one that cannot work there. Remote is identity when no
 	// rules are configured, which still catches a client sending a short name to
 	// an upstream that expects fully-qualified ones.
+	//
+	// Cloud is also told which proxy build the request came from, so a report of
+	// something the proxy does wrong can be tied to a release. No other upstream
+	// is sent it.
 	if up.IsCloud() {
 		dialOpts = append(dialOpts, proxy.CloudNamespaceDialOptions(
 			rules.Remote,
 			o.logger.With(tag.String("upstream", up.Name)),
 		)...)
+		dialOpts = append(dialOpts, proxy.VersionDialOptions(version.Version)...)
 	}
 
 	cp, err := outbound.CredentialProviderFor(up.Credentials)
@@ -473,6 +479,12 @@ func cloudAPIConn(cfg *config.Config, o *options, up *config.Upstream) (*transla
 
 	api := cfg.APITranslations.CloudAPI.Upstream(up)
 
+	// This connection terminates at Cloud too, and carries the proxy's version for
+	// the same reason the frontend upstream does. Nothing installs it here: the
+	// translation that is the only way to reach this connection is the innermost
+	// interceptor on the upstream chain above, so a call arrives having already
+	// passed the version interceptor there and travels on with the metadata it
+	// stamped. The end-to-end test holds that ordering in place.
 	var dialOpts []grpc.DialOption
 	cp, err := outbound.CredentialProviderFor(api.Credentials)
 	if err != nil {
