@@ -21,6 +21,74 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// Cipher names the AEAD that sealed encrypted_dek. A server that changes
+// cipher has to keep opening what the previous one sealed, and the only way
+// to know which to build is to have been told, so the choice travels with
+// the material rather than living in the server's configuration.
+//
+// Values from 128 up are reserved for ciphers a server registers itself and
+// will never be assigned here. A value this proxy does not recognize is
+// carried through rather than dropped, so material sealed by a newer server
+// survives a round trip through an older one.
+type KeyMaterial_Cipher int32
+
+const (
+	// CIPHER_UNSPECIFIED is no cipher. Material that reached a reader without
+	// one was framed by a server that does its own wrapping, and only that
+	// server knows how to open it.
+	KeyMaterial_CIPHER_UNSPECIFIED KeyMaterial_Cipher = 0
+	// CIPHER_AES_256_GCM is AES-256-GCM with a 12-byte nonce.
+	KeyMaterial_CIPHER_AES_256_GCM KeyMaterial_Cipher = 1
+	// CIPHER_CHACHA20_POLY1305 is ChaCha20-Poly1305 with a 12-byte nonce.
+	KeyMaterial_CIPHER_CHACHA20_POLY1305 KeyMaterial_Cipher = 2
+	// CIPHER_XCHACHA20_POLY1305 is XChaCha20-Poly1305 with a 24-byte nonce,
+	// wide enough that random nonces need no counting.
+	KeyMaterial_CIPHER_XCHACHA20_POLY1305 KeyMaterial_Cipher = 3
+)
+
+// Enum value maps for KeyMaterial_Cipher.
+var (
+	KeyMaterial_Cipher_name = map[int32]string{
+		0: "CIPHER_UNSPECIFIED",
+		1: "CIPHER_AES_256_GCM",
+		2: "CIPHER_CHACHA20_POLY1305",
+		3: "CIPHER_XCHACHA20_POLY1305",
+	}
+	KeyMaterial_Cipher_value = map[string]int32{
+		"CIPHER_UNSPECIFIED":        0,
+		"CIPHER_AES_256_GCM":        1,
+		"CIPHER_CHACHA20_POLY1305":  2,
+		"CIPHER_XCHACHA20_POLY1305": 3,
+	}
+)
+
+func (x KeyMaterial_Cipher) Enum() *KeyMaterial_Cipher {
+	p := new(KeyMaterial_Cipher)
+	*p = x
+	return p
+}
+
+func (x KeyMaterial_Cipher) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (KeyMaterial_Cipher) Descriptor() protoreflect.EnumDescriptor {
+	return file_api_ext_v1_key_material_proto_enumTypes[0].Descriptor()
+}
+
+func (KeyMaterial_Cipher) Type() protoreflect.EnumType {
+	return &file_api_ext_v1_key_material_proto_enumTypes[0]
+}
+
+func (x KeyMaterial_Cipher) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use KeyMaterial_Cipher.Descriptor instead.
+func (KeyMaterial_Cipher) EnumDescriptor() ([]byte, []int) {
+	return file_api_ext_v1_key_material_proto_rawDescGZIP(), []int{0, 0}
+}
+
 // KeyMaterial is an optional framing for the ciphertext an extension server
 // returns from Encrypt. Decrypt is handed nothing but that ciphertext, so
 // anything the server needs to find the wrapping key again has to travel inside
@@ -55,7 +123,15 @@ type KeyMaterial struct {
 	// more than version and namespace to find its key can put its own encoding
 	// here instead of replacing this framing wholesale. Whatever goes in owns its
 	// own compatibility, since the proxy cannot migrate what it cannot read.
-	Opaque        []byte `protobuf:"bytes,4,opt,name=opaque,proto3" json:"opaque,omitempty"`
+	Opaque []byte `protobuf:"bytes,4,opt,name=opaque,proto3" json:"opaque,omitempty"`
+	// nonce is the per-seal nonce the cipher required. It is in the clear because
+	// a nonce is not a secret, only single-use, and it has a field of its own
+	// rather than a corner of opaque so that opaque stays entirely the server's.
+	// Empty means the server carries its nonce some other way, or needs none.
+	Nonce []byte `protobuf:"bytes,5,opt,name=nonce,proto3" json:"nonce,omitempty"`
+	// cipher is the AEAD that sealed encrypted_dek. Empty means the server did
+	// its own wrapping and this framing cannot describe it.
+	Cipher        KeyMaterial_Cipher `protobuf:"varint,6,opt,name=cipher,proto3,enum=api.ext.v1.KeyMaterial_Cipher" json:"cipher,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -118,17 +194,38 @@ func (x *KeyMaterial) GetOpaque() []byte {
 	return nil
 }
 
+func (x *KeyMaterial) GetNonce() []byte {
+	if x != nil {
+		return x.Nonce
+	}
+	return nil
+}
+
+func (x *KeyMaterial) GetCipher() KeyMaterial_Cipher {
+	if x != nil {
+		return x.Cipher
+	}
+	return KeyMaterial_CIPHER_UNSPECIFIED
+}
+
 var File_api_ext_v1_key_material_proto protoreflect.FileDescriptor
 
 const file_api_ext_v1_key_material_proto_rawDesc = "" +
 	"\n" +
 	"\x1dapi/ext/v1/key_material.proto\x12\n" +
-	"api.ext.v1\"\x82\x01\n" +
+	"api.ext.v1\"\xc7\x02\n" +
 	"\vKeyMaterial\x12#\n" +
 	"\rencrypted_dek\x18\x01 \x01(\fR\fencryptedDek\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x1c\n" +
 	"\tnamespace\x18\x03 \x01(\tR\tnamespace\x12\x16\n" +
-	"\x06opaque\x18\x04 \x01(\fR\x06opaqueB\xa5\x01\n" +
+	"\x06opaque\x18\x04 \x01(\fR\x06opaque\x12\x14\n" +
+	"\x05nonce\x18\x05 \x01(\fR\x05nonce\x126\n" +
+	"\x06cipher\x18\x06 \x01(\x0e2\x1e.api.ext.v1.KeyMaterial.CipherR\x06cipher\"u\n" +
+	"\x06Cipher\x12\x16\n" +
+	"\x12CIPHER_UNSPECIFIED\x10\x00\x12\x16\n" +
+	"\x12CIPHER_AES_256_GCM\x10\x01\x12\x1c\n" +
+	"\x18CIPHER_CHACHA20_POLY1305\x10\x02\x12\x1d\n" +
+	"\x19CIPHER_XCHACHA20_POLY1305\x10\x03B\xa5\x01\n" +
 	"\x0ecom.api.ext.v1B\x10KeyMaterialProtoP\x01Z7github.com/temporalio/temporal-proxy/pkg/api/ext/v1;ext\xa2\x02\x03AEX\xaa\x02\n" +
 	"Api.Ext.V1\xca\x02\n" +
 	"Api\\Ext\\V1\xe2\x02\x16Api\\Ext\\V1\\GPBMetadata\xea\x02\fApi::Ext::V1b\x06proto3"
@@ -145,16 +242,19 @@ func file_api_ext_v1_key_material_proto_rawDescGZIP() []byte {
 	return file_api_ext_v1_key_material_proto_rawDescData
 }
 
+var file_api_ext_v1_key_material_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_api_ext_v1_key_material_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
 var file_api_ext_v1_key_material_proto_goTypes = []any{
-	(*KeyMaterial)(nil), // 0: api.ext.v1.KeyMaterial
+	(KeyMaterial_Cipher)(0), // 0: api.ext.v1.KeyMaterial.Cipher
+	(*KeyMaterial)(nil),     // 1: api.ext.v1.KeyMaterial
 }
 var file_api_ext_v1_key_material_proto_depIdxs = []int32{
-	0, // [0:0] is the sub-list for method output_type
-	0, // [0:0] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	0, // 0: api.ext.v1.KeyMaterial.cipher:type_name -> api.ext.v1.KeyMaterial.Cipher
+	1, // [1:1] is the sub-list for method output_type
+	1, // [1:1] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_api_ext_v1_key_material_proto_init() }
@@ -167,13 +267,14 @@ func file_api_ext_v1_key_material_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_ext_v1_key_material_proto_rawDesc), len(file_api_ext_v1_key_material_proto_rawDesc)),
-			NumEnums:      0,
+			NumEnums:      1,
 			NumMessages:   1,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_api_ext_v1_key_material_proto_goTypes,
 		DependencyIndexes: file_api_ext_v1_key_material_proto_depIdxs,
+		EnumInfos:         file_api_ext_v1_key_material_proto_enumTypes,
 		MessageInfos:      file_api_ext_v1_key_material_proto_msgTypes,
 	}.Build()
 	File_api_ext_v1_key_material_proto = out.File

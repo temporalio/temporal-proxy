@@ -25,6 +25,29 @@ option go_package = "github.com/temporalio/temporal-proxy/pkg/api/ext/v1;ext";
 // data regardless of the value (empty/nil/etc) should be included in payloads
 // and sent in full to the KMS service.
 message KeyMaterial {
+  // Cipher names the AEAD that sealed encrypted_dek. A server that changes
+  // cipher has to keep opening what the previous one sealed, and the only way
+  // to know which to build is to have been told, so the choice travels with
+  // the material rather than living in the server's configuration.
+  //
+  // Values from 128 up are reserved for ciphers a server registers itself and
+  // will never be assigned here. A value this proxy does not recognize is
+  // carried through rather than dropped, so material sealed by a newer server
+  // survives a round trip through an older one.
+  enum Cipher {
+    // CIPHER_UNSPECIFIED is no cipher. Material that reached a reader without
+    // one was framed by a server that does its own wrapping, and only that
+    // server knows how to open it.
+    CIPHER_UNSPECIFIED = 0;
+    // CIPHER_AES_256_GCM is AES-256-GCM with a 12-byte nonce.
+    CIPHER_AES_256_GCM = 1;
+    // CIPHER_CHACHA20_POLY1305 is ChaCha20-Poly1305 with a 12-byte nonce.
+    CIPHER_CHACHA20_POLY1305 = 2;
+    // CIPHER_XCHACHA20_POLY1305 is XChaCha20-Poly1305 with a 24-byte nonce,
+    // wide enough that random nonces need no counting.
+    CIPHER_XCHACHA20_POLY1305 = 3;
+  }
+
   // encrypted_dek is the wrapped DEK, as produced by whatever wrapping the
   // extension server performs. It is the one field that must be set.
   bytes encrypted_dek = 1;
@@ -44,4 +67,12 @@ message KeyMaterial {
   // here instead of replacing this framing wholesale. Whatever goes in owns its
   // own compatibility, since the proxy cannot migrate what it cannot read.
   bytes opaque = 4;
+  // nonce is the per-seal nonce the cipher required. It is in the clear because
+  // a nonce is not a secret, only single-use, and it has a field of its own
+  // rather than a corner of opaque so that opaque stays entirely the server's.
+  // Empty means the server carries its nonce some other way, or needs none.
+  bytes nonce = 5;
+  // cipher is the AEAD that sealed encrypted_dek. Empty means the server did
+  // its own wrapping and this framing cannot describe it.
+  Cipher cipher = 6;
 }

@@ -7,14 +7,15 @@
 // KMS_MASTER_SECRET is the secret every namespace's wrapping key is derived
 // from. Both are required.
 //
-// Only the provider itself lives here, in keyring.go, which derives one
-// AES-256-GCM key per version and namespace from the master secret and returns
-// the wrapped DEK as api.ext.v1.KeyMaterial. The gRPC surface and the bearer
-// token check come from [github.com/temporalio/temporal-proxy/pkg/ext]:
-// keyring's Wrap and Unwrap satisfy [ext.KMS], and [ext.Serve] registers them,
+// Only the provider itself lives here, in keyring.go, and it is one method:
+// answer which key a request names, deriving it and reporting its version.
+// Everything else comes from
+// [github.com/temporalio/temporal-proxy/pkg/ext]. [ext.NewKeyWrapper] turns
+// that into an [ext.KMS], sealing DEKs with AES-256-GCM and framing them as
+// api.ext.v1.KeyMaterial, and [ext.Serve] registers it, checks the bearer token,
 // serves TLS, and shuts down on a signal. That split is the point of the
-// example. The interesting part of writing one of these is the key handling,
-// not the server around it.
+// example. The interesting part of writing one of these is where the keys come
+// from, not the cryptography around them.
 //
 // This is enough to show the shape of the contract and it is not a key manager:
 // the master secret sits in an environment variable, nothing is rotated, and
@@ -52,6 +53,11 @@ func main() {
 		log.Fatal("Failed to build keyring", tag.Error(err))
 	}
 
+	kms, err := ext.NewKeyWrapper(keys.Key)
+	if err != nil {
+		log.Fatal("Failed to build key wrapper", tag.Error(err))
+	}
+
 	cert, err := tls.LoadX509KeyPair(*certFile, *keyFile)
 	if err != nil {
 		log.Fatal("Failed to load key pair (generate one with: go run ./gencerts)", tag.Error(err))
@@ -70,7 +76,7 @@ func main() {
 		ext.WithServerAuth("authorization", func(token string) bool {
 			return subtle.ConstantTimeCompare([]byte(token), expToken) == 1
 		}),
-		ext.WithKMS(keys),
+		ext.WithKMS(kms),
 		ext.WithLogger(log),
 		ext.WithServerOption(grpc.Creds(creds)),
 	); err != nil {
