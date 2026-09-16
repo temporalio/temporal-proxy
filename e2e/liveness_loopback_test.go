@@ -78,31 +78,6 @@ func TestEndToEndLivenessFlipsWhenTheStreamChainWedges(t *testing.T) {
 	}, 5*time.Second, 50*time.Millisecond, "the status must recover once the chain answers again")
 }
 
-// TestEndToEndLivenessDisabledKeepsReportingServing covers what turning the
-// check off restores: the health service stays registered and reports SERVING
-// on the configured cadence, so a probe pointed at it goes on working, and a
-// wedged gateway is invisible to it again.
-func TestEndToEndLivenessDisabledKeepsReportingServing(t *testing.T) {
-	t.Parallel()
-
-	cfg := dataplanetest.Config(dataplanetest.NewUpstream(t))
-	cfg.Health = config.Health{
-		Enabled:  new(false),
-		Interval: 100 * time.Millisecond,
-		Timeout:  50 * time.Millisecond,
-	}
-
-	blocker := &wedge{}
-	blocker.armed.Store(true)
-
-	f := dataplanetest.Start(t, cfg, dataplanetest.WithAuth(blocker))
-	status := servingStatus(t, f)
-
-	require.Never(t, func() bool {
-		return status() != grpc_health_v1.HealthCheckResponse_SERVING
-	}, 500*time.Millisecond, 50*time.Millisecond)
-}
-
 // servingStatus reads the gateway's process-wide serving status the way a
 // Kubernetes grpc probe does, with the unary Check the health service answers
 // without consulting the interceptor chain.

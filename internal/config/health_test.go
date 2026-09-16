@@ -18,35 +18,24 @@ func TestHealth_Defaults(t *testing.T) {
 	tests := []struct {
 		name         string
 		yaml         string
-		wantEnabled  bool
 		wantInterval time.Duration
 		wantTimeout  time.Duration
 	}{
 		{
-			name:         "absent health block runs the check with both defaults",
+			name:         "absent health block takes both defaults",
 			yaml:         "hostPort: :8080\n",
-			wantEnabled:  true,
-			wantInterval: 30 * time.Second,
-			wantTimeout:  5 * time.Second,
-		},
-		{
-			name:         "an explicit false disables the check",
-			yaml:         "health:\n  enabled: false\n",
-			wantEnabled:  false,
 			wantInterval: 30 * time.Second,
 			wantTimeout:  5 * time.Second,
 		},
 		{
 			name:         "explicit values are preserved",
-			yaml:         "health:\n  enabled: true\n  interval: 10s\n  timeout: 2s\n",
-			wantEnabled:  true,
+			yaml:         "health:\n  interval: 10s\n  timeout: 2s\n",
 			wantInterval: 10 * time.Second,
 			wantTimeout:  2 * time.Second,
 		},
 		{
 			name:         "each duration defaults on its own",
 			yaml:         "health:\n  interval: 10s\n",
-			wantEnabled:  true,
 			wantInterval: 10 * time.Second,
 			wantTimeout:  5 * time.Second,
 		},
@@ -58,7 +47,6 @@ func TestHealth_Defaults(t *testing.T) {
 
 			cfg, err := config.Load(strings.NewReader(tt.yaml))
 			require.NoError(t, err)
-			require.Equal(t, tt.wantEnabled, cfg.Health.CheckEnabled())
 			require.Equal(t, tt.wantInterval, cfg.Health.CheckInterval())
 			require.Equal(t, tt.wantTimeout, cfg.Health.CheckTimeout())
 		})
@@ -104,10 +92,8 @@ func TestHealth_Validate(t *testing.T) {
 			},
 		},
 		{
-			// The defaults are themselves a valid pair, so a block that disables the
-			// check is never rejected for durations nothing will read.
-			name: "a disabled check is still validated",
-			cfg:  config.Health{Enabled: new(false), Interval: time.Second, Timeout: 2 * time.Second},
+			name: "a timeout at or above the interval is rejected",
+			cfg:  config.Health{Interval: time.Second, Timeout: 2 * time.Second},
 			wantErrs: []validation.Error{
 				{Field: "timeout", Message: "not less than 1s"},
 			},

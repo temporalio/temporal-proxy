@@ -186,6 +186,14 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		// Health entries come from the allowlist, so what the gateway reports a
 		// status for is exactly what it will forward.
 		server.WithHealthServices(o.allowlist.ServiceNames()...),
+		// The entries above are what a status is reported under; this is what
+		// decides the status they all carry. runHealthCheck writes one value
+		// across every entry, and until now that value came from a stub that
+		// returned SERVING unconditionally, making the health service a
+		// heartbeat for grpc-go's transport. This replaces the stub with a check
+		// that calls the gateway's own Health/Watch, so the value reflects
+		// whether a request can still travel the stream interceptor chain.
+		//
 		// Built before anything is bound, since the listener is created during
 		// Start; Start hands it the address then.
 		server.WithHealthCheck(dp.health),

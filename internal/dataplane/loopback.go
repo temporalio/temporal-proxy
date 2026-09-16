@@ -40,11 +40,6 @@ type (
 		creds    credentials.TransportCredentials
 		logger   logger.Logger
 
-		// watch runs one exchange against the address given. It is a field so a
-		// test can map an outcome to a status without a listener; production sets
-		// watchOnce.
-		watch func(ctx context.Context, target string) error
-
 		// mu guards addr, which Start writes once the listener binds while the
 		// health loop reads it from its own goroutine.
 		mu   sync.Mutex
@@ -62,6 +57,14 @@ type (
 // generally will not carry the client usage a handshake would need, so dialling
 // anyway would report a wedge on every interval that was only ever the check's
 // own configuration.
+//
+// Such a gateway cannot be probed over gRPC at all, for the same reason rather
+// than a different one: a kubelet's grpc probe dials plaintext and has no
+// certificate to present either. It is probed with tcpSocket, which reports
+// whether the listener accepts, or with an exec probe running grpc-health-probe
+// with the client material mounted, which is the only option that reaches the
+// health service. The check reporting SERVING leaves either of those free to be
+// the signal, rather than competing with them.
 func newLoopbackCheck(cfg *config.Config, log logger.Logger) *loopbackCheck {
 	if log == nil {
 		log = logger.Default()
@@ -70,13 +73,12 @@ func newLoopbackCheck(cfg *config.Config, log logger.Logger) *loopbackCheck {
 	c := &loopbackCheck{
 		interval: cfg.Health.CheckInterval(),
 		timeout:  cfg.Health.CheckTimeout(),
-		enabled:  cfg.Health.CheckEnabled(),
+		enabled:  true,
 		creds:    loopbackCredentials(&cfg.Listen),
 		logger:   log,
 	}
-	c.watch = c.watchOnce
 
-	if c.enabled && mutualTLS(&cfg.Listen) {
+	if mutualTLS(&cfg.Listen) {
 		c.enabled = false
 		c.logger.Info(
 			"The gateway requires client certificates, so the liveness check reports SERVING without dialling it",
@@ -118,21 +120,18 @@ func (c *loopbackCheck) Status(ctx context.Context) grpc_health_v1.HealthCheckRe
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	err := c.watch(ctx, addr)
-	if err == nil {
-		return grpc_health_v1.HealthCheckResponse_SERVING
-	}
+	err := c.probe(ctx, addr)
 
-	if answered(err) {
+	switch {
+	case err == nil:
+	case answered(err):
 		c.logger.Debug("The liveness check was answered with an error, which still proves the request path is live",
 			tag.Error(err))
-
-		return grpc_health_v1.HealthCheckResponse_SERVING
+	default:
+		c.logger.Warn("The gateway did not answer its own liveness check", tag.Error(err))
 	}
 
-	c.logger.Warn("The gateway did not answer its own liveness check", tag.Error(err))
-
-	return grpc_health_v1.HealthCheckResponse_NOT_SERVING
+	return statusFor(err)
 }
 
 // setAddr hands the check the address the gateway is accepting on, which Start
@@ -156,26 +155,38 @@ func (c *loopbackCheck) target() string {
 	return c.addr.String()
 }
 
-// watchOnce opens a Watch stream against target, reads one message, and returns
-// what the exchange ended with.
+// probe dials target and runs one exchange against it. Dialling is the only
+// thing it adds over watchOnce, which is what keeps watchOnce drivable from a
+// test with no listener.
 //
-// The stream is cancelled as soon as that message arrives: health.Server
-// registers a watcher per Watch stream, so one left open would leak an entry
-// every interval. The connection is built and closed per run for the same
-// reason, since a check runs every 30 seconds by default and one handshake on
-// the loopback costs far less than a connection to keep correct across the
-// gateway's whole lifetime.
-func (c *loopbackCheck) watchOnce(ctx context.Context, target string) error {
+// The connection is built and closed per run rather than held open. A check
+// runs every 30 seconds by default, and one handshake on the loopback costs far
+// less than a connection to keep correct across the gateway's whole lifetime;
+// dialling afresh also covers the accept path, which a reused connection would
+// skip, so a gateway that had stopped accepting would otherwise go unnoticed.
+func (c *loopbackCheck) probe(ctx context.Context, target string) error {
 	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(c.creds))
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
 
+	return watchOnce(ctx, grpc_health_v1.NewHealthClient(conn))
+}
+
+// watchOnce opens a Watch stream, reads one message, and returns what the
+// exchange ended with.
+//
+// The stream is cancelled as soon as that message arrives: health.Server
+// registers a watcher per Watch stream, so one left open would leak an entry
+// every interval. It takes the client rather than an address so a test can
+// drive it with a fake and assert that cancellation, which is otherwise
+// unobservable from outside the process.
+func watchOnce(ctx context.Context, client grpc_health_v1.HealthClient) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	stream, err := grpc_health_v1.NewHealthClient(conn).Watch(ctx, &grpc_health_v1.HealthCheckRequest{})
+	stream, err := client.Watch(ctx, &grpc_health_v1.HealthCheckRequest{})
 	if err != nil {
 		return err
 	}
@@ -183,6 +194,18 @@ func (c *loopbackCheck) watchOnce(ctx context.Context, target string) error {
 	_, err = stream.Recv()
 
 	return err
+}
+
+// statusFor maps what an exchange ended with onto a serving status. Any answer,
+// including a rejection, means the chain ran end to end: that is what keeps the
+// check free of credentials, since it never needs to authenticate, only to be
+// answered. Silence is the failure.
+func statusFor(err error) grpc_health_v1.HealthCheckResponse_ServingStatus {
+	if err == nil || answered(err) {
+		return grpc_health_v1.HealthCheckResponse_SERVING
+	}
+
+	return grpc_health_v1.HealthCheckResponse_NOT_SERVING
 }
 
 // answered reports whether err is an answer from the gateway rather than a
