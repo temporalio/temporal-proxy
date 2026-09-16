@@ -66,6 +66,15 @@ func TestLoad_MetricsDefaults(t *testing.T) {
 			want: config.Metrics{HostPort: ":9090", Namespace: "acme"},
 		},
 		{
+			name: "namespace labels are read from yaml",
+			yaml: "metrics:\n  namespaceLabels: true\n",
+			want: config.Metrics{
+				HostPort:        ":9090",
+				Namespace:       "tmprl_proxy",
+				NamespaceLabels: true,
+			},
+		},
+		{
 			// cmp.Or cannot tell an explicit empty string from an absent key, so
 			// writing "" is not a way to opt out of the default.
 			name: "explicit empty strings still default",

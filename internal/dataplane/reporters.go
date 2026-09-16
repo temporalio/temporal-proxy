@@ -54,7 +54,7 @@ func newReporters(f *metrics.Factory, c *config.Config, encryption bool) (r *rep
 	}
 
 	if encryption {
-		out.encryption = proxy.NewReporter(f.ForSubsystem("encryption"))
+		out.encryption = proxy.NewReporter(f.ForSubsystem("encryption"), c.Metrics.NamespaceLabels)
 	}
 
 	return out, nil

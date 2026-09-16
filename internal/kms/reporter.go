@@ -61,17 +61,17 @@ func NewReporter(f *metrics.Factory) *Reporter {
 	}, []string{"provider", "operation", "result"})
 
 	kekOpDur := f.NewHistogram(prometheus.HistogramOpts{
-		Name: "kek_ops_duration_secs",
+		Name: "kek_ops_duration_seconds",
 		Help: "Duration of KEK operations in seconds, labeled by provider and operation.",
 	}, []string{"provider", "operation"})
 
 	dekOpDur := f.NewHistogram(prometheus.HistogramOpts{
-		Name: "dek_ops_duration_secs",
+		Name: "dek_ops_duration_seconds",
 		Help: "Duration of the AES-256-GCM step alone in seconds, excluding any KEK wrap or unwrap, labeled by operation.",
 		// Explicit buckets because the Prometheus defaults start at 5ms, which
 		// would put nearly every observation in the first bucket: this measures
 		// symmetric encryption of a payload, not a KMS round trip. Spans 10us to
-		// 41ms. kek_ops_duration_secs keeps the defaults for the opposite reason.
+		// 41ms. kek_ops_duration_seconds keeps the defaults for the opposite reason.
 		Buckets: prometheus.ExponentialBuckets(0.00001, 4, 7),
 	}, []string{"operation"})
 
@@ -173,7 +173,7 @@ func (r *Reporter) Observe(e crypto.Event) {
 //
 // Total and Namespace are deliberately unused. internal/proxy already records
 // the end-to-end duration and operation counts, labeled by namespace, around
-// its own Seal and Open calls as vault_ops_duration_secs and vault_ops_total;
+// its own Seal and Open calls as vault_ops_duration_seconds and vault_ops_total;
 // recording them here would duplicate those series and collide with them on
 // the shared "encryption" subsystem. Err is likewise unused here for a
 // reason, not an oversight: the envelope result already lives on
@@ -235,7 +235,7 @@ func (r *Reporter) countDEKOp(op, result string) {
 	r.dekOps.WithLabelValues(op, result).Inc()
 }
 
-// observeDEKDur records seconds against dek_ops_duration_secs for op, using
+// observeDEKDur records seconds against dek_ops_duration_seconds for op, using
 // the pre-resolved handle when op is one of the two expected operations and
 // falling back to WithLabelValues otherwise.
 func (r *Reporter) observeDEKDur(op string, seconds float64) {
