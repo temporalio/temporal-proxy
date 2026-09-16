@@ -22,11 +22,6 @@ const (
 // Interval is how often it runs and Timeout bounds one run; both are optional,
 // and see [Health.CheckInterval] and [Health.CheckTimeout] for what an absent
 // one means.
-//
-// There is no switch to turn the check off. The health service is registered
-// either way, and whether the check's answer has any consequence is already an
-// operator's decision: it only matters to a probe pointed at the service, so not
-// configuring that probe is the off switch.
 type Health struct {
 	Interval time.Duration `yaml:"interval"`
 	Timeout  time.Duration `yaml:"timeout"`
