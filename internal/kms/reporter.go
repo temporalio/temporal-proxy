@@ -1,6 +1,9 @@
 package kms
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/temporalio/temporal-proxy/internal/metrics"
@@ -54,7 +57,30 @@ type (
 // NewReporter builds the Prometheus-backed encryption Reporter, pre-resolving
 // the meaningful KEK label combinations so every series starts at zero. f must
 // already be scoped to the "encryption" subsystem by the caller.
-func NewReporter(f *metrics.Factory) *Reporter {
+//
+// Prometheus panics rather than erring on a collector it will not accept, so
+// recover and return an error: a configured fixed label can name one of these
+// series' own labels, and config cannot refuse that without knowing every
+// collector's label set.
+func NewReporter(f *metrics.Factory) (rep *Reporter, err error) {
+	defer func() {
+		rec := recover()
+		if rec == nil {
+			return
+		}
+
+		cause, ok := rec.(error)
+		if !ok {
+			cause = errors.New(fmt.Sprint(rec))
+		}
+
+		rep, err = nil, fmt.Errorf(
+			"kms: registering metrics panicked, is another reporter using this registry, "+
+				"or a configured metrics.labels entry colliding with a collector's own "+
+				"label: %w", cause,
+		)
+	}()
+
 	kekOps := f.NewCounter(prometheus.CounterOpts{
 		Name: "kek_ops_total",
 		Help: "Total KEK operations (DEK wrap/unwrap), labeled by provider, operation, and result.",
@@ -133,7 +159,7 @@ func NewReporter(f *metrics.Factory) *Reporter {
 		r.dekRotationHandle[reason] = dekRotations.WithLabelValues(reason)
 	}
 
-	return r
+	return r, nil
 }
 
 // KEKOp records a single KEK operation and its duration.

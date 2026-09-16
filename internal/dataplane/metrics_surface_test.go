@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/dataplane"
@@ -29,6 +30,34 @@ var wantSurface = map[string][]string{
 	"tmprl_proxy_encryption_vault_ops_duration_seconds": {"namespace", "operation"},
 }
 
+// wantMetadataSurface is the same contract for a dataplane running one metadata
+// label. It reshapes the published series rather than adding series of its own,
+// so the shape an operator with one configured reads off /metrics is a contract
+// too. Spelled out rather than derived from wantSurface, so a mistake
+// in the derivation cannot hide one in the surface.
+// wantFixedSurface is the contract for a dataplane running one fixed label. It
+// reshapes every request-scoped series, the same way a metadata label does; that
+// it also reshapes the KEK and DEK series, which these reporters do not build,
+// is pinned end to end instead. Spelled out rather than derived from wantSurface
+// for the same reason as above.
+var wantFixedSurface = map[string][]string{
+	"tmprl_proxy_router_decisions_total":                {"outcome", "region", "upstream"},
+	"tmprl_proxy_router_forwarding_errors_total":        {"reason", "region", "upstream"},
+	"tmprl_proxy_server_requests_total":                 {"code", "method", "region"},
+	"tmprl_proxy_server_request_duration_seconds":       {"method", "region"},
+	"tmprl_proxy_encryption_vault_ops_total":            {"namespace", "operation", "region", "result"},
+	"tmprl_proxy_encryption_vault_ops_duration_seconds": {"namespace", "operation", "region"},
+}
+
+var wantMetadataSurface = map[string][]string{
+	"tmprl_proxy_router_decisions_total":                {"outcome", "tenant", "upstream"},
+	"tmprl_proxy_router_forwarding_errors_total":        {"reason", "tenant", "upstream"},
+	"tmprl_proxy_server_requests_total":                 {"code", "method", "tenant"},
+	"tmprl_proxy_server_request_duration_seconds":       {"method", "tenant"},
+	"tmprl_proxy_encryption_vault_ops_total":            {"namespace", "operation", "result", "tenant"},
+	"tmprl_proxy_encryption_vault_ops_duration_seconds": {"namespace", "operation", "tenant"},
+}
+
 func TestReportersMetricSurface(t *testing.T) {
 	t.Parallel()
 
@@ -46,33 +75,77 @@ func TestReportersMetricSurface(t *testing.T) {
 			t.Parallel()
 
 			reg := prometheus.NewRegistry()
-			driveReporters(t, reg, tt.namespaceLabels)
+			driveReporters(t, reg, config.Metrics{
+				Labels: config.MetricLabels{Namespace: tt.namespaceLabels},
+			}, nil)
 
 			// The label set is declared the same way either way; only the
 			// namespace value changes, so dashboards keep the same shape.
 			require.Equal(t, wantSurface, surfaceOf(t, reg))
-			require.Equal(t, tt.wantNamespace, namespaceValueOf(t, reg, "tmprl_proxy_encryption_vault_ops_total"))
+			require.Equal(
+				t,
+				tt.wantNamespace,
+				labelValueOf(t, reg, "tmprl_proxy_encryption_vault_ops_total", "namespace"),
+			)
 		})
 	}
 }
 
-// driveReporters wires a full set of reporters over reg and records one
-// observation on each, since a Vec child only appears once observed.
-func driveReporters(t *testing.T, reg *prometheus.Registry, namespaceLabels bool) {
+func TestReportersMetricSurfaceWithMetadataLabels(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	driveReporters(t, reg, config.Metrics{
+		Labels: config.MetricLabels{
+			Namespace: true,
+			Metadata:  []config.MetricLabel{{Header: "X-Tenant", Name: "tenant"}},
+		},
+	}, metadata.Pairs("x-tenant", "acme"))
+
+	require.Equal(t, wantMetadataSurface, surfaceOf(t, reg))
+
+	// Both hops, because they read the value from different places: the gateway
+	// reads what it received, and vault_ops reads what the gateway forwarded.
+	require.Equal(t, "acme", labelValueOf(t, reg, "tmprl_proxy_server_requests_total", "tenant"))
+	require.Equal(t, "acme", labelValueOf(t, reg, "tmprl_proxy_encryption_vault_ops_total", "tenant"))
+}
+
+func TestReportersMetricSurfaceWithFixedLabels(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	driveReporters(t, reg, config.Metrics{
+		Labels: config.MetricLabels{Fixed: map[string]string{"region": "us-west-2"}},
+	}, nil)
+
+	require.Equal(t, wantFixedSurface, surfaceOf(t, reg))
+	require.Equal(
+		t,
+		"us-west-2",
+		labelValueOf(t, reg, "tmprl_proxy_server_requests_total", "region"),
+	)
+}
+
+// driveReporters wires a full set of reporters for m over reg and records one
+// observation on each, since a Vec child only appears once observed. md is the
+// request metadata every observation is recorded under, and may be nil: a
+// metadata label reads its value from the incoming metadata, so that is the
+// only way one reaches a reporter.
+func driveReporters(t *testing.T, reg *prometheus.Registry, m config.Metrics, md metadata.MD) {
 	t.Helper()
 
-	cfg := &config.Config{
-		Metrics:   config.Metrics{NamespaceLabels: namespaceLabels},
-		Upstreams: config.UpstreamList{{Name: "cloud"}},
-	}
+	cfg := &config.Config{Metrics: m, Upstreams: config.UpstreamList{{Name: "cloud"}}}
 
-	reps, err := dataplane.NewReporters(metrics.New("tmprl_proxy", promauto.With(reg)), cfg, true)
+	f := metrics.New("tmprl_proxy", promauto.With(metrics.WithFixedLabels(reg, m.Labels.Fixed)))
+	reps, err := dataplane.NewReporters(f, cfg, true)
 	require.NoError(t, err)
 
-	reps.Router.Decision("cloud", router.OutcomeMatch)
-	reps.Router.ForwardingError("cloud", "no_connection")
-	reps.Server.Observe("/svc/Method", codes.OK, time.Millisecond)
-	reps.Encryption.VaultOp("encrypt", "success", "ns1", 0.01)
+	ctx := metadata.NewIncomingContext(t.Context(), md)
+
+	reps.Router.Decision(ctx, "cloud", router.OutcomeMatch)
+	reps.Router.ForwardingError(ctx, "cloud", "no_connection")
+	reps.Server.Observe(ctx, "/svc/Method", codes.OK, time.Millisecond)
+	reps.Encryption.VaultOp(ctx, "encrypt", "success", "ns1", 0.01)
 }
 
 // surfaceOf maps every gathered metric family to its sorted label names.
@@ -98,9 +171,9 @@ func surfaceOf(t *testing.T, reg *prometheus.Registry) map[string][]string {
 	return out
 }
 
-// namespaceValueOf returns the namespace label value on the first series of
-// the named family.
-func namespaceValueOf(t *testing.T, reg *prometheus.Registry, name string) string {
+// labelValueOf returns the value of the named label on the first series of the
+// named family, failing the test when either is absent.
+func labelValueOf(t *testing.T, reg *prometheus.Registry, name, label string) string {
 	t.Helper()
 
 	mfs, err := reg.Gather()
@@ -112,12 +185,12 @@ func namespaceValueOf(t *testing.T, reg *prometheus.Registry, name string) strin
 		}
 
 		for _, l := range mf.GetMetric()[0].GetLabel() {
-			if l.GetName() == "namespace" {
+			if l.GetName() == label {
 				return l.GetValue()
 			}
 		}
 
-		t.Fatalf("%s has no namespace label", name)
+		t.Fatalf("%s has no %s label", name, label)
 	}
 
 	t.Fatalf("no series named %s was gathered", name)

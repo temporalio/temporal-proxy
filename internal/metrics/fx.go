@@ -18,7 +18,10 @@ import (
 
 // Module provides a namespaced [Factory] bound to the injected Prometheus
 // registry and serves the registry at /metrics on the address the injected
-// config names. Consumers inject the [Factory] to declare their collectors,
+// config names. Any configured fixed labels are stamped onto the Factory's
+// registerer rather than onto each collector, so every collector declared
+// through it carries them and the runtime's own go_* and process_* series,
+// which register directly, do not. Consumers inject the [Factory] to declare their collectors,
 // which auto-register under the configured namespace, and should pre-resolve
 // labeled handles once at setup rather than per request to keep the emit path
 // lock-free and allocation-free.
@@ -29,7 +32,10 @@ import (
 // down with a non-zero exit code.
 var Module = fx.Options(
 	fx.Provide(func(p MetricsParams) *Factory {
-		return New(p.Config.Metrics.Namespace, promauto.With(p.Registerer))
+		return New(
+			p.Config.Metrics.Namespace,
+			promauto.With(WithFixedLabels(p.Registerer, p.Config.Metrics.Labels.Fixed)),
+		)
 	}),
 	fx.Invoke(func(p MetricsParams) error {
 		if p.Config.Metrics.HostPort == "" {

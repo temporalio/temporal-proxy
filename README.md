@@ -58,8 +58,8 @@ reaches a different upstream with no change to the Worker.
 
 - **Rule-based routing.** Route requests to different upstreams by Namespace and/or request metadata, with a system
   upstream for Namespace-less calls and a default fallback.
-- **Service allowlist.** Forward only the gRPC services you name, defaulting to `WorkflowService` and
-  `OperatorService`. Server reflection is opt-in, and a service you leave out is never forwarded.
+- **Service allowlist.** Forward only the gRPC services you name, defaulting to `WorkflowService` and `OperatorService`.
+  Server reflection is opt-in, and a service you leave out is never forwarded.
 - **Namespace translation.** Rewrite local Namespace names to the names an upstream expects (prefix, suffix, or explicit
   overrides) in both requests and responses.
 - **TLS termination and outbound credentials.** Terminate inbound TLS/mTLS and attach the upstream's own TLS and
@@ -76,7 +76,8 @@ reaches a different upstream with no change to the Worker.
   so it can decide per Namespace and per method rather than only whether the caller is who it says it is.
 - **Prometheus metrics.** Expose request latency and counts, routing decisions, and payload sealing and opening on
   `/metrics`. The listen address and the metric prefix stamped onto every metric name are set under `metrics:` in the
-  config.
+  config, along with the labels every series carries: constants such as the region the proxy runs in, and request
+  metadata carried onto the request-scoped series, so they can be sliced by a dimension only your callers know.
 - **Codec-transparent.** The gateway never parses payloads. It peeks the Namespace, picks an upstream, and relays raw
   frames in both directions.
 - **Multiple deployment options.** Ship as a Go binary, a container image, or a Helm chart.
@@ -168,16 +169,22 @@ history but not start a Workflow.
 The proxy serves Prometheus metrics on `/metrics`. Everything under `metrics:` in the config controls the endpoint and
 how series are labeled:
 
-| Key               | Default       | Meaning                                                                                     |
-| ----------------- | ------------- | ------------------------------------------------------------------------------------------- |
-| `hostPort`        | `:9090`       | Address the `/metrics` handler listens on.                                                  |
-| `namespace`       | `tmprl_proxy` | The metric prefix stamped onto every metric name. Unrelated to a Temporal Namespace.        |
-| `namespaceLabels` | `false`       | Whether series that can name a Temporal Namespace report it.                                |
+| Key                | Default       | Meaning                                                                              |
+| ------------------ | ------------- | ------------------------------------------------------------------------------------ |
+| `hostPort`         | `:9090`       | Address the `/metrics` handler listens on.                                           |
+| `namespace`        | `tmprl_proxy` | The metric prefix stamped onto every metric name. Unrelated to a Temporal Namespace. |
+| `labels.namespace` | `false`       | Whether series that can name a Temporal Namespace report it.                         |
+| `labels.fixed`     | none          | Constant labels stamped on every series, written as a name-to-value map.             |
+| `labels.metadata`  | none          | Request metadata to report as extra labels, each written `<header>:<name>`.          |
 
 ### Published series
 
 Every name below is prefixed with the metric prefix and its subsystem, so `requests_total` in the `server` subsystem is
-exposed as `tmprl_proxy_server_requests_total` by default.
+exposed as `tmprl_proxy_server_requests_total` by default. Each configured metadata label is added to the series
+emitted while serving a request: the `server` and `router` series, and `vault_ops`. The KEK and DEK series do not
+carry them, because they are emitted off the request path where no metadata is in scope to read. A fixed label is
+added to every series in the table, and to nothing registered outside the proxy's own collectors, so the runtime's
+`go_*` and `process_*` series stay as they are.
 
 | Subsystem    | Metric                       | Type      | Labels                             |
 | ------------ | ---------------------------- | --------- | ---------------------------------- |
@@ -205,11 +212,23 @@ value as the label not being there, so turning it on leaves the shape of a query
 
 `namespace` is the local Namespace the Client asked for, before any Namespace translation, which is the same name you
 write under `encryption.overrides`. Two proxies fronting different Temporal Services can therefore both report a
-Namespace called `default`, so a shared Prometheus needs a label from the scrape job to tell those series apart.
+Namespace called `default`, so a shared Prometheus needs something else to tell those series apart: a `labels.fixed`
+entry, or a label from the scrape job.
 
-`namespaceLabels` is off by default because the label is unbounded: the value comes from the request, so every distinct
-Namespace a Client names becomes another series. Turn it on when you know that set is small. `method` is bounded the
-same way, only for trusted callers, which is why the gateway should not be exposed directly to untrusted Clients.
+`labels.namespace` is off by default because the label is unbounded: the value comes from the request, so every
+distinct Namespace a Client names becomes another series. Turn it on when you know that set is small. `method` is
+bounded the same way, only for trusted callers, which is why the gateway should not be exposed directly to untrusted
+Clients.
+
+A `labels.metadata` entry is unbounded for the same reason, and it multiplies every request-scoped series rather than
+adding to them, so name a header whose values you know. Two things to know before naming one: `/metrics` is served
+unauthenticated, so a header carrying a credential publishes it, and a name that collides with a label a series
+already declares fails at startup with a message naming the collision.
+
+A `labels.fixed` entry costs no cardinality, since its value never varies, which is what makes it the right place for
+a per-installation fact like a region, a zone, or a cluster name. It is also the only shape that reaches the KEK and
+DEK series. The same collision rule applies, and one more: a name a `labels.metadata` entry already reports under is
+refused, because Prometheus rejects a collector whose constant labels clash with its variable ones.
 
 ### Stability
 

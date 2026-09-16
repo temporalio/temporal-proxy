@@ -144,31 +144,85 @@ func TestNewRejectsConfiguredKeysWithoutVault(t *testing.T) {
 		})
 	}
 }
+
+func TestNewRejectsAMetadataLabelCollidingWithACollectorsOwn(t *testing.T) {
+	t.Parallel()
+
+	// A metadata label claiming a name a collector already declares makes the Desc
+	// invalid, so registration panics. That is caught in the same place a
+	// duplicate registration is, and the message has to name this cause too:
+	// config cannot check it without knowing every collector's label set.
+	cfg := testConfig()
+	cfg.Metrics.Labels.Metadata = []config.MetricLabel{{Header: "x-method", Name: "method"}}
+
+	deps := newTestDeps(t, cfg)
+	_, err := dataplane.New(deps.ctx, deps.cfg, deps.opts()...)
+	require.ErrorContains(t, err, "metrics.labels entry colliding with a collector's own label")
+}
+
+func TestNewRejectsAFixedLabelCollidingWithACollectorsOwn(t *testing.T) {
+	t.Parallel()
+
+	// A fixed label is stamped onto the factory's registerer rather than onto a
+	// collector's label names, but the collision lands in the same place: the
+	// wrapped Desc is invalid, so registration panics.
+	cfg := testConfig()
+	cfg.Metrics.Labels.Fixed = map[string]string{"method": "gateway"}
+
+	deps := newTestDeps(t, cfg)
+	deps.metrics = metrics.New("test", promauto.With(
+		metrics.WithFixedLabels(prometheus.NewRegistry(), cfg.Metrics.Labels.Fixed),
+	))
+
+	_, err := dataplane.New(deps.ctx, deps.cfg, deps.opts()...)
+	require.ErrorContains(t, err, "metrics.labels entry colliding with a collector's own label")
+}
+
 func TestNewTwiceOverOneMetricsFactoryDoesNotPanic(t *testing.T) {
 	t.Parallel()
 
 	// Reporters register Prometheus collectors, and a second registration on the
 	// same registry panics. Every other test builds its own registry, so this is
 	// the only place that exercises a shared one.
-	f := metrics.New("test", promauto.With(prometheus.NewRegistry()))
+	//
+	// Run it both with and without fixed labels, because those wrap the
+	// registerer: the wrapper has to pass the Prometheus error through rather
+	// than replace it with one of its own.
+	tests := []struct {
+		name  string
+		fixed map[string]string
+	}{
+		{name: "a bare registerer"},
+		{name: "a registerer wrapped in fixed labels", fixed: map[string]string{"region": "us-west-2"}},
+	}
 
-	first := newTestDeps(t, testConfig())
-	first.metrics = f
-	_, err := dataplane.New(first.ctx, first.cfg, first.opts()...)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	second := newTestDeps(t, testConfig())
-	second.metrics = f
-	_, err = dataplane.New(second.ctx, second.cfg, second.opts()...)
-	require.ErrorContains(
-		t,
-		err,
-		"registering metrics panicked",
-		"a second Dataplane on one registry must fail cleanly, not panic",
-	)
+			f := metrics.New("test", promauto.With(
+				metrics.WithFixedLabels(prometheus.NewRegistry(), tt.fixed),
+			))
 
-	var dup prometheus.AlreadyRegisteredError
-	require.ErrorAs(t, err, &dup, "the Prometheus error must survive the recover, not just its text")
+			first := newTestDeps(t, testConfig())
+			first.metrics = f
+			_, err := dataplane.New(first.ctx, first.cfg, first.opts()...)
+			require.NoError(t, err)
+
+			second := newTestDeps(t, testConfig())
+			second.metrics = f
+			_, err = dataplane.New(second.ctx, second.cfg, second.opts()...)
+			require.ErrorContains(
+				t,
+				err,
+				"registering metrics panicked",
+				"a second Dataplane on one registry must fail cleanly, not panic",
+			)
+
+			var dup prometheus.AlreadyRegisteredError
+			require.ErrorAs(t, err, &dup, "the Prometheus error must survive the recover, not just its text")
+		})
+	}
 }
 
 // opts returns d as the options [dataplane.New] takes, less any named in omit,
