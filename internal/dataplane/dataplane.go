@@ -184,6 +184,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		// Health entries come from the allowlist, so what the gateway reports a
 		// status for is exactly what it will forward.
 		server.WithHealthServices(o.allowlist.ServiceNames()...),
+		server.WithLoopbackHealthCheck(cfg.Health.CheckInterval(), cfg.Health.CheckTimeout()),
 		server.WithStreamInterceptor(reps.server.StreamInterceptor()),
 		// Ahead of authentication: it resolves what the request is addressing, and
 		// an authenticator decides on that as well as on the caller's credentials.

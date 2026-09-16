@@ -51,6 +51,23 @@ type Fixture struct {
 	reg  prometheus.Gatherer
 }
 
+type (
+	// Option adjusts what [Start] builds the dataplane with.
+	Option func(*options)
+
+	options struct {
+		auth auth.Authenticator
+	}
+)
+
+// WithAuth replaces the authenticator [Start] would otherwise admit every
+// request with. The gateway runs it from a stream interceptor, on every stream
+// including the ones it serves itself, so it is also how a test wedges the
+// interceptor chain that carries every forwarded request.
+func WithAuth(a auth.Authenticator) Option {
+	return func(o *options) { o.auth = a }
+}
+
 // Config returns a minimal valid configuration: an ephemeral gateway port and
 // one upstream named [DefaultUpstream] pointed at up, routed to by default.
 func Config(up *Upstream) *config.Config {
@@ -94,14 +111,20 @@ func DialUnix(t *testing.T, path string) *grpc.ClientConn {
 }
 
 // Start constructs a dataplane directly, the way the production fx module
-// does, and starts it. Every request is admitted and no vault is built, so a
-// cfg configuring inbound auth or encryption is rejected rather than silently
-// exercised without them; use [StartApp] for those.
-func Start(t *testing.T, cfg *config.Config) *Fixture {
+// does, and starts it. Every request is admitted unless [WithAuth] says
+// otherwise, and no vault is built, so a cfg configuring inbound auth or
+// encryption is rejected rather than silently exercised without them; use
+// [StartApp] for those.
+func Start(t *testing.T, cfg *config.Config, opts ...Option) *Fixture {
 	t.Helper()
 
 	require.Nil(t, cfg.Auth, "Start admits every request; use StartApp to exercise inbound auth")
 	require.Nil(t, cfg.Encryption.Default, "Start builds no vault; use StartApp to exercise encryption")
+
+	o := &options{auth: auth.AdmitAll()}
+	for _, opt := range opts {
+		opt(o)
+	}
 
 	applyDefaults(cfg)
 
@@ -118,7 +141,7 @@ func Start(t *testing.T, cfg *config.Config) *Fixture {
 			metrics.WithFixedLabels(reg, cfg.Metrics.Labels.Fixed),
 		))),
 		dataplane.WithAllowlist(config.NewAllowlist(cfg)),
-		dataplane.WithAuth(auth.AdmitAll()),
+		dataplane.WithAuth(o.auth),
 		dataplane.WithLogger(logger.NewNoopLogger()),
 	)
 	require.NoError(t, err)
@@ -196,6 +219,10 @@ func (f *Fixture) Gatherer() prometheus.Gatherer { return f.reg }
 
 // Addr is the address the gateway is accepting on.
 func (f *Fixture) Addr() string { return f.dp.Addr().String() }
+
+// Conn is the client connection to the gateway, for a service [Fixture.Client]
+// does not cover.
+func (f *Fixture) Conn() *grpc.ClientConn { return f.conn }
 
 // Client is a WorkflowService client on the gateway connection.
 func (f *Fixture) Client() workflowservice.WorkflowServiceClient {
