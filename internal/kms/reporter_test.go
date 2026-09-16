@@ -199,5 +199,9 @@ func findMetric(t *testing.T, mf *dto.MetricFamily, labels map[string]string) *d
 func newTestReporter(t *testing.T) (*kms.Reporter, *prometheus.Registry) {
 	t.Helper()
 	reg := prometheus.NewRegistry()
-	return kms.NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption")), reg
+
+	r, err := kms.NewReporter(metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"))
+	require.NoError(t, err)
+
+	return r, reg
 }

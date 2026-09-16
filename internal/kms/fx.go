@@ -40,7 +40,7 @@ var Module = fx.Options(
 		// One Reporter for the whole subsystem. Each NewReporter call registers its
 		// collectors, and Prometheus rejects a duplicate registration, so the vault
 		// and the key factory have to share an instance rather than build their own.
-		func(p KMSParams) *Reporter {
+		func(p KMSParams) (*Reporter, error) {
 			return NewReporter(p.Factory.ForSubsystem("encryption"))
 		},
 		func(p KMSParams, reporter *Reporter) *KeyFactory {

@@ -218,6 +218,35 @@ func TestModule_MixesExtensionAndKeeperKeysInOnePolicy(t *testing.T) {
 // reg, the given logger, and conns for any extension key URIs. Callers pass a
 // registry of their own so collectors cannot collide with another test's, and so
 // a test that cares can read what the vault reported.
+func TestModule_RejectsAFixedLabelCollidingWithACollectorsOwn(t *testing.T) {
+	t.Parallel()
+
+	// "provider" is a label kek_ops_total declares, and a plausible thing for an
+	// operator running more than one cloud to want stamped on every series. The
+	// collision is only knowable once a collector registers, so it has to be
+	// reported from there rather than refused in config.
+	cfg := encryptionConfig(true, keyPolicy(t, 1))
+	fixed := map[string]string{"provider": "aws"}
+
+	var r *kms.Reporter
+	app := fx.New(
+		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
+		fx.Supply(cfg),
+		fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
+		fx.Provide(func() *metrics.Factory {
+			return metrics.New("test", promauto.With(
+				metrics.WithFixedLabels(prometheus.NewRegistry(), fixed),
+			))
+		}),
+		fx.Supply(api.Connections{}),
+		kms.Module,
+		fx.Populate(&r),
+		fx.NopLogger,
+	)
+
+	require.ErrorContains(t, app.Err(), "metrics.labels entry colliding with a collector's own label")
+}
+
 func moduleOptions(
 	t *testing.T,
 	cfg *config.Config,
