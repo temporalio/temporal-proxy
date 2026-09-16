@@ -37,7 +37,6 @@ type (
 	Dataplane struct {
 		ctx       context.Context
 		gateway   *server.Server
-		health    *loopbackCheck
 		hostPort  string
 		upstreams []*upstreamTier
 		ready     []*connect.Conn
@@ -138,7 +137,6 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 
 	dp := &Dataplane{
 		ctx:      ctx,
-		health:   newLoopbackCheck(cfg, o.logger),
 		hostPort: cfg.Listen.HostPort,
 		abort:    o.abort,
 		logger:   o.logger,
@@ -187,16 +185,13 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		// status for is exactly what it will forward.
 		server.WithHealthServices(o.allowlist.ServiceNames()...),
 		// The entries above are what a status is reported under; this is what
-		// decides the status they all carry. runHealthCheck writes one value
-		// across every entry, and until now that value came from a stub that
-		// returned SERVING unconditionally, making the health service a
-		// heartbeat for grpc-go's transport. This replaces the stub with a check
-		// that calls the gateway's own Health/Watch, so the value reflects
-		// whether a request can still travel the stream interceptor chain.
-		//
-		// Built before anything is bound, since the listener is created during
-		// Start; Start hands it the address then.
-		server.WithHealthCheck(dp.health),
+		// decides the status they all carry. Every entry reports one value, and
+		// until now that value came from a stub that returned SERVING
+		// unconditionally, making the health service a heartbeat for grpc-go's
+		// transport. This replaces the stub with a check that calls the gateway's
+		// own Health/Watch, so the value reflects whether a request can still
+		// travel the stream interceptor chain.
+		server.WithLoopbackHealthCheck(cfg.Health.CheckInterval(), cfg.Health.CheckTimeout()),
 		server.WithStreamInterceptor(reps.server.StreamInterceptor()),
 		// Ahead of authentication: it resolves what the request is addressing, and
 		// an authenticator decides on that as well as on the caller's credentials.

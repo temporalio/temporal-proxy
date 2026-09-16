@@ -26,8 +26,7 @@ const (
 // There is no switch to turn the check off. The health service is registered
 // either way, and whether the check's answer has any consequence is already an
 // operator's decision: it only matters to a probe pointed at the service, so not
-// configuring that probe is the off switch. A gateway on mutual TLS is the one
-// case the check declines to run, which it decides for itself.
+// configuring that probe is the off switch.
 type Health struct {
 	Interval time.Duration `yaml:"interval"`
 	Timeout  time.Duration `yaml:"timeout"`

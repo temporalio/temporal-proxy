@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/temporalio/temporal-proxy/internal/transport/creds"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
@@ -34,6 +35,12 @@ type (
 	Server struct {
 		grpcSvr   *grpc.Server
 		healthSvr *health.Server
+
+		// loopbackSvr serves loopbackLis, the in-process listener the liveness
+		// check dials. Both are nil unless [WithLoopbackHealthCheck] asked for
+		// them; see [loopbackCheck] for why the check needs a server of its own.
+		loopbackSvr *grpc.Server
+		loopbackLis *bufconn.Listener
 
 		creds           Credentials
 		healthCheck     HealthCheck
@@ -63,6 +70,7 @@ type (
 	options struct {
 		creds              Credentials
 		healthCheck        HealthCheck
+		loopback           *loopbackTimings
 		healthServices     []string
 		logger             logger.Logger
 		shutdownTimeout    time.Duration
@@ -74,6 +82,14 @@ type (
 	}
 
 	optFunc func(*options)
+
+	// loopbackTimings carries what [WithLoopbackHealthCheck] was asked for. The
+	// check itself cannot be built until [New] has the listener, so the request
+	// is recorded and resolved there.
+	loopbackTimings struct {
+		interval time.Duration
+		timeout  time.Duration
+	}
 )
 
 // New constructs a [Server]. When no options are supplied, it uses insecure
@@ -90,12 +106,12 @@ func New(sopts ...Option) (*Server, error) {
 		opt.apply(opts)
 	}
 
-	svrOpts, err := opts.serverOptions()
+	svrCreds, err := opts.creds.ServerOption()
 	if err != nil {
 		return nil, err
 	}
 
-	svr := grpc.NewServer(svrOpts...)
+	svr := grpc.NewServer(opts.serverOptions(svrCreds)...)
 
 	// add health check
 	hc := health.NewServer()
@@ -111,7 +127,7 @@ func New(sopts ...Option) (*Server, error) {
 		register(svr)
 	}
 
-	return &Server{
+	s := &Server{
 		grpcSvr:         svr,
 		healthSvr:       hc,
 		creds:           opts.creds,
@@ -119,7 +135,17 @@ func New(sopts ...Option) (*Server, error) {
 		healthServices:  opts.healthServices,
 		logger:          opts.logger,
 		shutdownTimeout: opts.shutdownTimeout,
-	}, nil
+	}
+
+	// Resolved last rather than inside an option, since both halves are built
+	// from the whole resolved set and the check needs the listener.
+	if opts.loopback != nil {
+		s.loopbackLis = bufconn.Listen(loopbackBuffer)
+		s.loopbackSvr = newLoopbackServer(opts, hc)
+		s.healthCheck = newLoopbackCheck(s.loopbackLis, opts.loopback.interval, opts.loopback.timeout, opts.logger)
+	}
+
+	return s, nil
 }
 
 // WithCredentials sets the transport credentials used for inbound connections.
@@ -166,6 +192,21 @@ func WithHealthCheck(hc HealthCheck) Option {
 	return optFunc(func(o *options) { o.healthCheck = hc })
 }
 
+// WithLoopbackHealthCheck drives the serving status from a call the server makes
+// to its own Health/Watch, so the status reports whether a request can still
+// travel the stream interceptor chain rather than only whether the process
+// accepts connections. See [loopbackCheck] for why it is Watch and why the call
+// does not leave the process.
+//
+// interval is how often the check runs and timeout bounds one run; neither is
+// defaulted here. It takes precedence over [WithHealthCheck] regardless of the
+// order the two are supplied in.
+func WithLoopbackHealthCheck(interval, timeout time.Duration) Option {
+	return optFunc(func(o *options) {
+		o.loopback = &loopbackTimings{interval: interval, timeout: timeout}
+	})
+}
+
 // WithHealthServices names the services the health service answers for, by proto
 // full name. Each gets an entry reporting the same status as the unnamed one.
 // Names accumulate across calls.
@@ -206,6 +247,17 @@ func (s *Server) Start(ctx context.Context, lis net.Listener) error {
 	log.Info("Starting the server")
 	go s.runHealthCheck(ctx)
 
+	// Served before the real listener, so the check never finds it unaccepted.
+	// Stopping the loopback server closes this listener, which is what ends the
+	// goroutine.
+	if s.loopbackSvr != nil {
+		go func() {
+			if err := s.loopbackSvr.Serve(s.loopbackLis); err != nil {
+				log.Error("The in-process health listener stopped serving", tag.Error(err))
+			}
+		}()
+	}
+
 	// Serve returns a non-nil error only when it stops for a reason other than
 	// a graceful stop (GracefulStop makes it return nil), so anything here is a
 	// genuine failure worth surfacing.
@@ -238,6 +290,13 @@ func (s *Server) Stop(ctx context.Context) error {
 	s.healthSvr.Shutdown()
 	if cancel != nil {
 		cancel()
+	}
+
+	// Stopped outright rather than drained. Nothing on it is worth preserving,
+	// and a check caught mid-run is holding a stream against the very chain this
+	// shutdown may be waiting on, so draining it could only add a way to hang.
+	if s.loopbackSvr != nil {
+		s.loopbackSvr.Stop()
 	}
 
 	done := make(chan struct{})
@@ -305,12 +364,11 @@ func (s *Server) runHealthCheck(ctx context.Context) {
 	}
 }
 
-func (o *options) serverOptions() ([]grpc.ServerOption, error) {
-	creds, err := o.creds.ServerOption()
-	if err != nil {
-		return nil, err
-	}
-
+// serverOptions builds the server options for one server, taking its transport
+// credentials from the caller: the loopback server is assembled from this same
+// set so it carries the same interceptor chain, and differs only in being
+// credential-free.
+func (o *options) serverOptions(creds grpc.ServerOption) []grpc.ServerOption {
 	opts := []grpc.ServerOption{creds}
 	if len(o.unaryInterceptors) > 0 {
 		opts = append(opts, grpc.ChainUnaryInterceptor(o.unaryInterceptors...))
@@ -328,7 +386,7 @@ func (o *options) serverOptions() ([]grpc.ServerOption, error) {
 		opts = append(opts, grpc.ForceServerCodecV2(o.serverCodec))
 	}
 
-	return opts, nil
+	return opts
 }
 
 func (f optFunc) apply(o *options) {

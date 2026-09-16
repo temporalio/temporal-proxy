@@ -1,4 +1,4 @@
-package dataplane
+package server
 
 import (
 	"context"
@@ -11,12 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/transport/creds"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"github.com/temporalio/temporal-proxy/pkg/testutil"
 )
 
 // fakeHealthClient implements only Watch. The embedded interface leaves every
@@ -98,7 +98,7 @@ func TestStatusFor(t *testing.T) {
 			want: grpc_health_v1.HealthCheckResponse_NOT_SERVING,
 		},
 		{
-			name: "an unreachable listener is not serving",
+			name: "a listener that is not accepting is not serving",
 			err:  status.Error(codes.Unavailable, "connection refused"),
 			want: grpc_health_v1.HealthCheckResponse_NOT_SERVING,
 		},
@@ -168,132 +168,132 @@ func TestWatchOnceReturnsTheExchangeOutcome(t *testing.T) {
 	}
 }
 
-// TestLoopbackCheckGuardsSkipTheNetwork points the check at an address nothing
-// is listening on. A check that dialled would report NOT_SERVING, so SERVING is
-// what proves the guard ran instead.
-func TestLoopbackCheckGuardsSkipTheNetwork(t *testing.T) {
+// TestLoopbackHealthCheckIsOptIn pins that a server nobody asked for one on
+// keeps the stub and creates no in-process listener. The per-upstream proxies
+// bind sockets nothing probes, and a check per upstream would be a goroutine and
+// a connection every interval for a status no one reads.
+func TestLoopbackHealthCheckIsOptIn(t *testing.T) {
 	t.Parallel()
+
+	svr, err := New(WithLogger(logger.NewNoopLogger()))
+	require.NoError(t, err)
+
+	require.Nil(t, svr.loopbackLis)
+	require.NotNil(t, svr.healthCheck)
+	require.IsType(t, &healthCheckFn{}, svr.healthCheck)
+}
+
+// TestLoopbackHealthCheckWinsOverAnExplicitCheck pins the precedence the option
+// documents, in both orders, since an option set resolved by last-write would
+// otherwise make it depend on the caller.
+func TestLoopbackHealthCheckWinsOverAnExplicitCheck(t *testing.T) {
+	t.Parallel()
+
+	stub := HealthCheckFunc(time.Minute, func(context.Context) grpc_health_v1.HealthCheckResponse_ServingStatus {
+		return grpc_health_v1.HealthCheckResponse_SERVING
+	})
 
 	tests := []struct {
 		name string
-		cfg  *config.Config
-		addr bool
+		opts []Option
 	}{
-		{
-			name: "nothing is bound yet",
-			cfg:  &config.Config{},
-			addr: false,
-		},
-		{
-			name: "the gateway requires client certificates",
-			cfg: &config.Config{Listen: config.ListenConfig{
-				TLS: &config.TLSConfig{CA: "ca.crt", Cert: "server.crt", Key: "server.key"},
-			}},
-			addr: true,
-		},
+		{name: "loopback last", opts: []Option{WithHealthCheck(stub), WithLoopbackHealthCheck(time.Minute, time.Second)}},
+		{name: "loopback first", opts: []Option{WithLoopbackHealthCheck(time.Minute, time.Second), WithHealthCheck(stub)}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			check := newLoopbackCheck(tt.cfg, logger.NewNoopLogger())
-			if tt.addr {
-				check.setAddr(closedAddr(t))
-			}
+			svr, err := New(append(tt.opts, WithLogger(logger.NewNoopLogger()))...)
+			require.NoError(t, err)
 
-			require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, check.Status(t.Context()))
+			require.NotNil(t, svr.loopbackLis)
+			require.IsType(t, &loopbackCheck{}, svr.healthCheck)
 		})
 	}
 }
 
-func TestLoopbackCheckServerTLSStaysEnabled(t *testing.T) {
+// TestLoopbackCheckAnswersOverMutualTLS is the regression test for the gap this
+// check used to leave. The server demands a client certificate on the listener
+// it accepts traffic on, which is a configuration the check cannot dial without
+// issuing itself one; going over the in-process listener instead means the
+// status is a real answer rather than an assumed SERVING.
+func TestLoopbackCheckAnswersOverMutualTLS(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{Listen: config.ListenConfig{
-		TLS: &config.TLSConfig{Cert: "server.crt", Key: "server.key"},
-	}}
+	ca, cert, key := testutil.GenerateMTLSCerts(t)
 
-	check := newLoopbackCheck(cfg, logger.NewNoopLogger())
+	svr := startLoopbackServer(t,
+		WithCredentials(creds.NewListener(creds.WithCA(ca), creds.WithCertificate(cert, key))),
+		WithLoopbackHealthCheck(time.Minute, 5*time.Second),
+	)
 
-	require.True(t, check.enabled, "a gateway presenting a certificate is still dialled")
+	require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, svr.healthCheck.Status(t.Context()))
 }
 
-// TestLoopbackCheckDialsAWildcardBind covers the address the check is handed in
-// production. A gateway configured with ":8443" binds the wildcard, so
-// lis.Addr() is "[::]:8443" rather than a concrete host, and the dial works only
-// because Go treats the unspecified address as loopback. Nothing else pins that.
-func TestLoopbackCheckDialsAWildcardBind(t *testing.T) {
+// TestLoopbackCheckReportsAWedgedChain is the wedge the check exists for: a
+// stream interceptor that never returns leaves the unary Check answering
+// SERVING, because the gateway carries no unary interceptors, while nothing
+// streamed can complete.
+func TestLoopbackCheckReportsAWedgedChain(t *testing.T) {
 	t.Parallel()
 
-	lis, err := net.Listen("tcp", ":0")
-	require.NoError(t, err)
+	wedge := func(_ any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, _ grpc.StreamHandler) error {
+		<-ss.Context().Done()
 
-	srv := grpc.NewServer()
-	grpc_health_v1.RegisterHealthServer(srv, health.NewServer())
+		return ss.Context().Err()
+	}
 
-	go func() { _ = srv.Serve(lis) }()
-	t.Cleanup(srv.Stop)
-
-	require.Contains(t, lis.Addr().String(), "[::]", "this test is pointless unless the bind is a wildcard")
-
-	check := newLoopbackCheck(&config.Config{}, logger.NewNoopLogger())
-	check.setAddr(lis.Addr())
-
-	require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, check.Status(t.Context()))
-}
-
-// TestLoopbackCheckTimesOutOnASilentGateway is the wedge, against a real
-// socket: the listener accepts and then says nothing, which is what a blocked
-// interceptor chain looks like from outside.
-func TestLoopbackCheckTimesOutOnASilentGateway(t *testing.T) {
-	t.Parallel()
-
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = lis.Close() })
-
-	go func() {
-		for {
-			conn, err := lis.Accept()
-			if err != nil {
-				return
-			}
-			// Held open deliberately, and never answered.
-			t.Cleanup(func() { _ = conn.Close() })
-		}
-	}()
-
-	cfg := &config.Config{Health: config.Health{Interval: time.Minute, Timeout: 300 * time.Millisecond}}
-	check := newLoopbackCheck(cfg, logger.NewNoopLogger())
-	check.setAddr(lis.Addr())
+	svr := startLoopbackServer(t,
+		WithStreamInterceptor(wedge),
+		WithLoopbackHealthCheck(time.Minute, 300*time.Millisecond),
+	)
 
 	start := time.Now()
-	got := check.Status(t.Context())
+	got := svr.healthCheck.Status(t.Context())
 
 	require.Equal(t, grpc_health_v1.HealthCheckResponse_NOT_SERVING, got)
 	require.Less(t, time.Since(start), 10*time.Second, "the check must be bounded by its timeout, not its interval")
 }
 
-func TestLoopbackCheckInterval(t *testing.T) {
+// TestLoopbackCheckRunsTheStreamChain proves the call is not shortcut around the
+// interceptors: an interceptor that rejects every stream is still an answer, so
+// the status stays SERVING and the interceptor records that it ran.
+func TestLoopbackCheckRunsTheStreamChain(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{Health: config.Health{Interval: 2 * time.Second, Timeout: time.Second}}
-	check := newLoopbackCheck(cfg, logger.NewNoopLogger())
+	var seen atomic.Int64
 
-	require.Equal(t, 2*time.Second, check.Interval())
+	reject := func(_ any, _ grpc.ServerStream, _ *grpc.StreamServerInfo, _ grpc.StreamHandler) error {
+		seen.Add(1)
+
+		return status.Error(codes.Unauthenticated, "no credential")
+	}
+
+	svr := startLoopbackServer(t,
+		WithStreamInterceptor(reject),
+		WithLoopbackHealthCheck(time.Minute, 5*time.Second),
+	)
+
+	require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, svr.healthCheck.Status(t.Context()))
+	require.Equal(t, int64(1), seen.Load(), "the check must travel the stream interceptor chain")
 }
 
-// closedAddr is an address that was bound and then released, so a dial to it is
-// refused rather than hanging.
-func closedAddr(t *testing.T) net.Addr {
+// startLoopbackServer builds a server from opts and serves it, returning once
+// Start is under way. The real listener is a loopback socket nothing dials: the
+// point of every caller is what happens over the in-process one.
+func startLoopbackServer(t *testing.T, opts ...Option) *Server {
 	t.Helper()
+
+	svr, err := New(append(opts, WithLogger(logger.NewNoopLogger()))...)
+	require.NoError(t, err)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
-	addr := lis.Addr()
-	require.NoError(t, lis.Close())
+	go func() { _ = svr.Start(t.Context(), lis) }()
+	t.Cleanup(func() { require.NoError(t, svr.Stop(context.WithoutCancel(t.Context()))) })
 
-	return addr
+	return svr
 }
