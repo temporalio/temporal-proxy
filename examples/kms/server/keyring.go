@@ -7,31 +7,28 @@ import (
 	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"math"
+
+	extv1 "github.com/temporalio/temporal-proxy/pkg/api/ext/v1"
 )
 
 const (
-	// formatVersion prefixes every ciphertext so a later change to the framing is
-	// rejected rather than mis-parsed.
-	formatVersion = 0x01
-
-	// headerSize is the fixed part of the frame: the version byte plus the uint16
-	// namespace length that follows it.
-	headerSize = 3
+	// currentVersion is the wrapping key version Wrap stamps into new key
+	// material. Unwrap derives from whatever version it is handed, so bumping
+	// this rotates new payloads without stranding the ones already sealed.
+	currentVersion = "1"
 
 	// keySize selects AES-256.
 	keySize = 32
 
 	// infoPrefix domain-separates these derived keys from any other use of the
 	// same master secret.
-	infoPrefix = "temporal-proxy-kek/v1/"
+	infoPrefix = "temporal-proxy-kek"
 )
 
-// keyring derives one wrapping key per namespace from a master secret, so a
-// compromise of one namespace's key does not hand over the others.
+// keyring derives one wrapping key per version and namespace from a master
+// secret, so a compromise of one namespace's key does not hand over the others.
 type keyring struct {
 	secret []byte
 }
@@ -52,78 +49,83 @@ func newKeyring(secret []byte) (*keyring, error) {
 	return &keyring{secret: secret}, nil
 }
 
-// Wrap seals dek under the key derived for namespace.
+// Wrap seals dek under the key derived for namespace and returns it as
+// [extv1.KeyMaterial], which carries everything Unwrap needs to derive the same
+// key again.
 //
-// The namespace is written into the frame in the clear because Unwrap is handed
-// nothing but ciphertext and has to derive the same key again. It doubles as the
-// GCM additional data, so a ciphertext relabelled with another namespace fails
-// to open. A namespace is not a secret (it already travels in gRPC metadata),
-// but a provider that would rather not expose one should carry an opaque key
-// identifier here and resolve it internally.
+// The namespace travels in the clear, and doubles as the GCM additional data so
+// key material relabelled with another namespace fails to open. A namespace is
+// not a secret (it already travels in gRPC metadata), but a provider that would
+// rather not expose one can leave the field empty and identify its key through
+// opaque instead.
 func (k *keyring) Wrap(_ context.Context, namespace string, dek []byte) ([]byte, error) {
-	if len(namespace) > math.MaxUint16 {
-		return nil, fmt.Errorf("server: namespace is too long to frame: %d bytes", len(namespace))
-	}
-
-	gcm, err := k.cipher(namespace)
+	gcm, err := k.cipher(currentVersion, namespace)
 	if err != nil {
 		return nil, err
 	}
-
-	out := make([]byte, 0, headerSize+len(namespace)+gcm.NonceSize()+len(dek)+gcm.Overhead())
-	out = append(out, formatVersion)
-	out = binary.BigEndian.AppendUint16(out, uint16(len(namespace)))
-	out = append(out, namespace...)
 
 	nonce := make([]byte, gcm.NonceSize())
 	// crypto/rand.Read never returns an error; it crashes the program instead.
 	_, _ = rand.Read(nonce)
-	out = append(out, nonce...)
 
-	return gcm.Seal(out, nonce, dek, []byte(namespace)), nil
+	material := &extv1.KeyMaterial{
+		EncryptedDek: gcm.Seal(nil, nonce, dek, []byte(namespace)),
+		Version:      currentVersion,
+		Namespace:    namespace,
+		// KeyMaterial has no field for a nonce, and needs none: opaque is where a
+		// server puts whatever its own wrapping requires. A nonce is not secret,
+		// only single-use.
+		Opaque: nonce,
+	}
+
+	packed, err := material.Marshal()
+	if err != nil {
+		return nil, fmt.Errorf("server: failed to pack key material: %w", err)
+	}
+
+	return packed, nil
 }
 
-// Unwrap opens a ciphertext produced by Wrap, deriving the key from the
-// namespace the frame carries.
+// Unwrap opens key material produced by Wrap, deriving the key from the version
+// and namespace it carries: the two together address one key, the way a lookup
+// against a real key service would.
 func (k *keyring) Unwrap(_ context.Context, ciphertext []byte) ([]byte, error) {
-	if len(ciphertext) < headerSize {
-		return nil, errors.New("server: ciphertext is too short to hold a header")
+	material, err := extv1.UnmarshalKeyMaterial(ciphertext)
+	if err != nil {
+		return nil, fmt.Errorf("server: %w", err)
 	}
 
-	if ciphertext[0] != formatVersion {
-		return nil, fmt.Errorf("server: unsupported ciphertext version: %#x", ciphertext[0])
+	// Unmarshal accepts bytes that set no fields at all, so anything arriving
+	// from outside gets checked before it is trusted.
+	if err := material.Validate(); err != nil {
+		return nil, fmt.Errorf("server: invalid key material: %w", err)
 	}
 
-	nsLen := int(binary.BigEndian.Uint16(ciphertext[1:headerSize]))
-	if len(ciphertext) < headerSize+nsLen {
-		return nil, errors.New("server: ciphertext is truncated inside its namespace")
-	}
-
-	namespace := string(ciphertext[headerSize : headerSize+nsLen])
-	sealed := ciphertext[headerSize+nsLen:]
-
-	gcm, err := k.cipher(namespace)
+	gcm, err := k.cipher(material.GetVersion(), material.GetNamespace())
 	if err != nil {
 		return nil, err
 	}
 
-	if len(sealed) < gcm.NonceSize() {
-		return nil, errors.New("server: ciphertext is truncated inside its nonce")
+	nonce := material.GetOpaque()
+	if len(nonce) != gcm.NonceSize() {
+		return nil, fmt.Errorf("server: key material carries a %d-byte nonce, want %d", len(nonce), gcm.NonceSize())
 	}
 
-	dek, err := gcm.Open(nil, sealed[:gcm.NonceSize()], sealed[gcm.NonceSize():], []byte(namespace))
+	dek, err := gcm.Open(nil, nonce, material.GetEncryptedDek(), []byte(material.GetNamespace()))
 	if err != nil {
-		return nil, fmt.Errorf("server: failed to open ciphertext for namespace %q: %w", namespace, err)
+		return nil, fmt.Errorf("server: failed to open key material for namespace %q: %w", material.GetNamespace(), err)
 	}
 
 	return dek, nil
 }
 
-// cipher derives the wrapping key for namespace and returns a GCM cipher over
-// it. Derivation is deterministic, so a restarted provider still opens
-// ciphertexts sealed before the restart.
-func (k *keyring) cipher(namespace string) (cipher.AEAD, error) {
-	key, err := hkdf.Key(sha256.New, k.secret, nil, infoPrefix+namespace, keySize)
+// cipher derives the wrapping key for version and namespace and returns a GCM
+// cipher over it. Derivation is deterministic, so a restarted provider still
+// opens key material sealed before the restart.
+func (k *keyring) cipher(version, namespace string) (cipher.AEAD, error) {
+	info := fmt.Sprintf("%s/v%s/%s", infoPrefix, version, namespace)
+
+	key, err := hkdf.Key(sha256.New, k.secret, nil, info, keySize)
 	if err != nil {
 		return nil, fmt.Errorf("server: failed to derive a key for namespace %q: %w", namespace, err)
 	}
