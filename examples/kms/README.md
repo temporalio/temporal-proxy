@@ -35,9 +35,9 @@ go run ./gencerts
 ```
 
 ```text
-2026/07/29 15:31:46 wrote certs/ca.pem
-2026/07/29 15:31:46 wrote certs/server.pem
-2026/07/29 15:31:46 wrote certs/server-key.pem
+2026/09/16 10:28:36 wrote certs/ca.pem
+2026/09/16 10:28:36 wrote certs/server.pem
+2026/09/16 10:28:36 wrote certs/server-key.pem
 ```
 
 This writes a throwaway certificate authority and a server certificate for the extension server into `certs/`
@@ -72,7 +72,7 @@ KMS_API_KEY=example-token KMS_MASTER_SECRET=example-master-secret go run ./serve
 ```
 
 ```text
-2026/07/29 15:26:00 extension server listening on 127.0.0.1:9443 over TLS
+{"level":"info","component":"examples","addr":"127.0.0.1:9443","time":"2026-09-16T10:28:52-04:00","message":"Starting extension server"}
 ```
 
 Terminal 3, from the repository root, starts the proxy:
@@ -82,12 +82,12 @@ KMS_API_KEY=example-token go run ./cmd/proxy serve -c examples/kms/config.yaml
 ```
 
 ```text
-{"level":"info","namespace":"default","uri":"extension://kms/payloads","time":"2026-07-29T15:26:15-04:00","message":"Registering crypto key"}
-{"level":"info","component":"metrics","addr":":9090","time":"2026-07-29T15:26:15-04:00","message":"Starting metrics server"}
-{"level":"warn","addr":"/var/folders/6m/x_q_q9nx6ns3ygnf48xzqrn80000gn/T/127-0-0-1-7233-6689a1b6.sock","time":"2026-07-29T15:26:15-04:00","message":"Running with insecure credentials. Configure TLS for production use."}
-{"level":"info","addr":"/var/folders/6m/x_q_q9nx6ns3ygnf48xzqrn80000gn/T/127-0-0-1-7233-6689a1b6.sock","time":"2026-07-29T15:26:15-04:00","message":"Starting the server"}
-{"level":"warn","addr":"127.0.0.1:7234","time":"2026-07-29T15:26:15-04:00","message":"Running with insecure credentials. Configure TLS for production use."}
-{"level":"info","addr":"127.0.0.1:7234","time":"2026-07-29T15:26:15-04:00","message":"Starting the server"}
+{"level":"info","namespace":"default","uri":"extension://kms/payloads","time":"2026-09-16T10:29:17-04:00","message":"Registering crypto key"}
+{"level":"warn","addr":"/var/folders/6m/x_q_q9nx6ns3ygnf48xzqrn80000gn/T/127-0-0-1-7233-6689a1b6.sock","time":"2026-09-16T10:29:17-04:00","message":"Running with insecure credentials. Configure TLS for production use."}
+{"level":"info","addr":"/var/folders/6m/x_q_q9nx6ns3ygnf48xzqrn80000gn/T/127-0-0-1-7233-6689a1b6.sock","time":"2026-09-16T10:29:17-04:00","message":"Starting the server"}
+{"level":"warn","addr":"127.0.0.1:7234","time":"2026-09-16T10:29:17-04:00","message":"Running with insecure credentials. Configure TLS for production use."}
+{"level":"info","addr":"127.0.0.1:7234","time":"2026-09-16T10:29:17-04:00","message":"Starting the server"}
+{"level":"info","component":"metrics","addr":":9090","time":"2026-09-16T10:29:17-04:00","message":"Starting metrics server"}
 ```
 
 The two `Running with insecure credentials` warnings are expected, not a sign anything is broken: they describe the
@@ -102,7 +102,7 @@ go run ./worker
 ```
 
 ```text
-2026/07/29 15:26:27 worker listening on task queue "kms-example" (namespace "default")
+2026/09/16 10:29:29 worker listening on task queue "kms-example" (namespace "default")
 ```
 
 With all four running, start the Workflow from `examples/kms`:
@@ -112,7 +112,7 @@ go run ./starter
 ```
 
 ```text
-2026/07/29 15:26:37 started workflow id=kms-example-greeting runID=019faf57-d74f-7119-b9ff-70e7740fcfab
+2026/09/16 10:29:41 started workflow id=kms-example-greeting runID=01a0aa9f-9b16-7908-946b-026931b0425d
 Hello, Temporal!
 ```
 
@@ -152,21 +152,21 @@ temporal workflow show --workflow-id kms-example-greeting --namespace default --
 ```text
 Progress:
   ID           Time                     Type
-    1  2026-07-29T19:26:37Z  WorkflowExecutionStarted
-    2  2026-07-29T19:26:37Z  WorkflowTaskScheduled
-    3  2026-07-29T19:26:37Z  WorkflowTaskStarted
-    4  2026-07-29T19:26:37Z  WorkflowTaskCompleted
-    5  2026-07-29T19:26:37Z  ActivityTaskScheduled
-    6  2026-07-29T19:26:37Z  ActivityTaskStarted
-    7  2026-07-29T19:26:37Z  ActivityTaskCompleted
-    8  2026-07-29T19:26:37Z  WorkflowTaskScheduled
-    9  2026-07-29T19:26:37Z  WorkflowTaskStarted
-   10  2026-07-29T19:26:37Z  WorkflowTaskCompleted
-   11  2026-07-29T19:26:37Z  WorkflowExecutionCompleted
+    1  2026-09-16T14:29:41Z  WorkflowExecutionStarted
+    2  2026-09-16T14:29:41Z  WorkflowTaskScheduled
+    3  2026-09-16T14:29:41Z  WorkflowTaskStarted
+    4  2026-09-16T14:29:41Z  WorkflowTaskCompleted
+    5  2026-09-16T14:29:41Z  ActivityTaskScheduled
+    6  2026-09-16T14:29:41Z  ActivityTaskStarted
+    7  2026-09-16T14:29:41Z  ActivityTaskCompleted
+    8  2026-09-16T14:29:41Z  WorkflowTaskScheduled
+    9  2026-09-16T14:29:41Z  WorkflowTaskStarted
+   10  2026-09-16T14:29:41Z  WorkflowTaskCompleted
+   11  2026-09-16T14:29:41Z  WorkflowExecutionCompleted
 
 Results:
   Status          COMPLETED
-  Result          {"metadata":{"encoding":"YmluYXJ5L2VuY3J5cHRlZA==","encryption-dek":"QVFBSFpHVm1ZWFZzZElKVTRMRXZMSTIvVVVjeXJ2Z281M1RKbUxZK2tYRWJRRkVuVEluN1ovU3RLZUdQd0NodmxEc2lINjZZRjkxYVNRWFJPOTh1Qkx6OEl1T3BVQT09","encryption-key-id":"ZXh0ZW5zaW9uOi8va21zL3BheWxvYWRz"},"data":"BKaq27qe7704D5tnl23NI5szspr6NE7FeLk4r/Ur3zPq+XRDBXIuOswCinmTp34+9C5PrFcWrw+t13zfnRDobEy14CKSwT28"}
+  Result          {"metadata":{"encoding":"YmluYXJ5L2VuY3J5cHRlZA==","encryption-dek":"Q2pBR0xmbDdOMGR6ajdVS1prQitIR216SGpRQnhCaElXT2dtWlBIS3M3MERRSXpoaDRGYXNnNHU4VWJjaTZ2S2tnZ1NBVEVhQjJSbFptRjFiSFFpRE9zdDFsZmtZVXZRRUtLNzFRPT0=","encryption-key-id":"ZXh0ZW5zaW9uOi8va21zL3BheWxvYWRz"},"data":"5GOyox0AOodFetx5rzEuzsPBOBpJ1esP4HVaWK6FxGAU8XNg/LZuxtPl8wDYoQ4PKaQRhT2QbbQbf0SxuY+5VSYYn+n2Q7hm"}
   ResultEncoding  binary/encrypted
 ```
 
@@ -188,59 +188,91 @@ another way to browse the sealed history without running the CLI twice.
 
 ## The cache is working
 
-Across the whole run above, the extension server's log shows a single wrap, and a handful of unwraps:
+Across the whole run above, the extension server's log shows a single wrap and a single unwrap:
 
 ```text
-wrapped a DEK: namespace=default plaintext=32B ciphertext=70B
-unwrapped a DEK: ciphertext=70B plaintext=32B
-unwrapped a DEK: ciphertext=70B plaintext=32B
-unwrapped a DEK: ciphertext=70B plaintext=32B
-unwrapped a DEK: ciphertext=70B plaintext=32B
-unwrapped a DEK: ciphertext=70B plaintext=32B
+{"level":"info","component":"examples","time":"2026-09-16T10:29:41-04:00","message":"Wrapped a DEK"}
+{"level":"info","component":"examples","time":"2026-09-16T10:29:41-04:00","message":"Unwrapped DEK"}
 ```
 
-The one wrap is the number to watch, and it is the same on every run. The unwrap count is not: expect a few, varying run
-to run. The read-side cache is filled after the first miss and has no single-flight, so payloads opened concurrently can
-all miss it together and each ask the extension server for the same DEK.
+The one wrap is the number to watch, and it is the same on every run. The unwrap count is not: this run needed one, and
+reading the whole history back through the proxy afterwards added none, since that DEK was already cached. Expect a few
+on a busier run. The read-side cache is filled after the first miss and has no single-flight, so payloads opened
+concurrently can all miss it together and each ask the extension server for the same DEK.
 
 Meanwhile the Workflow's history carries four payloads sealed under that one DEK: the Workflow input, the Activity's
-input and result, and the Workflow's result each carry an `encryption-dek` entry in their metadata. Two separate
-settings in `config.yaml` are behind that, and they govern different sides of the exchange. `duration: 1h` is how long
-the proxy reuses one sealed-side DEK before wrapping a fresh one, which is why sealing four payloads in this run only
-cost one wrap call. `cacheSize: 200` is unrelated to sealing: it bounds a separate LRU of unwrapped DEKs the proxy keeps
-for reading history back, keyed by the encrypted DEK it already opened once. `renewBefore: 15m` is how far ahead of
-`duration`'s expiry the proxy starts rotating in a replacement sealed-side DEK.
+input and result, and the Workflow's result each carry an `encryption-dek` entry in their metadata. Three separate
+settings are behind that, and they govern different sides of the exchange. `duration: 1h` is how long the proxy reuses
+one sealed-side DEK before wrapping a fresh one, which is why sealing four payloads in this run only cost one wrap call.
+`renewBefore: 15m` is how far ahead of `duration`'s expiry the proxy starts rotating in a replacement sealed-side DEK.
+`cacheSize` is unrelated to sealing: it bounds a separate LRU of unwrapped DEKs the proxy keeps for reading history
+back, keyed by the encrypted DEK it already opened once, and `config.yaml` leaves it commented out to take the default
+of 100.
 
 ## How the provider works
 
-The whole provider is the `server` command you ran in terminal 2, and almost all of it is one file. The crypto and the
-ciphertext framing live in `server/keyring.go`; the gRPC surface, the bearer token check, TLS, and graceful shutdown all
-come from `pkg/ext`. `keyring`'s `Wrap` and `Unwrap` are what satisfy `ext.KMS`, and `server/main.go` hands them to
-`ext.Serve` alongside the token check and the certificate. Start with `keyring.go` if you are writing one of these
-against a real key service: it is the part you have to replace.
+The whole provider is the `server` command you ran in terminal 2, and almost all of it is one file. The crypto lives in
+`server/keyring.go`; the gRPC surface, the bearer token check, TLS, and graceful shutdown all come from `pkg/ext`.
+`keyring`'s `Wrap` and `Unwrap` are what satisfy `ext.KMS`, and `server/main.go` hands them to `ext.Serve` alongside the
+token check and the certificate. Start with `keyring.go` if you are writing one of these against a real key service: it
+is the part you have to replace.
 
-Every ciphertext the provider produces is a self-contained frame:
+`Decrypt` is handed nothing but the ciphertext `Encrypt` returned, no Namespace and no other context, so anything needed
+to find the wrapping key again has to travel inside it. Rather than hand-roll a binary frame, this provider returns
+`KeyMaterial`, the optional framing the proxy ships for exactly that (`api/ext/v1/key_material.proto`, Go package
+`pkg/api/ext/v1`), and unmarshals it on the way back:
 
-```text
-[ version: 1 byte ][ namespace length: 2 bytes ][ namespace ][ nonce: 12 bytes ][ ciphertext + GCM tag ]
+| Field           | What this provider puts in it                                                             |
+| --------------- | ----------------------------------------------------------------------------------------- |
+| `encrypted_dek` | the DEK sealed with AES-256-GCM: 48 bytes, 32 of DEK plus a 16-byte tag                   |
+| `version`       | `1`, the version `Wrap` stamps; `Unwrap` derives the key from whatever version arrives    |
+| `namespace`     | the local Namespace, which selects the derived key and doubles as the GCM additional data |
+| `opaque`        | the 12-byte GCM nonce, which has no field of its own and needs none                       |
+
+Only `encrypted_dek` is required. The other three are this provider's choices, they travel in the clear, and a provider
+that needs none of them can leave them empty. `opaque` is the field to reach for when a key service needs something the
+other two cannot express: the proxy round-trips it untouched and gives it no meaning, so whatever goes in owns its own
+compatibility.
+
+Two properties fall out of that table. Because the Namespace is the GCM additional data, key material relabelled with a
+different Namespace fails to open rather than silently decrypting under the wrong key. And because the version is an
+input to the derivation rather than something `Unwrap` checks, version and Namespace together address one key, the way a
+lookup against a real key service would: bumping `currentVersion` seals new payloads under a new key while everything
+already sealed still opens, since each payload carries the version that derives its own key. A version that was never
+issued is not a special case either. It derives a key that cannot open the material, so it fails authentication like any
+other tampering.
+
+All of this is framing, not encryption, and you can read it. The `encryption-dek` value in the history above is base64
+twice over, once by the CLI and once by the proxy's own payload metadata:
+
+```bash
+echo 'Q2pBR0xmbDdOMGR6ajdVS1prQitIR216SGpRQnhCaElXT2dtWlBIS3M3MERRSXpoaDRGYXNnNHU4VWJjaTZ2S2tnZ1NBVEVhQjJSbFptRjFiSFFpRE9zdDFsZmtZVXZRRUtLNzFRPT0=' |
+  base64 -d | base64 -d | xxd
 ```
 
-`Decrypt` receives nothing but that ciphertext, no Namespace and no other context, so `Unwrap` has to read the Namespace
-back out of the frame before it can derive the matching key. The Namespace also doubles as the GCM additional data, so a
-ciphertext relabelled with a different Namespace fails to open rather than silently decrypting under the wrong key. It
-is also why the `default` Namespace's ciphertext above is 70 bytes while the `payments` Namespace's, in the optional
-section below, is 71: the only difference is one extra byte of Namespace name carried inside the frame.
+```text
+00000000: 0a30 062d f97b 3747 738f b50a 6640 7e1c  .0.-.{7Gs...f@~.
+00000010: 69b3 1e34 01c4 1848 58e8 2664 f1ca b3bd  i..4...HX.&d....
+00000020: 0340 8ce1 8781 5ab2 0e2e f146 dc8b abca  .@....Z....F....
+00000030: 9208 1201 311a 0764 6566 6175 6c74 220c  ....1..default".
+00000040: eb2d d657 e461 4bd0 10a2 bbd5            .-.W.aK.....
+```
+
+The version and the Namespace are legible in the right-hand column. That is also why this key material is 76 bytes while
+the `payments` Namespace's, in the optional section below, is 77: the only difference is one more byte of Namespace
+name. Every byte of it rides in the metadata of each payload it seals, and stays there for as long as the Workflow
+retention period, so it should carry what decrypt needs to find the key and nothing else.
 
 Three things worth being honest about. First, a Namespace is not secret, but a real provider that would rather not carry
-a plaintext tenant name in its ciphertexts could use an opaque key identifier instead and resolve it internally. Second,
-the `payloads` segment in `config.yaml`'s key URI (`extension://kms/payloads`) never reaches the extension server; the
-provider selects a key by Namespace alone, nothing else. That segment exists only on the proxy's side, as the identifier
-it uses to pick the same key policy again when opening a payload later, but it does have to be globally unique across
-`default` and every entry in `overrides`: two policies sharing a URI fail proxy startup with a `duplicate key id` error
-(see the optional section below). Third, the Namespace the provider receives is always the local, pre-translation
-Namespace, never a translated remote name; this example configures no translation so it never comes up here, but a
-provider paired with Namespace translation has to key on that same local name, or its per-Namespace keys end up
-misaligned with the Namespace a caller actually asked for.
+a plaintext tenant name in its ciphertexts can leave `namespace` empty and put an opaque key identifier in `opaque`
+instead. Second, the `payloads` segment in `config.yaml`'s key URI (`extension://kms/payloads`) never reaches the
+extension server; the provider selects a key by Namespace alone, nothing else. That segment exists only on the proxy's
+side, as the identifier it uses to pick the same key policy again when opening a payload later, but it does have to be
+globally unique across `default` and every entry in `overrides`: two policies sharing a URI fail proxy startup with a
+`duplicate key id` error (see the optional section below). Third, the Namespace the provider receives is always the
+local, pre-translation Namespace, never a translated remote name; this example configures no translation so it never
+comes up here, but a provider paired with Namespace translation has to key on that same local name, or its per-Namespace
+keys end up misaligned with the Namespace a caller actually asked for.
 
 ## When it breaks
 
@@ -292,7 +324,9 @@ This provider is a teaching aid, not a key manager:
   passphrase. A passphrase here is directly brute-forceable, and recovering it yields every per-Namespace key at once.
   This example's own value, `example-master-secret`, is a passphrase, and that is fine only because this is a localhost
   demo, not something to copy into a real deployment;
-- nothing on the provider side rotates: the same secret derives the same per-Namespace key forever; and
+- nothing rotates on its own: `currentVersion` is a constant, so the same secret derives the same per-Namespace key
+  until someone edits it. The version in the key material is what would make a real rotation survivable, since payloads
+  sealed under an earlier version keep opening; and
 - losing that secret loses every payload ever sealed under it, with no recovery path.
 
 Also worth flagging: the extension server here authenticates only with a bearer token over TLS, which is the right
@@ -339,7 +373,6 @@ distinct key for `payments`:
 ```yaml
 encryption:
   enabled: true
-  cacheSize: 200
   default:
     uri: extension://kms/payloads
     duration: 1h
@@ -361,15 +394,31 @@ temporal workflow start --address 127.0.0.1:7234 --namespace payments --task-que
   --type GreetingWorkflow --workflow-id kms-payments-demo --input '"Payments"'
 ```
 
-The extension server's log now shows a second, independent key coming into play, appended below the `default` line left
-over from the earlier run in "The cache is working" above:
+The extension server's log shows a second wrap, appended below the pair from the earlier run in "The cache is working"
+above:
 
 ```text
-wrapped a DEK: namespace=default plaintext=32B ciphertext=70B
-wrapped a DEK: namespace=payments plaintext=32B ciphertext=71B
+{"level":"info","component":"examples","time":"2026-09-16T10:31:40-04:00","message":"Wrapped a DEK"}
 ```
 
-Same master secret, same extension server connection, but a different derived key per Namespace. Clean up with:
+The log alone cannot tell you those two wraps used different keys, since it says nothing about which Namespace asked.
+The key material can:
+
+```bash
+temporal workflow show --workflow-id kms-payments-demo --namespace payments --address 127.0.0.1:7233 -o json |
+  grep -o '"encryption-dek": *"[^"]*"' | head -1 | sed 's/.*: *"\(.*\)"/\1/' | base64 -d | base64 -d | xxd
+```
+
+```text
+00000000: 0a30 7165 25c7 8741 433d 87f7 c67b 76e1  .0qe%..AC=...{v.
+00000010: 0fda 495f 1521 e650 b191 4105 b3f0 88ac  ..I_.!.P..A.....
+00000020: 33b5 8a9c a1cf fff6 edc6 05bc 0647 52e9  3............GR.
+00000030: b293 1201 311a 0870 6179 6d65 6e74 7322  ....1..payments"
+00000040: 0c4c 720e a509 b212 9ee7 6c4a 1a         .Lr.......lJ.
+```
+
+The `namespace` field reads `payments` rather than `default`, one byte longer, and that is what selects the derived key.
+Same master secret, same extension server connection, but a different key per Namespace. Clean up with:
 
 ```bash
 temporal workflow terminate --workflow-id kms-payments-demo --namespace payments --address 127.0.0.1:7234

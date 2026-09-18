@@ -8,12 +8,13 @@
 // from. Both are required.
 //
 // Only the provider itself lives here, in keyring.go, which derives one
-// AES-256-GCM key per namespace from the master secret and frames the
-// ciphertext. The gRPC surface and the bearer token check come from
-// [github.com/temporalio/temporal-proxy/pkg/ext]: keyring's Wrap and Unwrap
-// satisfy [ext.KMS], and [ext.Serve] registers them, serves TLS, and shuts down
-// on a signal. That split is the point of the example. The interesting part of
-// writing one of these is the key handling, not the server around it.
+// AES-256-GCM key per version and namespace from the master secret and returns
+// the wrapped DEK as api.ext.v1.KeyMaterial. The gRPC surface and the bearer
+// token check come from [github.com/temporalio/temporal-proxy/pkg/ext]:
+// keyring's Wrap and Unwrap satisfy [ext.KMS], and [ext.Serve] registers them,
+// serves TLS, and shuts down on a signal. That split is the point of the
+// example. The interesting part of writing one of these is the key handling,
+// not the server around it.
 //
 // This is enough to show the shape of the contract and it is not a key manager:
 // the master secret sits in an environment variable, nothing is rotated, and
