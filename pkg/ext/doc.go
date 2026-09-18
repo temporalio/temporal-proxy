@@ -33,6 +33,16 @@
 // Decision is unset denies, so building one by hand can refuse a caller by
 // omission.
 //
+// [NewKeyWrapper] does as much for a [KMS]: it seals DEKs with an AEAD over keys
+// a [KeyLookup] supplies and frames them as [api.ext.v1.KeyMaterial], so an
+// implementation brings key material and writes no cryptography of its own. A
+// lookup reports which version sealed each piece of material rather than being
+// told, so a key store may rotate on its own schedule. That version and the
+// cipher both travel with the material, leaving everything already sealed
+// readable across a rotation or a cipher change, and every field that travels in
+// the clear is authenticated, so material relabelled with another namespace,
+// version, or cipher fails to open rather than opening under the wrong key.
+//
 // [Serve] listens in plaintext unless [WithServerOption] supplies credentials, and
 // warns once when the first call confirms it. Both are supported, but the ends must
 // agree, since the proxy dials plaintext when the extension server's TLS block is
