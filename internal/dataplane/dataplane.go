@@ -40,6 +40,7 @@ type (
 		hostPort  string
 		upstreams []*upstreamTier
 		ready     []*connect.Conn
+		codecs    *proxy.Codecs
 		abort     func(error)
 		abortOnce sync.Once
 		logger    logger.Logger
@@ -120,6 +121,25 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		return nil, err
 	}
 
+	// Every upstream applies the same chain: the vault and the encryption switch
+	// are global, so nothing here varies per upstream. Building it once is also
+	// what lets the codec server apply the identical chain.
+	codecOpts := proxy.CodecOptions{Encrypt: cfg.Encryption.Enabled}
+
+	// Only assign the vault once it is known to be there. o.vault is a concrete
+	// pointer and the field is an interface, so assigning unconditionally would
+	// hand over a non-nil interface holding a nil pointer, which reads as a vault
+	// being present and panics the first time a payload is opened.
+	if o.vault != nil {
+		codecOpts.Vault = o.vault
+		codecOpts.Reporter = reps.encryption
+	}
+
+	codecs, err := proxy.NewCodecs(codecOpts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build payload codecs: %w", err)
+	}
+
 	mux, err := router.CompileMux(cfg.Routing)
 	if err != nil {
 		return nil, err
@@ -138,6 +158,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 	dp := &Dataplane{
 		ctx:      ctx,
 		hostPort: cfg.Listen.HostPort,
+		codecs:   codecs,
 		abort:    o.abort,
 		logger:   o.logger,
 	}
@@ -151,7 +172,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 			return nil, fmt.Errorf("failed to resolve proxy socket path[%q]: %w", up.Name, err)
 		}
 
-		tier, ready, err := newUpstreamTier(cfg, o, up, path, reps)
+		tier, ready, err := newUpstreamTier(cfg, o, up, path, codecs)
 		if err != nil {
 			return nil, err
 		}
@@ -280,6 +301,12 @@ func (d *Dataplane) Addr() net.Addr {
 	return d.addr
 }
 
+// Codecs is the payload codec chain every upstream applies, so a caller outside
+// the request path transforms payloads exactly as a proxied request would.
+func (d *Dataplane) Codecs() *proxy.Codecs {
+	return d.codecs
+}
+
 // SocketPath is the unix path the named upstream's proxy binds and the gateway
 // dials. It is the single derivation of that path.
 func (d *Dataplane) SocketPath(upstream string) (string, error) {
@@ -326,7 +353,7 @@ func newUpstreamTier(
 	o *options,
 	up *config.Upstream,
 	path string,
-	reps *reporters,
+	codecs *proxy.Codecs,
 ) (*upstreamTier, *connect.Conn, error) {
 	// Request-independent dial options: namespace translation and outbound
 	// credentials. Per-request credentials are added by the resolver.
@@ -363,25 +390,10 @@ func newUpstreamTier(
 	// One interceptor applies every payload codec, so anything added to the chain
 	// travels this path without another interceptor here. It decides for itself
 	// which codecs a direction needs and skips a direction with none, so it is
-	// installed unconditionally rather than gated on any one codec's config. A
-	// vault is present whenever encryption keys are configured, which may be true
-	// even when encryption is disabled; passing Enabled gates sealing while
-	// inbound decryption always runs, keeping payloads sealed earlier openable
-	// after encryption is turned off for new traffic. Added after translation so
-	// it is the innermost unary interceptor, encoding outbound payloads last and
-	// decoding inbound payloads first.
-	codecOpts := proxy.CodecOptions{Encrypt: cfg.Encryption.Enabled}
-
-	// Only assign the vault once it is known to be there. o.vault is a concrete
-	// pointer and the field is an interface, so assigning unconditionally would
-	// hand over a non-nil interface holding a nil pointer, which reads as a vault
-	// being present and panics the first time a payload is opened.
-	if o.vault != nil {
-		codecOpts.Vault = o.vault
-		codecOpts.Reporter = reps.encryption
-	}
-
-	cdc, err := proxy.CodecInterceptor(codecOpts)
+	// installed unconditionally rather than gated on any one codec's config.
+	// Added after translation so it is the innermost unary interceptor, encoding
+	// outbound payloads last and decoding inbound payloads first.
+	cdc, err := codecs.Interceptor()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to build codec interceptor for upstream %q: %w", up.Name, err)
 	}

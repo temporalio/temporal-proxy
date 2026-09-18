@@ -10,7 +10,9 @@
 // than what order it happens in.
 //
 // A [Chain] satisfies the Temporal SDK's converter.PayloadCodec, so it can be
-// handed to converter.NewCodecDataConverter for an SDK client or to
-// converter.NewPayloadCodecHTTPHandler for a codec server, with the SDK imported
-// at the call site rather than here.
+// handed to converter.NewCodecDataConverter for an SDK client, with the SDK
+// imported at the call site rather than here. It also backs the proxy's own
+// HTTP codec server (internal/codecserver), which answers the encode, decode,
+// and download routes the Temporal CLI and Web UI use, superseding the SDK's
+// own two-route converter.NewPayloadCodecHTTPHandler.
 package codec
