@@ -20,6 +20,7 @@ type (
 		APITranslations  APITranslations     `yaml:"apiTranslations"`
 		AllowedServices  Services            `yaml:"allowedServices"`
 		Auth             *AuthConfig         `yaml:"auth"`
+		CodecServer      CodecServer         `yaml:"codecServer"`
 		Encryption       Encryption          `yaml:"encryption"`
 		ExtensionServers ExtensionServerList `yaml:"extensionServers"`
 		Health           Health              `yaml:"health"`
@@ -94,6 +95,7 @@ func (c *Config) Validate() error {
 		}),
 		validation.Nested("", &c.Listen),
 		validation.Nested("", &c.AllowedServices),
+		validation.Nested("codecServer", &c.CodecServer),
 		validation.Nested("encryption", &c.Encryption),
 		validation.Nested("extensionServers", &c.ExtensionServers),
 		validation.Nested("health", &c.Health),

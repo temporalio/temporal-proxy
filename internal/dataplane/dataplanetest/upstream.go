@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.temporal.io/api/common/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -22,7 +23,7 @@ import (
 // Upstream is a fake Temporal frontend standing in for the service a
 // dataplane forwards to. It records every request and its metadata, answers
 // GetSystemInfo with an empty response, and echoes QueryWorkflow's arguments
-// back as its result.
+// back as its result unless [Upstream.SetQueryResult] gave it a canned one.
 type Upstream struct {
 	workflowservice.UnimplementedWorkflowServiceServer
 
@@ -31,9 +32,10 @@ type Upstream struct {
 
 	// mu guards the recorded state, which the serving goroutine writes while
 	// the test reads.
-	mu       sync.Mutex
-	metadata metadata.MD
-	requests []proto.Message
+	mu          sync.Mutex
+	metadata    metadata.MD
+	requests    []proto.Message
+	queryResult *common.Payloads
 }
 
 // NewUpstream starts a fake frontend on a loopback port over plaintext and
@@ -101,13 +103,33 @@ func (u *Upstream) Metadata() metadata.MD {
 	return u.metadata.Copy()
 }
 
+// SetQueryResult overrides the QueryResult QueryWorkflow answers with, instead
+// of echoing the request's query arguments. It lets a test drive a response
+// through the gateway's inbound codec chain that a paired outbound request
+// never produced, the way a payload written by some earlier call would arrive
+// on an unrelated one.
+func (u *Upstream) SetQueryResult(result *common.Payloads) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	u.queryResult = result
+}
+
 // QueryWorkflow records the call and echoes the query arguments back as the
 // result, so one call exercises both directions of an interceptor that rewrites
-// payloads.
+// payloads. A result set through [Upstream.SetQueryResult] is returned instead.
 func (u *Upstream) QueryWorkflow(
 	ctx context.Context, req *workflowservice.QueryWorkflowRequest,
 ) (*workflowservice.QueryWorkflowResponse, error) {
 	u.record(ctx, req)
+
+	u.mu.Lock()
+	result := u.queryResult
+	u.mu.Unlock()
+
+	if result != nil {
+		return &workflowservice.QueryWorkflowResponse{QueryResult: result}, nil
+	}
 
 	return &workflowservice.QueryWorkflowResponse{QueryResult: req.GetQuery().GetQueryArgs()}, nil
 }
