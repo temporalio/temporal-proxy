@@ -4,15 +4,13 @@ import (
 	"context"
 	"crypto/cipher"
 	"crypto/rand"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"math"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	extv1 "github.com/temporalio/temporal-proxy/pkg/api/ext/v1"
+	"github.com/temporalio/temporal-proxy/pkg/api/ext/v1"
 )
 
 type (
@@ -60,7 +58,7 @@ type (
 	keyWrapperOpt func(*keyWrapper) error
 
 	// keyWrapper is a [KMS] that seals DEKs with an AEAD and frames them as
-	// [extv1.KeyMaterial].
+	// [ext.KeyMaterial].
 	keyWrapper struct {
 		lookup  KeyLookup
 		cipher  CipherID
@@ -69,7 +67,7 @@ type (
 )
 
 // NewKeyWrapper returns a [KMS] that seals DEKs with an AEAD over keys from
-// lookup and frames them as [extv1.KeyMaterial], so an extension server supplies
+// lookup and frames them as [ext.KeyMaterial], so an extension server supplies
 // key material and nothing else.
 //
 // New material is sealed with AES-256-GCM unless [WithCipher] says otherwise,
@@ -118,11 +116,11 @@ func WithCipher(id CipherID) KeyWrapperOption {
 // registered before, including a built-in.
 //
 // Ids from 128 up are reserved for exactly this and will never be assigned by
-// [extv1.KeyMaterial_Cipher], so a cipher registered there cannot collide with
-// one added later. An id below that is accepted, since replacing a built-in with
-// a stricter construction of the same cipher is reasonable, but reusing a
-// built-in id for a different cipher makes material that other servers will
-// misread.
+// [ext.KeyMaterial_Cipher], so a cipher registered there cannot collide with
+// one added later; [MustCipherID] builds one. An id below that is accepted,
+// since replacing a built-in with a stricter construction of the same cipher is
+// reasonable, but reusing a built-in id for a different cipher makes material
+// that other servers will misread.
 func WithCipherFunc(id CipherID, fn CipherFunc) KeyWrapperOption {
 	return keyWrapperOpt(func(w *keyWrapper) error {
 		if fn == nil {
@@ -140,7 +138,7 @@ func WithCipherFunc(id CipherID, fn CipherFunc) KeyWrapperOption {
 }
 
 // Wrap seals dek under whichever key its lookup reports as current for
-// namespace, and returns it framed as [extv1.KeyMaterial] carrying the version
+// namespace, and returns it framed as [ext.KeyMaterial] carrying the version
 // the lookup reported.
 func (w *keyWrapper) Wrap(ctx context.Context, namespace string, dek []byte) ([]byte, error) {
 	// An empty Version asks for whichever key is current, and the answer says
@@ -157,7 +155,7 @@ func (w *keyWrapper) Wrap(ctx context.Context, namespace string, dek []byte) ([]
 		return nil, err
 	}
 
-	km := &extv1.KeyMaterial{
+	km := &ext.KeyMaterial{
 		Version:   key.Version,
 		Namespace: namespace,
 		Cipher:    w.cipher,
@@ -186,7 +184,7 @@ func (w *keyWrapper) Wrap(ctx context.Context, namespace string, dek []byte) ([]
 // the key the material's version and namespace address, and building the cipher
 // the material names.
 func (w *keyWrapper) Unwrap(ctx context.Context, ciphertext []byte) ([]byte, error) {
-	km, err := extv1.UnmarshalKeyMaterial(ciphertext)
+	km, err := ext.UnmarshalKeyMaterial(ciphertext)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +198,7 @@ func (w *keyWrapper) Unwrap(ctx context.Context, ciphertext []byte) ([]byte, err
 	// An unset cipher is refused rather than assumed to be the default. Material
 	// without one was framed by a server doing its own wrapping, and guessing
 	// would mean opening it under a construction nobody chose.
-	if km.GetCipher() == extv1.KeyMaterial_CIPHER_UNSPECIFIED {
+	if km.GetCipher() == ext.KeyMaterial_CIPHER_UNSPECIFIED {
 		return nil, status.Error(codes.InvalidArgument, "key material names no cipher")
 	}
 
@@ -263,36 +261,4 @@ func (w *keyWrapper) aead(id CipherID, key []byte) (cipher.AEAD, error) {
 
 func (f keyWrapperOpt) apply(w *keyWrapper) error {
 	return f(w)
-}
-
-// additionalData returns the AEAD additional data binding every field of km that
-// travels in the clear, so none of them can be swapped for another's: material
-// relabelled with a different namespace, version, or cipher fails to open rather
-// than opening under the wrong assumption.
-//
-// The encoding is length-prefixed so that no two different sets of fields
-// produce the same bytes, and it never travels anywhere. Both ends recompute it.
-// It is still permanent: every payload already sealed authenticates against it,
-// so it can be added to only at the end, and only alongside a new cipher id.
-func additionalData(km *extv1.KeyMaterial) ([]byte, error) {
-	version, namespace, opaque := km.GetVersion(), km.GetNamespace(), km.GetOpaque()
-
-	if len(version) > math.MaxUint16 {
-		return nil, fmt.Errorf("key version is too long: %d bytes", len(version))
-	}
-
-	if len(namespace) > math.MaxUint16 {
-		return nil, status.Errorf(codes.InvalidArgument, "namespace is too long: %d bytes", len(namespace))
-	}
-
-	ad := make([]byte, 0, 12+len(version)+len(namespace)+len(opaque))
-	ad = binary.BigEndian.AppendUint32(ad, uint32(km.GetCipher()))
-	ad = binary.BigEndian.AppendUint16(ad, uint16(len(version)))
-	ad = append(ad, version...)
-	ad = binary.BigEndian.AppendUint16(ad, uint16(len(namespace)))
-	ad = append(ad, namespace...)
-	ad = binary.BigEndian.AppendUint32(ad, uint32(len(opaque)))
-	ad = append(ad, opaque...)
-
-	return ad, nil
 }
