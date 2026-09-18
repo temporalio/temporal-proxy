@@ -43,6 +43,17 @@
 // the clear is authenticated, so material relabelled with another namespace,
 // version, or cipher fails to open rather than opening under the wrong key.
 //
+// [NewSealWrapper] is the same offer to a [KMS] that cannot hand over its keys.
+// A [KeySealer] seals a DEK by calling out to whatever holds it, an HSM or a key
+// service, and the wrapper supplies the framing and nothing else, so the version
+// and opaque bytes the implementation reports on the way in reach it again on
+// the way out. It seals nothing itself, so it cannot authenticate the fields
+// travelling in the clear either: [BindingContext] encodes them, and an
+// implementation binds them by handing those bytes to its key service as an
+// encryption context. Material framed this way names no cipher, since the
+// construction was the key service's own choice, and the wrapper refuses
+// material that names one rather than assuming it can open it.
+//
 // [Serve] listens in plaintext unless [WithServerOption] supplies credentials, and
 // warns once when the first call confirms it. Both are supported, but the ends must
 // agree, since the proxy dials plaintext when the extension server's TLS block is

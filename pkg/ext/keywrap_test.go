@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/cipher"
+	"encoding/hex"
 	"math"
 	"slices"
 	"strings"
@@ -427,4 +428,65 @@ func TestKeyWrapperRejectsAnUnframeableVersion(t *testing.T) {
 	// knows what it is going to say.
 	_, err = w.Wrap(t.Context(), "orders", bytes.Repeat([]byte{0x01}, 32))
 	require.ErrorContains(t, err, "key version is too long")
+}
+
+// Material sealed by this package before [ext.BindingContext] was factored out
+// of the additional-data encoding. Every payload the proxy has already sealed
+// authenticates against those bytes, so the encoding can never change, and
+// these two open only if it has not.
+//
+// They cannot be regenerated. Regenerating them is the mistake this test
+// exists to catch, and the nonce baked into each one means a fresh Wrap will
+// not reproduce them by accident either.
+const (
+	// goldenVersioned carries a version and a namespace.
+	goldenVersioned = "0a30a523674f5e170acc69a73940909445859cba48f0d40e5bda0276721656452133f9878d71b20f0" +
+		"7050dae9dbdbcd68dcf1201311a066f72646572732a0c05f93a254419028c712c2ef83001"
+
+	// goldenBare carries neither, pinning the zero-length prefixes.
+	goldenBare = "0a307f92c94725b5e40a8a5b5cf0e8034253e9e58abbf27620d18e9437f6d0f6e7a28d9d73127d5eece" +
+		"c5bc885aadc5b4e872a0c6de468cf0e7e70d33dd364433001"
+)
+
+// TestKeyWrapperOpensGoldenMaterial is the gate on the additional-data
+// encoding. It fails if a single bit of what [ext.BindingContext] and its
+// unexported sibling emit has moved, because the AEAD authenticates every one
+// of them.
+func TestKeyWrapperOpensGoldenMaterial(t *testing.T) {
+	t.Parallel()
+
+	dek := bytes.Repeat([]byte{0x01}, 32)
+
+	for _, tt := range []struct {
+		name      string
+		sealed    string
+		namespace string
+		version   string
+	}{
+		{"versioned", goldenVersioned, "orders", "1"},
+		{"bare", goldenBare, "", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			sealed, err := hex.DecodeString(tt.sealed)
+			require.NoError(t, err)
+
+			km, err := extv1.UnmarshalKeyMaterial(sealed)
+			require.NoError(t, err)
+			require.Equal(t, tt.namespace, km.GetNamespace())
+			require.Equal(t, tt.version, km.GetVersion())
+
+			// The lookup answers with the same key whatever version is asked for,
+			// since the golden material names the one it was sealed under.
+			w, err := ext.NewKeyWrapper(func(context.Context, ext.KeyRequest) (ext.Key, error) {
+				return ext.Key{Bytes: wrappingKey, Version: tt.version}, nil
+			})
+			require.NoError(t, err)
+
+			got, err := w.Unwrap(t.Context(), sealed)
+			require.NoError(t, err)
+			require.Equal(t, dek, got)
+		})
+	}
 }

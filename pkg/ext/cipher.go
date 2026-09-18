@@ -4,41 +4,62 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"fmt"
+	"math"
 
 	"golang.org/x/crypto/chacha20poly1305"
 
-	extv1 "github.com/temporalio/temporal-proxy/pkg/api/ext/v1"
+	"github.com/temporalio/temporal-proxy/pkg/api/ext/v1"
 )
 
-// keyBytes is the key size every built-in cipher takes. All three are 256-bit
-// constructions, so a [KeyLookup] returns the same length whichever is selected
-// and switching ciphers does not mean re-keying.
-const keyBytes = 32
+const (
+	// keyBytes is the key size every built-in cipher takes. All three are 256-bit
+	// constructions, so a [KeyLookup] returns the same length whichever is selected
+	// and switching ciphers does not mean re-keying.
+	keyBytes = 32
+
+	// minCustomCipherID is the lowest id reserved for ciphers a server registers
+	// itself. Everything below it is assigned by this package.
+	minCustomCipherID = 128
+)
 
 const (
 	// CipherAES256GCM selects AES-256-GCM, the default and the same cipher the
 	// proxy seals payloads with.
-	CipherAES256GCM = extv1.KeyMaterial_CIPHER_AES_256_GCM
+	CipherAES256GCM = ext.KeyMaterial_CIPHER_AES_256_GCM
 
 	// CipherChaCha20Poly1305 selects ChaCha20-Poly1305, which is worth preferring
 	// where AES has no hardware support.
-	CipherChaCha20Poly1305 = extv1.KeyMaterial_CIPHER_CHACHA20_POLY1305
+	CipherChaCha20Poly1305 = ext.KeyMaterial_CIPHER_CHACHA20_POLY1305
 
 	// CipherXChaCha20Poly1305 selects XChaCha20-Poly1305, whose 24-byte nonce is
 	// wide enough that random nonces need no counting.
-	CipherXChaCha20Poly1305 = extv1.KeyMaterial_CIPHER_XCHACHA20_POLY1305
+	CipherXChaCha20Poly1305 = ext.KeyMaterial_CIPHER_XCHACHA20_POLY1305
 )
 
 type (
 	// CipherID names the AEAD that sealed a piece of key material. It travels in
 	// the material, so a server that changes cipher still opens what the previous
 	// one sealed.
-	CipherID = extv1.KeyMaterial_Cipher
+	CipherID = ext.KeyMaterial_Cipher
 
 	// CipherFunc builds an AEAD over a wrapping key. Register one with
 	// [WithCipherFunc] to seal with a cipher this package does not ship.
 	CipherFunc func(key []byte) (cipher.AEAD, error)
 )
+
+// MustCipherID turns id into a [CipherID] for [WithCipherFunc]. It panics unless
+// id falls in the range reserved for ciphers a server registers itself, 128
+// through [math.MaxInt32].
+func MustCipherID(id int) CipherID {
+	if id < minCustomCipherID || id > math.MaxInt32 {
+		panic(fmt.Sprintf(
+			"custom cipher id must be between %d and %d, got %d",
+			minCustomCipherID, math.MaxInt32, id,
+		))
+	}
+
+	return ext.KeyMaterial_Cipher(id)
+}
 
 // NewAES256GCM returns AES-256-GCM over a 32-byte key.
 func NewAES256GCM(key []byte) (cipher.AEAD, error) {
