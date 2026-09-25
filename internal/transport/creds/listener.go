@@ -43,18 +43,33 @@ func (l *Listener) Validate() error {
 	return validateMaterial(l.opts, l.mode)
 }
 
-// ServerOption returns the [grpc.ServerOption] for inbound connections. The same
-// legality guard as Validate runs first. Server TLS presents the configured
-// certificate; mutual TLS additionally requires and verifies client
-// certificates against the configured CA. Both require at least TLS 1.2 and
-// restrict TLS 1.2 sessions to the preferred AES-GCM cipher suites.
+// ServerOption returns the [grpc.ServerOption] for inbound connections, built
+// from the same configuration [Listener.TLSConfig] returns.
 func (l *Listener) ServerOption() (grpc.ServerOption, error) {
+	cfg, err := l.TLSConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	if cfg == nil {
+		return grpc.Creds(insecure.NewCredentials()), nil
+	}
+
+	return grpc.Creds(credentials.NewTLS(cfg)), nil
+}
+
+// TLSConfig returns the server TLS configuration for inbound connections, or nil
+// for the insecure mode. The same legality guard as Validate runs first. Server
+// TLS presents the configured certificate; mutual TLS additionally requires and
+// verifies client certificates against the configured CA. Both require at least
+// TLS 1.2 and restrict TLS 1.2 sessions to the preferred AES-GCM cipher suites.
+func (l *Listener) TLSConfig() (*tls.Config, error) {
 	if err := l.opts.validateServer(); err != nil {
 		return nil, err
 	}
 
 	if l.mode == ModeInsecure {
-		return grpc.Creds(insecure.NewCredentials()), nil
+		return nil, nil
 	}
 
 	cert, err := tls.LoadX509KeyPair(l.opts.cert, l.opts.key)
@@ -78,7 +93,7 @@ func (l *Listener) ServerOption() (grpc.ServerOption, error) {
 		cfg.ClientCAs = pool
 	}
 
-	return grpc.Creds(credentials.NewTLS(cfg)), nil
+	return cfg, nil
 }
 
 // Encrypted reports whether the inbound transport is encrypted. Only the

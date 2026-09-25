@@ -17,6 +17,7 @@ import (
 
 	"github.com/temporalio/temporal-proxy/internal/api"
 	"github.com/temporalio/temporal-proxy/internal/auth"
+	"github.com/temporalio/temporal-proxy/internal/codecserver"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/dataplane"
 	"github.com/temporalio/temporal-proxy/internal/kms"
@@ -45,10 +46,11 @@ const (
 // Fixture is a running dataplane and the connections needed to drive it. It
 // stops when the test ends.
 type Fixture struct {
-	t    *testing.T
-	dp   *dataplane.Dataplane
-	conn *grpc.ClientConn
-	reg  prometheus.Gatherer
+	t           *testing.T
+	dp          *dataplane.Dataplane
+	conn        *grpc.ClientConn
+	reg         prometheus.Gatherer
+	codecServer *codecserver.Server
 }
 
 type (
@@ -155,7 +157,9 @@ func Start(t *testing.T, cfg *config.Config, opts ...Option) *Fixture {
 	// cleanups run, and a shutdown must not inherit that.
 	t.Cleanup(func() { requireCleanStop(t, dp.Stop(stopContext(t))) })
 
-	return newFixture(t, dp, reg)
+	// Start builds no codec server: it is a fx-only module, so CodecServerAddr
+	// reads nil here rather than dereferencing one that was never built.
+	return newFixture(t, dp, reg, nil)
 }
 
 // StartApp assembles and starts the whole production module graph around cfg,
@@ -173,6 +177,7 @@ func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 	reg := prometheus.NewRegistry()
 
 	var dp *dataplane.Dataplane
+	var codecSvr *codecserver.Server
 	app := fx.New(
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(cfg),
@@ -183,6 +188,7 @@ func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 		),
 		api.Module,
 		auth.Module,
+		codecserver.Module,
 		connect.Module,
 		dataplane.Module,
 		kms.Module,
@@ -192,7 +198,7 @@ func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 		// favour of supplying a Config; this is the allowlist provider it would
 		// otherwise contribute.
 		fx.Provide(config.NewAllowlist),
-		fx.Populate(&dp),
+		fx.Populate(&dp, &codecSvr),
 		fx.NopLogger,
 	)
 	require.NoError(t, app.Err())
@@ -208,7 +214,7 @@ func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 		requireCleanStop(t, app.Stop(stopCtx))
 	})
 
-	return newFixture(t, dp, reg)
+	return newFixture(t, dp, reg, codecSvr)
 }
 
 // Gatherer is the registry every collector in this plane registered with, and
@@ -223,6 +229,17 @@ func (f *Fixture) Addr() string { return f.dp.Addr().String() }
 // Conn is the client connection to the gateway, for a service [Fixture.Client]
 // does not cover.
 func (f *Fixture) Conn() *grpc.ClientConn { return f.conn }
+
+// CodecServerAddr is the address the codec server is accepting on, empty when
+// the configuration did not enable one, or when the fixture was built through
+// [Start], which never wires the codec server module at all.
+func (f *Fixture) CodecServerAddr() string {
+	if f.codecServer == nil {
+		return ""
+	}
+
+	return f.codecServer.Addr().String()
+}
 
 // Client is a WorkflowService client on the gateway connection.
 func (f *Fixture) Client() workflowservice.WorkflowServiceClient {
@@ -279,8 +296,12 @@ func applyDefaults(cfg *config.Config) {
 }
 
 // newFixture dials the running gateway. gRPC connects lazily, so this opens
-// nothing until the first request.
-func newFixture(t *testing.T, dp *dataplane.Dataplane, reg prometheus.Gatherer) *Fixture {
+// nothing until the first request. codecSvr is nil whenever the caller built
+// no codec server, either because [Start] never wires the module or because
+// the configuration left it disabled.
+func newFixture(
+	t *testing.T, dp *dataplane.Dataplane, reg prometheus.Gatherer, codecSvr *codecserver.Server,
+) *Fixture {
 	t.Helper()
 
 	require.NotNil(t, dp.Addr(), "the gateway must be accepting once Start returns")
@@ -289,7 +310,7 @@ func newFixture(t *testing.T, dp *dataplane.Dataplane, reg prometheus.Gatherer) 
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 
-	return &Fixture{t: t, dp: dp, conn: conn, reg: reg}
+	return &Fixture{t: t, dp: dp, conn: conn, reg: reg, codecServer: codecSvr}
 }
 
 // stopContext returns a context for shutdown that does not inherit the test's

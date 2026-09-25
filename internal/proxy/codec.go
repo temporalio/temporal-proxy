@@ -14,7 +14,7 @@ import (
 )
 
 type (
-	// CodecOptions selects the codecs a [CodecInterceptor] applies.
+	// CodecOptions selects the codecs a [Codecs] applies.
 	CodecOptions struct {
 		// Vault seals and opens payloads. With no Vault there is no encryption
 		// codec at all. Leave it nil rather than passing a nil concrete vault,
@@ -31,21 +31,23 @@ type (
 		Reporter *Reporter
 	}
 
+	// Codecs is the chain payloads travel through in both directions. It is the
+	// only place a chain is assembled, so every caller applies the same one.
+	Codecs struct {
+		inbound  []codecOpt
+		outbound []codecOpt
+	}
+
 	// codecOpt builds the [codec.Option] for one codec, given the request the
 	// payloads belong to. A codec with no per-request state ignores both
 	// arguments; the encryption codec uses them to bind its cipher.
 	codecOpt func(ctx context.Context, ns string) codec.Option
 )
 
-// CodecInterceptor returns a unary client interceptor that runs payloads through
-// the codecs opts select: outbound requests are encoded and inbound responses are
-// decoded, each through a [codec.Chain] built for that request. A direction with
-// no codecs is skipped entirely rather than walked for nothing.
-//
-// Search attributes are never encoded, so they stay queryable upstream. The
-// namespace a codec is given is the one the request carries, read via
-// [meta.NamespaceFrom].
-func CodecInterceptor(opts CodecOptions) (grpc.UnaryClientInterceptor, error) {
+// NewCodecs returns the [Codecs] opts select. Encoding is gated per codec;
+// decoding is not, so a decoder recognizes its own output and passes anything
+// else through.
+func NewCodecs(opts CodecOptions) (*Codecs, error) {
 	if opts.Encrypt && opts.Vault == nil {
 		return nil, errors.New("proxy: encryption requires a vault")
 	}
@@ -56,30 +58,86 @@ func CodecInterceptor(opts CodecOptions) (grpc.UnaryClientInterceptor, error) {
 		return nil, errors.New("proxy: a vault requires a reporter")
 	}
 
-	// Every codec is listed once, with the gate that decides whether it encodes.
-	// Decoding is ungated: a decoder recognizes its own output and passes anything
-	// else through, so including it costs nothing and keeps older data readable.
-	var outbound, inbound []codecOpt
+	c := &Codecs{}
 	if opts.Vault != nil {
 		enc := func(ctx context.Context, ns string) codec.Option {
 			return codec.WithCipher(&cipher{ctx: ctx, ns: ns, v: opts.Vault, r: opts.Reporter})
 		}
 
-		inbound = append(inbound, enc)
+		c.inbound = append(c.inbound, enc)
 		if opts.Encrypt {
-			outbound = append(outbound, enc)
+			c.outbound = append(c.outbound, enc)
 		}
 	}
 
+	return c, nil
+}
+
+// CodecInterceptor returns the unary client interceptor for the codecs opts
+// select. It is [NewCodecs] followed by [Codecs.Interceptor].
+func CodecInterceptor(opts CodecOptions) (grpc.UnaryClientInterceptor, error) {
+	c, err := NewCodecs(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.Interceptor()
+}
+
+// Interceptor returns a unary client interceptor that encodes outbound requests
+// and decodes inbound responses. A direction with no codecs is skipped entirely
+// rather than walked for nothing.
+//
+// Search attributes are never encoded, so they stay queryable upstream. The
+// namespace a codec is given is the one the request carries, read via
+// [meta.NamespaceFrom].
+func (c *Codecs) Interceptor() (grpc.UnaryClientInterceptor, error) {
 	return proxy.NewPayloadVisitorInterceptor(proxy.PayloadVisitorInterceptorOptions{
-		Inbound:  visitPayloads(inbound, codec.Chain.Decode),
-		Outbound: visitPayloads(outbound, codec.Chain.Encode),
+		Inbound:  visitPayloads(c.inbound, codec.Chain.Decode),
+		Outbound: visitPayloads(c.outbound, codec.Chain.Encode),
 	})
 }
 
-// visitPayloads returns the options that build a chain from opts per request and
-// apply it with fn ([codec.Chain.Encode] or [codec.Chain.Decode]), or nil when
-// opts is empty so that direction is left alone.
+// Decode runs payloads through the inbound chain for ns, the same chain
+// [Codecs.Interceptor] applies to a response.
+func (c *Codecs) Decode(
+	ctx context.Context,
+	ns string,
+	payloads []*common.Payload,
+) ([]*common.Payload, error) {
+	return apply(ctx, ns, c.inbound, codec.Chain.Decode, payloads)
+}
+
+// Encode runs payloads through the outbound chain for ns, the same chain
+// [Codecs.Interceptor] applies to a request.
+func (c *Codecs) Encode(
+	ctx context.Context,
+	ns string,
+	payloads []*common.Payload,
+) ([]*common.Payload, error) {
+	return apply(ctx, ns, c.outbound, codec.Chain.Encode, payloads)
+}
+
+// apply builds the chain opts imply for ctx and ns and runs payloads through it
+// with fn. Every caller reaches the chain through here, so no two of them can
+// apply different chains.
+func apply(
+	ctx context.Context,
+	ns string,
+	opts []codecOpt,
+	fn func(codec.Chain, []*common.Payload) ([]*common.Payload, error),
+	payloads []*common.Payload,
+) ([]*common.Payload, error) {
+	chain := make([]codec.Option, len(opts))
+	for i, opt := range opts {
+		chain[i] = opt(ctx, ns)
+	}
+
+	return fn(codec.NewChain(chain...), payloads)
+}
+
+// visitPayloads returns the options that apply opts with fn per request, or nil
+// when opts is empty so that direction is left alone.
 func visitPayloads(
 	opts []codecOpt,
 	fn func(codec.Chain, []*common.Payload) ([]*common.Payload, error),
@@ -92,14 +150,7 @@ func visitPayloads(
 		ConcurrencyLimit:     runtime.NumCPU(),
 		SkipSearchAttributes: true,
 		Visitor: func(ctx *proxy.VisitPayloadsContext, payloads []*common.Payload) ([]*common.Payload, error) {
-			ns := meta.NamespaceFrom(ctx)
-
-			chain := make([]codec.Option, len(opts))
-			for i, opt := range opts {
-				chain[i] = opt(ctx, ns)
-			}
-
-			return fn(codec.NewChain(chain...), payloads)
+			return apply(ctx, meta.NamespaceFrom(ctx), opts, fn, payloads)
 		},
 	}
 }

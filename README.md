@@ -70,6 +70,10 @@ reaches a different upstream with no change to the Worker.
 - **Pluggable key management.** For a backend the proxy has no built-in support for, such as an on-prem HSM or an
   internal key service, point it at an extension server you run and it wraps DEKs through that instead. Only key
   material is exchanged; payloads never reach it.
+- **Codec server.** Serve the `/encode`, `/decode`, and `/download` routes the Temporal CLI and Web UI use to seal and
+  open payloads directly, without a Worker's data converter in the loop. A codec server holds the same KMS unwrap
+  permission the proxy itself does, so one that is reachable without authentication is a decryption oracle; see
+  [Codec server](#codec-server) for the config and how it is locked down.
 - **Inbound authentication and authorization.** Optional static-token or JWKS validation on the gateway; off by default.
   For rules neither covers, delegate the decision to an extension server you run. It is told what the call is addressing
   (the gRPC method, and the Namespace the proxy resolved from the request rather than from anything the caller claims),
@@ -164,6 +168,40 @@ and then decides each call against them, the two steps Temporal OSS splits acros
 Four tokens show what that buys, including a Worker that cannot reach a second Namespace and an auditor that can read
 history but not start a Workflow.
 
+## Codec server
+
+The proxy can serve the Temporal SDK's codec server HTTP contract, so the Temporal CLI and Web UI can seal and open
+payloads directly, without a Worker's data converter in the loop. It answers `POST /encode`, `POST /decode`, and
+`POST /download`, each also reachable under a Namespace path segment (`/{namespace}/decode`, and so on) for the CLI's
+`--codec-endpoint` templating. An unknown path answers 404; a known one called with anything but `POST` answers 405,
+which is a deliberate divergence from the Temporal SDK's own codec handler, whose equivalent case answers 404.
+
+Config keys under `codecServer:`:
+
+| Key                | Default | Meaning                                                                                           |
+| ------------------ | ------- | ------------------------------------------------------------------------------------------------- |
+| `enabled`          | `false` | Turns the codec server on.                                                                        |
+| `hostPort`         | none    | Address it listens on.                                                                            |
+| `insecure`         | `false` | Serve plaintext instead of TLS. Validation only allows this on a loopback bind.                   |
+| `tls`              | none    | Certificate and key to terminate TLS with.                                                        |
+| `cors.origins`     | none    | Origins a browser-based caller, such as the Cloud UI, may reach the codec server from.            |
+| `cors.credentials` | `false` | Whether a browser may send cookies and `Authorization` alongside an allowed origin.               |
+| `auth`             | none    | Static-token or JWKS authentication. Required, along with `tls`, once `hostPort` is not loopback. |
+
+A codec server holds the same KMS unwrap permission the proxy itself does: whoever can reach it can decrypt anything
+an operator's keys protect. That is why configuration requires authentication and TLS the moment `hostPort` is not
+loopback, and why a loopback bind, meant for local development where the caller is on the same host, is left
+unauthenticated by default rather than by oversight. Point one at anything but `127.0.0.1` or `localhost` only once
+`auth` and `tls` are configured.
+
+`auth` verifies who is calling, not which Namespace they may decrypt: a token that passes it authorizes every
+Namespace's payloads, not just one. Scope a JWKS token narrowly at the issuer, or configure an extension-server
+authorizer, if a per-Namespace decision matters.
+
+On a 4xx response from `/decode`, the Temporal Web UI does not surface an error: it renders whatever payload it
+already had rather than the plaintext, so a rejected token or a malformed request looks the same to whoever is
+looking at it as ciphertext the UI has not decoded yet (`binary/encrypted`), not an obvious failure.
+
 ## Metrics
 
 The proxy serves Prometheus metrics on `/metrics`. Everything under `metrics:` in the config controls the endpoint and
@@ -182,28 +220,35 @@ how series are labeled:
 Every name below is prefixed with the metric prefix and its subsystem, so `requests_total` in the `server` subsystem is
 exposed as `tmprl_proxy_server_requests_total` by default. Each configured metadata label is added to the series
 emitted while serving a request: the `server` and `router` series, and `vault_ops`. The KEK and DEK series do not
-carry them, because they are emitted off the request path where no metadata is in scope to read. A fixed label is
-added to every series in the table, and to nothing registered outside the proxy's own collectors, so the runtime's
-`go_*` and `process_*` series stay as they are.
+carry them, because they are emitted off the request path where no metadata is in scope to read. Neither does
+`vault_ops` when the operation came from the codec server: an HTTP request carries no gRPC metadata, so a metadata
+label reports blank there even though the same series populates it for a request that passed through the gateway. A
+fixed label is added to every series in the table, and to nothing registered outside the proxy's own collectors, so
+the runtime's `go_*` and `process_*` series stay as they are.
 
-| Subsystem    | Metric                       | Type      | Labels                             |
-| ------------ | ---------------------------- | --------- | ---------------------------------- |
-| `server`     | `requests_total`             | counter   | `method`, `code`                   |
-| `server`     | `request_duration_seconds`   | histogram | `method`                           |
-| `router`     | `decisions_total`            | counter   | `upstream`, `outcome`              |
-| `router`     | `forwarding_errors_total`    | counter   | `upstream`, `reason`               |
-| `encryption` | `vault_ops_total`            | counter   | `operation`, `result`, `namespace` |
-| `encryption` | `vault_ops_duration_seconds` | histogram | `operation`, `namespace`           |
-| `encryption` | `kek_ops_total`              | counter   | `provider`, `operation`, `result`  |
-| `encryption` | `kek_ops_duration_seconds`   | histogram | `provider`, `operation`            |
-| `encryption` | `dek_ops_total`              | counter   | `operation`, `result`              |
-| `encryption` | `dek_ops_duration_seconds`   | histogram | `operation`                        |
-| `encryption` | `dek_rotations_total`        | counter   | `reason`                           |
-| `encryption` | `dek_cache_hits_total`       | counter   | none                               |
-| `encryption` | `dek_cache_misses_total`     | counter   | none                               |
-| `encryption` | `dek_cache_size`             | gauge     | none                               |
+| Subsystem      | Metric                       | Type      | Labels                             |
+| -------------- | ---------------------------- | --------- | ---------------------------------- |
+| `server`       | `requests_total`             | counter   | `method`, `code`                   |
+| `server`       | `request_duration_seconds`   | histogram | `method`                           |
+| `router`       | `decisions_total`            | counter   | `upstream`, `outcome`              |
+| `router`       | `forwarding_errors_total`    | counter   | `upstream`, `reason`               |
+| `encryption`   | `vault_ops_total`            | counter   | `operation`, `result`, `namespace` |
+| `encryption`   | `vault_ops_duration_seconds` | histogram | `operation`, `namespace`           |
+| `encryption`   | `kek_ops_total`              | counter   | `provider`, `operation`, `result`  |
+| `encryption`   | `kek_ops_duration_seconds`   | histogram | `provider`, `operation`            |
+| `encryption`   | `dek_ops_total`              | counter   | `operation`, `result`              |
+| `encryption`   | `dek_ops_duration_seconds`   | histogram | `operation`                        |
+| `encryption`   | `dek_rotations_total`        | counter   | `reason`                           |
+| `encryption`   | `dek_cache_hits_total`       | counter   | none                               |
+| `encryption`   | `dek_cache_misses_total`     | counter   | none                               |
+| `encryption`   | `dek_cache_size`             | gauge     | none                               |
+| `codec_server` | `requests_total`             | counter   | `route`, `code`                    |
+| `codec_server` | `request_duration_seconds`   | histogram | `route`                            |
 
-The `encryption` subsystem only reports once encryption keys are configured.
+The `encryption` subsystem only reports once encryption keys are configured, and `codec_server` only reports once the
+codec server is enabled. Its `route` label is the matched pattern (`/decode`, and so on), never the request path,
+since the Namespace-prefixed routes carry a Namespace there and labeling by it would be unbounded cardinality; there is
+no Namespace label on this subsystem for the same reason.
 
 ### Labels and cardinality
 
