@@ -6,17 +6,10 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/services"
 )
 
-const (
-	// getClusterInfoMethod is the WorkflowService method that describes the
-	// Temporal Service. Cloud frontends refuse it, since it carries no namespace to
-	// match the endpoint's, and no Cloud API reports what it returns.
-	getClusterInfoMethod = "/" + services.WorkflowService + "/GetClusterInfo"
-
-	// listSearchAttributesMethod is the OperatorService method that lists a
-	// namespace's search attributes. Cloud frontends refuse every OperatorService
-	// call from a customer credential, whatever its role.
-	listSearchAttributesMethod = "/" + services.OperatorService + "/ListSearchAttributes"
-)
+// getClusterInfoMethod is the WorkflowService method that describes the Temporal
+// Service. Cloud frontends refuse it, since it carries no namespace to match the
+// endpoint's, and no Cloud API reports what it returns.
+const getClusterInfoMethod = "/" + services.WorkflowService + "/GetClusterInfo"
 
 type resetable interface {
 	proto.Message
@@ -30,13 +23,6 @@ type resetable interface {
 // version, cluster id, or visibility store to fill it with.
 func getClusterInfo() *Translation {
 	return Answer(getClusterInfoMethod, resetReply)
-}
-
-// listSearchAttributes answers OperatorService.ListSearchAttributes with an empty
-// reply rather than Cloud's PermissionDenied, which the Temporal UI treats as an
-// expired login on every namespace page.
-func listSearchAttributes() *Translation {
-	return Answer(listSearchAttributesMethod, resetReply)
 }
 
 func resetReply(_ proto.Message, reply resetable) error {
