@@ -1,6 +1,8 @@
 module github.com/temporalio/temporal-proxy
 
-go 1.27
+go 1.26.0
+
+toolchain go1.27.1
 
 require (
 	github.com/MicahParks/jwkset v0.11.3
