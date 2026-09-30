@@ -14,6 +14,7 @@ import (
 
 	"github.com/temporalio/temporal-proxy/internal/api"
 	"github.com/temporalio/temporal-proxy/internal/auth"
+	"github.com/temporalio/temporal-proxy/internal/codecserver"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/dataplane"
 	"github.com/temporalio/temporal-proxy/internal/kms"
@@ -78,6 +79,7 @@ func serve() *cli.Command {
 				),
 				api.Module,
 				auth.Module,
+				codecserver.Module,
 				config.Module,
 				connect.Module,
 				dataplane.Module,

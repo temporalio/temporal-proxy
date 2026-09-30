@@ -57,9 +57,11 @@ func WithMetadataLabels(labels metrics.MetadataLabels) ReporterOption {
 }
 
 // VaultOp records a single envelope operation and its duration. ctx is the
-// request's, and supplies the configured metadata label values. This runs on the
-// per-upstream hop, where the metadata is what the gateway forwarded rather than
-// what it received, so a header the inbound authenticator consumed is gone.
+// request's, and supplies the configured metadata label values when there are
+// any: on the per-upstream hop that is what the gateway forwarded rather than
+// what it received, so a header the inbound authenticator consumed is gone,
+// and on the codec server's HTTP path there is no gRPC metadata at all, so
+// those labels come out blank there.
 func (r *Reporter) VaultOp(ctx context.Context, operation, result, namespace string, seconds float64) {
 	ns := r.nsLabel(namespace)
 	labels := r.labels.AppendValues(ctx, nil)

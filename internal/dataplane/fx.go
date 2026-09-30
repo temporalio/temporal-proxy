@@ -9,6 +9,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
+	"github.com/temporalio/temporal-proxy/internal/proxy"
 	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
@@ -21,6 +22,7 @@ import (
 // gateway/proxy topology.
 var Module = fx.Options(
 	fx.Provide(newFromParams),
+	fx.Provide(func(d *Dataplane) *proxy.Codecs { return d.Codecs() }),
 	fx.Invoke(func(lc fx.Lifecycle, d *Dataplane) {
 		lc.Append(fx.Hook{OnStart: d.Start, OnStop: d.Stop})
 	}),

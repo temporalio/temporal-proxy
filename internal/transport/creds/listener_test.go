@@ -1,6 +1,7 @@
 package creds_test
 
 import (
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
@@ -155,6 +156,52 @@ func TestListener_ServerOption(t *testing.T) {
 	t.Run("missing certificate is illegal", func(t *testing.T) {
 		t.Parallel()
 		_, err := creds.NewListener().ServerOption()
+		require.ErrorContains(t, err, "a server certificate is required")
+	})
+}
+
+func TestListener_TLSConfig(t *testing.T) {
+	t.Parallel()
+
+	t.Run("insecure has no config", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := creds.NewListener(creds.Insecure()).TLSConfig()
+		require.NoError(t, err)
+		require.Nil(t, cfg)
+	})
+
+	t.Run("server TLS presents its certificate", func(t *testing.T) {
+		t.Parallel()
+
+		_, cert, key := testutil.GenerateMTLSCerts(t)
+
+		cfg, err := creds.NewListener(creds.WithCertificate(cert, key)).TLSConfig()
+		require.NoError(t, err)
+		require.NotNil(t, cfg)
+		require.Len(t, cfg.Certificates, 1)
+		require.Equal(t, uint16(tls.VersionTLS12), cfg.MinVersion)
+		require.NotEmpty(t, cfg.CipherSuites)
+		require.Equal(t, tls.NoClientCert, cfg.ClientAuth)
+		require.Nil(t, cfg.ClientCAs)
+	})
+
+	t.Run("mutual TLS requires and verifies a client certificate", func(t *testing.T) {
+		t.Parallel()
+
+		ca, cert, key := testutil.GenerateMTLSCerts(t)
+
+		cfg, err := creds.NewListener(creds.WithCA(ca), creds.WithCertificate(cert, key)).TLSConfig()
+		require.NoError(t, err)
+		require.NotNil(t, cfg)
+		require.Equal(t, tls.RequireAndVerifyClientCert, cfg.ClientAuth)
+		require.NotNil(t, cfg.ClientCAs)
+	})
+
+	t.Run("missing certificate is illegal", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := creds.NewListener().TLSConfig()
 		require.ErrorContains(t, err, "a server certificate is required")
 	})
 }
