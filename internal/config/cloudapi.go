@@ -10,13 +10,11 @@ import (
 // whether a method is translated is derived from the rest of the configuration
 // rather than declared.
 //
-// What derives it is [Routing.NamespacelessUpstream]. The methods Temporal Cloud
-// does not serve on a namespace endpoint are the ones carrying no namespace, so
-// they land on the upstream serving namespace-less requests, and that upstream
-// being Cloud is both necessary and sufficient for a translation to be reachable.
-// An operator who wants the untranslated failure back routes those requests at a
-// Temporal Service that serves them, which is the same statement made where it
-// belongs.
+// What derives it is [Upstream.IsCloud]: every Cloud upstream gets translation,
+// and a method only fires where routing sends it. A namespace-less method lands
+// on the upstream serving namespace-less requests, so an operator who wants the
+// untranslated failure back for those routes them at a Temporal Service that
+// serves them, which is the same statement made where it belongs.
 //
 // This block exists for the two things detection cannot know: which Cloud
 // environment the control plane lives in, and the API key an mTLS upstream has

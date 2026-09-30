@@ -5,8 +5,6 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
-
-	"github.com/temporalio/temporal-proxy/internal/rpc"
 )
 
 // Option configures the interceptor [DialOptions] installs.
@@ -50,8 +48,8 @@ func DialOptions(r *Registry, opts ...Option) []grpc.DialOption {
 // request is converted, invoked under the upstream method, and the upstream's
 // reply is folded into the reply the caller allocated. A method r does not
 // translate is invoked unchanged, as is a call whose request or reply is not a
-// proto message. Any headers the translation declares are stamped on the
-// substituted call only.
+// proto message. An [Answer] fills the reply itself and invokes nothing. Any
+// headers the translation declares are stamped on the substituted call only.
 //
 // An upstream error is returned as it arrived, so the caller sees the upstream's
 // status rather than a translated one. A conversion that fails becomes Internal
@@ -85,21 +83,9 @@ func unaryClientInterceptor(r *Registry, opts ...Option) grpc.UnaryClientInterce
 			return invoker(ctx, method, req, reply, cc, callOpts...)
 		}
 
-		upReq, err := t.request(in)
-		if err != nil {
-			return rpc.StatusError("translation: adapting the request failed", err)
-		}
-
-		upReply := t.reply()
-		if err := o.invoke(t.stamp(ctx), t, upReq, upReply, cc, invoker, callOpts...); err != nil {
-			return err
-		}
-
-		if err := t.response(in, upReply, out); err != nil {
-			return rpc.StatusError("translation: adapting the reply failed", err)
-		}
-
-		return nil
+		return t.call(ctx, in, out, func(ctx context.Context, req, reply proto.Message) error {
+			return o.invoke(t.stamp(ctx), t, req, reply, cc, invoker, callOpts...)
+		})
 	}
 }
 

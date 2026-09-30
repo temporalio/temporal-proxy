@@ -130,8 +130,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 	// ignoring it silently.
 	if !cfg.APITranslations.CloudAPI.IsZero() && !translates(cfg) {
 		o.logger.Warn(
-			"apiTranslations is configured but namespace-less requests are not served by a Temporal Cloud upstream, " +
-				"so no method will be translated",
+			"apiTranslations is configured but no upstream is Temporal Cloud, so no method will be translated",
 		)
 	}
 
@@ -388,19 +387,18 @@ func newUpstreamTier(
 
 	dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(cdc))
 
-	// Cloud does not serve every WorkflowService method on a frontend, so the ones
-	// it answers elsewhere are translated and sent to its control plane instead.
-	// Nothing configures that: the methods in question carry no namespace, so they
-	// land on the upstream namespace-less requests are routed to, and that upstream
-	// being Cloud is what makes them translatable. Installing this on any other
-	// upstream would build a control plane connection no request can reach, and on
-	// a Temporal Service that serves those methods itself it would divert a call
-	// that was already going to work.
+	// Cloud does not serve every method on a frontend, so the ones it answers
+	// elsewhere are translated and sent to its control plane instead, and the ones
+	// it answers nowhere are replied to by the proxy itself. Nothing configures
+	// that: every Cloud upstream gets the whole registry, since a namespaced method
+	// lands on whichever Cloud upstream its namespace routes to, and an entry that
+	// never lands on a given upstream simply never fires there. A Temporal Service
+	// gets none, since it serves those methods itself.
 	//
 	// It goes on last so it is the innermost interceptor: the namespace translator
 	// and the payload codec above it then see the method and message types the
 	// caller asked for, and only the hop onto the wire carries the substitute.
-	if up.IsCloud() && cfg.Routing.NamespacelessUpstream() == up.Name {
+	if up.IsCloud() {
 		reg, conn, err := cloudAPIConn(cfg, o, up)
 		if err != nil {
 			return nil, nil, err
@@ -452,14 +450,12 @@ func (r keyedResolver) Resolve(ctx context.Context) (string, string, []grpc.Dial
 }
 
 // translates reports whether any upstream will have method translation
-// installed, which is the upstream serving namespace-less requests being
-// Temporal Cloud. It is the same question perUpstream asks of one upstream, so a
-// configuration this answers false for installs nothing anywhere.
+// installed, which is any upstream being Temporal Cloud. It is the same question
+// perUpstream asks of one upstream, so a configuration this answers false for
+// installs nothing anywhere.
 func translates(cfg *config.Config) bool {
-	name := cfg.Routing.NamespacelessUpstream()
-
 	return slices.ContainsFunc(cfg.Upstreams, func(up config.Upstream) bool {
-		return up.Name == name && up.IsCloud()
+		return up.IsCloud()
 	})
 }
 
@@ -513,7 +509,21 @@ func cloudAPIConn(cfg *config.Config, o *options, up *config.Upstream) (*transla
 		log.Warn("the configured Cloud API is not a Temporal Cloud endpoint")
 	}
 
-	log.Info("translating methods to the Cloud API", tag.String("methods", strings.Join(reg.Methods(), ", ")))
+	// An answered method never reaches the Cloud API, so it is reported apart from
+	// the ones that do.
+	var translated, answered []string
+	for _, method := range reg.Methods() {
+		if t, _ := reg.Lookup(method); t.To() == "" {
+			answered = append(answered, method)
+		} else {
+			translated = append(translated, method)
+		}
+	}
+
+	log.Info("translating methods to the Cloud API", tag.String("methods", strings.Join(translated, ", ")))
+	if len(answered) > 0 {
+		log.Info("answering methods Cloud cannot serve", tag.String("methods", strings.Join(answered, ", ")))
+	}
 
 	return reg, conn, nil
 }

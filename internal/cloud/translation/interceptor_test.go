@@ -230,6 +230,48 @@ func TestViaSendsTheSubstitutedCallElsewhere(t *testing.T) {
 	require.False(t, installed.wasCalled(), "and leaves the chain rather than continuing down it")
 }
 
+func TestDialOptionsAnswersWithoutCallingAnyUpstream(t *testing.T) {
+	t.Parallel()
+
+	r, err := translation.NewRegistry(translation.Answer(fromMethod, okAnswer))
+	require.NoError(t, err)
+
+	// The fake does not implement fromMethod, so a call that escaped the answer
+	// would fail Unimplemented rather than return the reply below.
+	elsewhere := newSystemInfoService(t)
+	installed := newSystemInfoService(t)
+	cc := dial(t, installed, translation.DialOptions(r, translation.Via(dial(t, elsewhere)))...)
+
+	reply := &workflowservice.DescribeNamespaceResponse{}
+	err = cc.Invoke(t.Context(), fromMethod, &workflowservice.DescribeNamespaceRequest{Namespace: "payments"}, reply)
+	require.NoError(t, err)
+
+	require.Equal(t, "payments@local", reply.GetNamespaceInfo().GetName())
+	require.False(t, installed.wasCalled(), "an answer does not continue down the chain")
+	require.False(t, elsewhere.wasCalled(), "or go to the Via connection")
+}
+
+func TestDialOptionsReportsAFailedAnswerAsInternal(t *testing.T) {
+	t.Parallel()
+
+	r, err := translation.NewRegistry(translation.Answer(
+		fromMethod,
+		func(*workflowservice.DescribeNamespaceRequest, *workflowservice.DescribeNamespaceResponse) error {
+			return errors.New("boom")
+		},
+	))
+	require.NoError(t, err)
+
+	cc := dial(t, newSystemInfoService(t), translation.DialOptions(r)...)
+
+	err = cc.Invoke(
+		t.Context(), fromMethod,
+		&workflowservice.DescribeNamespaceRequest{}, &workflowservice.DescribeNamespaceResponse{},
+	)
+	require.Equal(t, codes.Internal, status.Code(err), "a compiled-in answer that fails is a proxy bug")
+	require.ErrorContains(t, err, "boom")
+}
+
 // testRegistry holds the one test translation.
 func testRegistry(t *testing.T) *translation.Registry {
 	t.Helper()

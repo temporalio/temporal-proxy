@@ -16,5 +16,9 @@ func Default() (*Registry, error) {
 var defaultRegistry = sync.OnceValues(func() (*Registry, error) {
 	return NewRegistry(
 		listNamespaces(),
+		getClusterInfo(),
+		listSearchAttributes(),
+		listNexusEndpoints(),
+		getNexusEndpoint(),
 	)
 })

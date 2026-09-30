@@ -36,6 +36,19 @@ func TestNewRegistryCanonicalizesMethods(t *testing.T) {
 	require.Equal(t, []string{"/pkg.Service/From"}, r.Methods())
 }
 
+func TestNewRegistryAcceptsAnAnswer(t *testing.T) {
+	t.Parallel()
+
+	r, err := translation.NewRegistry(translation.Answer("pkg.Service/From", okAnswer))
+	require.NoError(t, err)
+
+	got, ok := r.Lookup("/pkg.Service/From")
+	require.True(t, ok)
+	require.Equal(t, "/pkg.Service/From", got.From())
+	require.Empty(t, got.To(), "an answer substitutes no upstream method")
+	require.Equal(t, []string{"/pkg.Service/From"}, r.Methods())
+}
+
 func TestNewRegistryRejectsBadMappings(t *testing.T) {
 	t.Parallel()
 
@@ -99,6 +112,13 @@ func TestRegistryLookupMisses(t *testing.T) {
 // about.
 func okRequest(*workflowservice.DescribeNamespaceRequest) (*workflowservice.GetSystemInfoRequest, error) {
 	return &workflowservice.GetSystemInfoRequest{}, nil
+}
+
+// okAnswer fills the caller's reply from its request alone, the way an answer
+// has to.
+func okAnswer(req *workflowservice.DescribeNamespaceRequest, reply *workflowservice.DescribeNamespaceResponse) error {
+	reply.NamespaceInfo = &namespacepb.NamespaceInfo{Name: req.GetNamespace() + "@local"}
+	return nil
 }
 
 // okResponse folds both the original request and the upstream reply into the

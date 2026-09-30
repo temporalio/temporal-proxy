@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	enumspb "go.temporal.io/api/enums/v1"
+	operatorservice "go.temporal.io/api/operatorservice/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	cloudservice "go.temporal.io/cloud-sdk/api/cloudservice/v1"
 	cloudnamespace "go.temporal.io/cloud-sdk/api/namespace/v1"
@@ -310,6 +311,39 @@ func TestEndToEndACloudUpstreamServingNoNamespacelessRequestsTranslatesNothing(t
 	)
 	require.Error(t, err, "the request went to the upstream serving namespace-less traffic, untranslated")
 	require.Nil(t, cloud.request(), "and the control plane is never reached")
+}
+
+// TestEndToEndANamespacedAnswerFiresOnTheCloudUpstreamItLandsOn is the other half
+// of the hybrid. ListSearchAttributes carries a namespace, so it is routed by rule
+// to the Cloud upstream rather than to the one serving namespace-less requests,
+// and must be answered there. The fake implements no OperatorService, so a call
+// that went upstream would fail Unimplemented.
+func TestEndToEndANamespacedAnswerFiresOnTheCloudUpstreamItLandsOn(t *testing.T) {
+	t.Parallel()
+
+	f := dataplanetest.StartApp(t, &config.Config{
+		Routing: config.Routing{
+			DefaultUpstream: "onprem",
+			SystemUpstream:  "onprem",
+			Rules: []config.RoutingRule{{
+				Upstream: "cloud",
+				Match:    config.RoutingMatch{Namespace: "*.a1b2c"},
+			}},
+		},
+		Upstreams: config.UpstreamList{
+			{Name: "onprem", Listen: dataplanetest.NewUpstream(t).Listen()},
+			{Name: "cloud", Cloud: true, Listen: dataplanetest.NewUpstream(t).Listen()},
+		},
+	})
+
+	reply, err := operatorservice.NewOperatorServiceClient(f.Conn()).ListSearchAttributes(
+		f.Context(),
+		&operatorservice.ListSearchAttributesRequest{Namespace: "payments.a1b2c"},
+		grpc.WaitForReady(true),
+	)
+	require.NoError(t, err)
+	require.Empty(t, reply.GetCustomAttributes())
+	require.Empty(t, reply.GetSystemAttributes())
 }
 
 // TestEndToEndTheDefaultUpstreamCarriesNamespacelessRequests covers the ordinary

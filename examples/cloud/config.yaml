@@ -41,6 +41,13 @@ upstreams:
   # here we reuse TEMPORAL_NAMESPACE's endpoint.
   - name: system
     hostPort: ${TEMPORAL_NAMESPACE}.${TEMPORAL_ACCOUNT}.tmprl.cloud:7233
+    namespaces:
+      rules:
+        # The same rule as the cloud upstream. Some namespace-less calls reply
+        # with namespace names (ListNamespaces, ListNexusEndpoints), and without
+        # it those come back fully qualified, so a client that sends one back
+        # gets the suffix added twice.
+        suffix: .$TEMPORAL_ACCOUNT
     credentials:
       static:
         apiKey: ${TEMPORAL_API_KEY}
