@@ -1,0 +1,39 @@
+# Proxy configuration for the codec server example.
+#
+# The gateway seals every payload before it reaches the Temporal Service. The
+# codec server, on its own port, opens and seals payloads with the same keys
+# for clients that talk to the Temporal Service directly: the temporal CLI's
+# --codec-endpoint and the Web UI.
+#
+# The proxy runs from the repository root.
+hostPort: 127.0.0.1:7234 # the dev server holds 7233
+
+routing:
+  default: local
+
+upstreams:
+  - name: local
+    hostPort: 127.0.0.1:7233 # temporal server start-dev
+    insecure: true # start-dev serves plaintext; the proxy dials TLS by default
+
+encryption:
+  enabled: true
+  default:
+    # The testing scheme holds the key in the URI itself, which is only fit for
+    # local runs. It is fixed rather than random so history sealed before a
+    # proxy restart still opens after it.
+    uri: testing://HYOkCF3tBBMqTjzqlDaTxEe1x8pQjPPUNQ27FXIN-24=
+    duration: 1h
+    renewBefore: 15m
+
+codecServer:
+  enabled: true
+  # Plaintext with no auth block is only accepted on a loopback bind; anything
+  # else requires both tls and auth.
+  hostPort: 127.0.0.1:8081
+  insecure: true
+  cors:
+    # The browser's origin is whichever host was typed, so list both.
+    origins:
+      - http://localhost:8233
+      - http://127.0.0.1:8233
