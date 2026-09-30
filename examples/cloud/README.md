@@ -119,7 +119,7 @@ itself:
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | Namespace list, Nexus endpoints | Translated onto Cloud's control plane (`CloudService`), so they show real data.                                                                |
 | `GetClusterInfo`                | Answered with an empty reply. The UI gates features such as advanced visibility and bulk actions on the version it carries, so those stay off. |
-| Search attributes               | Answered with an empty reply, so custom search attributes are missing from filters and columns.                                                |
+| Search attributes               | Custom search attributes are read from the Namespace's Cloud spec. Cloud reports no system search attributes, so none are listed.              |
 
 A few pages still fail: archived Workflows (Cloud refuses it), creating or editing Nexus endpoints, and the newest pages
 such as Worker counts, which fail with `unknown method` until the proxy's Temporal API dependency catches up.

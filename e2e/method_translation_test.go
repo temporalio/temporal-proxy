@@ -31,10 +31,11 @@ type cloudUpstream struct {
 
 	addr string
 
-	mu   sync.Mutex
-	got  *cloudservice.GetNamespacesRequest
-	md   metadata.MD
-	page []*cloudnamespace.Namespace
+	mu    sync.Mutex
+	got   *cloudservice.GetNamespacesRequest
+	md    metadata.MD
+	page  []*cloudnamespace.Namespace
+	getNS string
 }
 
 // TestEndToEndListNamespacesTranslatesOntoCloudService drives the full stack the
@@ -203,6 +204,24 @@ func (u *cloudUpstream) GetNamespaces(
 	return &cloudservice.GetNamespacesResponse{Namespaces: u.page}, nil
 }
 
+// GetNamespace records the namespace it was asked for and answers with one custom
+// search attribute.
+func (u *cloudUpstream) GetNamespace(
+	_ context.Context, req *cloudservice.GetNamespaceRequest,
+) (*cloudservice.GetNamespaceResponse, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	u.getNS = req.GetNamespace()
+
+	return &cloudservice.GetNamespaceResponse{Namespace: &cloudnamespace.Namespace{
+		Namespace: req.GetNamespace(),
+		Spec: &cloudnamespace.NamespaceSpec{SearchAttributes: map[string]cloudnamespace.NamespaceSpec_SearchAttributeType{
+			"OrderId": cloudnamespace.NamespaceSpec_SEARCH_ATTRIBUTE_TYPE_KEYWORD,
+		}},
+	}}, nil
+}
+
 func (u *cloudUpstream) setPage(ns ...*cloudnamespace.Namespace) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -217,6 +236,15 @@ func (u *cloudUpstream) request() *cloudservice.GetNamespacesRequest {
 	defer u.mu.Unlock()
 
 	return u.got
+}
+
+// gotNamespace is the namespace the most recent GetNamespace asked for, or empty
+// before the first one arrives.
+func (u *cloudUpstream) gotNamespace() string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	return u.getNS
 }
 
 func (u *cloudUpstream) metadata() metadata.MD {
@@ -313,13 +341,17 @@ func TestEndToEndACloudUpstreamServingNoNamespacelessRequestsTranslatesNothing(t
 	require.Nil(t, cloud.request(), "and the control plane is never reached")
 }
 
-// TestEndToEndANamespacedAnswerFiresOnTheCloudUpstreamItLandsOn is the other half
-// of the hybrid. ListSearchAttributes carries a namespace, so it is routed by rule
-// to the Cloud upstream rather than to the one serving namespace-less requests,
-// and must be answered there. The fake implements no OperatorService, so a call
-// that went upstream would fail Unimplemented.
-func TestEndToEndANamespacedAnswerFiresOnTheCloudUpstreamItLandsOn(t *testing.T) {
+// TestEndToEndANamespacedTranslationFiresOnTheCloudUpstreamItLandsOn is the
+// other half of the hybrid. ListSearchAttributes carries a namespace, so it is
+// routed by rule to the Cloud upstream rather than to the one serving
+// namespace-less requests, and must be translated there. The Cloud upstream's
+// namespace rules also pin the ordering: GetNamespace must be asked for the
+// remote name, which only happens when namespace translation runs before method
+// translation replaces the call.
+func TestEndToEndANamespacedTranslationFiresOnTheCloudUpstreamItLandsOn(t *testing.T) {
 	t.Parallel()
+
+	cloud := newCloudUpstream(t)
 
 	f := dataplanetest.StartApp(t, &config.Config{
 		Routing: config.Routing{
@@ -327,22 +359,33 @@ func TestEndToEndANamespacedAnswerFiresOnTheCloudUpstreamItLandsOn(t *testing.T)
 			SystemUpstream:  "onprem",
 			Rules: []config.RoutingRule{{
 				Upstream: "cloud",
-				Match:    config.RoutingMatch{Namespace: "*.a1b2c"},
+				Match:    config.RoutingMatch{Namespace: "payments"},
 			}},
 		},
 		Upstreams: config.UpstreamList{
 			{Name: "onprem", Listen: dataplanetest.NewUpstream(t).Listen()},
-			{Name: "cloud", Cloud: true, Listen: dataplanetest.NewUpstream(t).Listen()},
+			{
+				Name:       "cloud",
+				Cloud:      true,
+				Listen:     dataplanetest.NewUpstream(t).Listen(),
+				Namespaces: config.NamespaceConfig{Rules: config.NamespaceRules{Suffix: ".a1b2c"}},
+			},
 		},
+		APITranslations: cloudAPIAt(cloud.addr),
 	})
 
 	reply, err := operatorservice.NewOperatorServiceClient(f.Conn()).ListSearchAttributes(
 		f.Context(),
-		&operatorservice.ListSearchAttributesRequest{Namespace: "payments.a1b2c"},
+		&operatorservice.ListSearchAttributesRequest{Namespace: "payments"},
 		grpc.WaitForReady(true),
 	)
 	require.NoError(t, err)
-	require.Empty(t, reply.GetCustomAttributes())
+
+	require.Equal(t, "payments.a1b2c", cloud.gotNamespace(), "GetNamespace must be asked for the remote name")
+	require.Equal(t,
+		map[string]enumspb.IndexedValueType{"OrderId": enumspb.INDEXED_VALUE_TYPE_KEYWORD},
+		reply.GetCustomAttributes(),
+	)
 	require.Empty(t, reply.GetSystemAttributes())
 }
 

@@ -17,12 +17,12 @@
 // innermost, so namespace translation, payload codecs, and the reflective
 // forwarder all keep seeing the method and message types the caller asked for.
 //
-// The proxy ships WorkflowService.ListNamespaces onto CloudService.GetNamespaces
-// and the OperatorService Nexus endpoint reads onto their CloudService
-// equivalents, since Temporal Cloud serves those from its own control plane
-// rather than from a frontend, and empty answers to WorkflowService.GetClusterInfo
-// and OperatorService.ListSearchAttributes, which Cloud refuses to customer
-// credentials everywhere.
+// The proxy ships WorkflowService.ListNamespaces onto CloudService.GetNamespaces,
+// OperatorService.ListSearchAttributes onto CloudService.GetNamespace, and the
+// OperatorService Nexus endpoint reads onto their CloudService equivalents, since
+// Temporal Cloud serves those from its own control plane rather than from a
+// frontend. WorkflowService.GetClusterInfo gets an empty answer, since Cloud
+// refuses it to customer credentials and reports what it returns nowhere.
 //
 // The mechanism itself knows nothing about Cloud, and is kept separate from the
 // parent package so that using [cloud.IsEndpoint] or [cloud.ValidateNamespace]
