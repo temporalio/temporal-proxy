@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/temporalio/temporal-proxy/internal/cloud"
+	"github.com/temporalio/temporal-proxy/internal/transport/resolve"
 	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
@@ -74,7 +75,7 @@ func (u *Upstream) Validate() error {
 		validation.Field("name", u.Name, validation.Required[string]()),
 		validation.WhenRules(
 			func() bool { return !isTemplated(u.Listen.HostPort) },
-			validation.Field("hostPort", u.Listen.HostPort, validation.IsHostPort()),
+			validation.Field("hostPort", u.Listen.HostPort, upstreamHostPort()),
 		),
 		validation.WhenRules(
 			func() bool { return u.Listen.TLS != nil },
@@ -271,4 +272,19 @@ func (m *NamespaceMapping) Validate() error {
 // at config-load time.
 func isTemplated(s string) bool {
 	return strings.Contains(s, "{{") && strings.Contains(s, "}}")
+}
+
+// upstreamHostPort accepts a host:port, or an srv:/// target naming the SRV
+// record that lists the upstream's backends.
+func upstreamHostPort() validation.Check[string] {
+	hostPort := validation.IsHostPort()
+
+	return func(s string) error {
+		if resolve.IsTarget(s) {
+			_, err := resolve.ParseTarget(s)
+			return err
+		}
+
+		return hostPort(s)
+	}
 }
