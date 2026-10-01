@@ -27,6 +27,7 @@ type (
 		Listen      ListenConfig      `yaml:",inline"`
 		Namespaces  NamespaceConfig   `yaml:"namespaces"`
 		Credentials *CredentialConfig `yaml:"credentials"`
+		Connection  ConnectionConfig  `yaml:"connection"`
 	}
 
 	UpstreamList []Upstream
@@ -62,7 +63,8 @@ type (
 	}
 )
 
-// Validate checks the upstream name, dial target, and namespace configuration.
+// Validate checks the upstream name, dial target, namespace, and connection
+// configuration.
 // A templated hostPort (containing a text/template action) is resolved
 // per-request, so it is not checked as a literal host:port here; a static
 // hostPort still is.
@@ -79,6 +81,7 @@ func (u *Upstream) Validate() error {
 			func() validation.Errors { return u.Listen.TLS.validateOutbound() },
 		),
 		validation.Nested("namespaces", &u.Namespaces),
+		validation.Nested("connection", &u.Connection),
 		validation.WhenRules(
 			func() bool { return u.Credentials != nil },
 			validation.Nested("credentials", u.Credentials),

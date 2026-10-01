@@ -182,9 +182,15 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		}
 
 		// The gateway dials this socket. Creating the connection does not open
-		// one, so nothing connects until the proxy has bound it.
+		// one, so nothing connects until the proxy has bound it. Every response
+		// from the upstream crosses this hop too, so it takes the upstream's limit.
 		sock := "unix://" + path
-		conn, err := o.pool.ConnOrCreate(sock, sock, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err := o.pool.ConnOrCreate(
+			sock,
+			sock,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(int(up.Connection.ResponseLimit()))),
+		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create upstream client[%q]: %w", up.Name, err)
 		}

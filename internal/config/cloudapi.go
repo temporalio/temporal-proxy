@@ -62,7 +62,8 @@ type CloudAPI struct {
 // the control plane as well as the frontend. TLS is not: the control plane is a
 // different host, so src's server name or client certificate would not apply to
 // it, and the dial default stands instead - verification against the system root
-// pool, which is what the real control plane presents.
+// pool, which is what the real control plane presents. The connection settings
+// are inherited too, so one block tunes both connections to the same account.
 //
 // When this block is present its tls and insecure are authoritative, the same way
 // they are on an upstream: an absent tls still verifies against the system roots,
@@ -79,6 +80,7 @@ func (c CloudAPI) Upstream(src *Upstream) *Upstream {
 		Cloud:       true,
 		Listen:      ListenConfig{HostPort: cloud.APIHostPort},
 		Credentials: src.Credentials,
+		Connection:  src.Connection,
 	}
 
 	if c.Listen.HostPort != "" {
