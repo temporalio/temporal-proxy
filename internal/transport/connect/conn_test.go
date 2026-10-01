@@ -3,6 +3,7 @@ package connect_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -120,6 +121,39 @@ func TestConnFactoryErrorPropagates(t *testing.T) {
 	require.Equal(t, 2, calls, "both Invoke and NewStream resolve through the factory")
 }
 
+func TestConnWithConnectionsRoundRobins(t *testing.T) {
+	t.Parallel()
+
+	var keys []string
+	boom := errors.New("recorded")
+	factory := func(key, _ string, _ ...grpc.DialOption) (*grpc.ClientConn, error) {
+		keys = append(keys, key)
+		return nil, boom
+	}
+
+	c, err := connect.NewConn(factory, fakeResolver{key: "k", target: "t"}, connect.WithConnections(3))
+	require.NoError(t, err)
+
+	for range 4 {
+		require.ErrorIs(t, c.Invoke(t.Context(), "/svc/Method", nil, nil), boom)
+	}
+
+	require.Equal(t, []string{"k#0", "k#1", "k#2", "k#0"}, keys)
+}
+
+func TestNewConnRejectsEmptyPool(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	_, err := connect.NewConn(
+		countingFactory(&calls, nil, nil),
+		connect.StaticResolver("passthrough:///x", insecureOpt()),
+		connect.WithConnections(0),
+	)
+	require.ErrorContains(t, err, "pool size must be at least 1, got 0")
+	require.Zero(t, calls)
+}
+
 func TestConnWaitReady(t *testing.T) {
 	t.Parallel()
 
@@ -144,6 +178,34 @@ func TestConnWaitReady(t *testing.T) {
 
 		require.NoError(t, c.WaitReady(ctx))
 		require.Equal(t, connectivity.Ready, cc.GetState())
+	})
+
+	// Opening only the first connection, or creating them lazily, leaves the
+	// others idle or missing and fails this.
+	t.Run("opens every connection in a static pool", func(t *testing.T) {
+		t.Parallel()
+
+		pool := connect.NewPool()
+		t.Cleanup(func() { require.NoError(t, pool.Close()) })
+
+		addr := serveTCP(t)
+		c, err := connect.NewConn(
+			pool.ConnOrCreate,
+			connect.StaticResolver(addr, insecureOpt()),
+			connect.WithConnections(3),
+		)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+
+		require.NoError(t, c.WaitReady(ctx))
+
+		for i := range 3 {
+			cc, err := pool.Conn(fmt.Sprintf("%s#%d", addr, i))
+			require.NoError(t, err)
+			require.Equal(t, connectivity.Ready, cc.GetState())
+		}
 	})
 
 	t.Run("reports the target that never becomes ready", func(t *testing.T) {

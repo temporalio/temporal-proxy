@@ -17,9 +17,16 @@ const (
 	defaultKeepAliveTime    = 30 * time.Second
 	defaultKeepAliveTimeout = 15 * time.Second
 
+	// defaultMaxConnections keeps every call to an upstream on one connection.
+	defaultMaxConnections = 1
+
 	// maxResponseSizeLimit is one past the largest size gRPC can represent, since
 	// it takes the limit as an int32-sized int.
 	maxResponseSizeLimit ByteSize = 2 << 30 // 2147483648 (2GiB)
+
+	// maxConnectionsLimit is one past the largest pool allowed. Static upstreams
+	// open every connection on start, so a typo should not open thousands.
+	maxConnectionsLimit = 65
 
 	// minKeepAliveTime is gRPC's floor on the ping interval, which a Temporal
 	// Service also enforces. gRPC raises a lower value to it with only a log
@@ -32,6 +39,7 @@ type (
 	// optional; see the accessors for what an absent one means.
 	ConnectionConfig struct {
 		MaxResponseSize ByteSize        `yaml:"maxResponseSize"`
+		MaxConnections  int             `yaml:"maxConnections"`
 		KeepAlive       KeepAliveConfig `yaml:"keepAlive"`
 	}
 
@@ -50,8 +58,15 @@ func (c *ConnectionConfig) ResponseLimit() ByteSize {
 	return cmp.Or(c.MaxResponseSize, defaultMaxResponseSize)
 }
 
-// Validate requires a positive response size that gRPC can represent and valid
-// keepalive settings. Fields are checked through their accessors, so an absent
+// PoolSize is how many connections calls to the upstream are spread across: the
+// configured count when there is one, and [defaultMaxConnections] when the field
+// is absent.
+func (c *ConnectionConfig) PoolSize() int {
+	return cmp.Or(c.MaxConnections, defaultMaxConnections)
+}
+
+// Validate requires a positive response size that gRPC can represent, a pool of
+// 1 to 64 connections, and valid keepalive settings. Fields are checked through their accessors, so an absent
 // field is the default (which passes).
 func (c *ConnectionConfig) Validate() error {
 	return validation.Validate(
@@ -61,6 +76,12 @@ func (c *ConnectionConfig) Validate() error {
 			c.ResponseLimit(),
 			validation.GT[ByteSize](0),
 			validation.LT(maxResponseSizeLimit),
+		),
+		validation.Field(
+			"maxConnections",
+			c.PoolSize(),
+			validation.GT(0),
+			validation.LT(maxConnectionsLimit),
 		),
 		validation.Nested("keepAlive", &c.KeepAlive),
 	)

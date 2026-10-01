@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
@@ -34,6 +35,7 @@ type Upstream struct {
 	// the test reads.
 	mu          sync.Mutex
 	metadata    metadata.MD
+	peers       []string
 	requests    []proto.Message
 	queryResult *common.Payloads
 }
@@ -134,6 +136,16 @@ func (u *Upstream) QueryWorkflow(
 	return &workflowservice.QueryWorkflowResponse{QueryResult: req.GetQuery().GetQueryArgs()}, nil
 }
 
+// Peers returns the distinct client addresses requests arrived from, in the
+// order first seen. Each connection has its own source port, so this is the
+// connections the proxy actually used.
+func (u *Upstream) Peers() []string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	return slices.Clone(u.peers)
+}
+
 // Requests returns every request received so far, in arrival order.
 func (u *Upstream) Requests() []proto.Message {
 	u.mu.Lock()
@@ -157,6 +169,10 @@ func (u *Upstream) record(ctx context.Context, req proto.Message) {
 
 	u.metadata = md
 	u.requests = append(u.requests, req)
+
+	if p, ok := peer.FromContext(ctx); ok && !slices.Contains(u.peers, p.Addr.String()) {
+		u.peers = append(u.peers, p.Addr.String())
+	}
 }
 
 // newUpstream serves a fake frontend on an ephemeral loopback port. The

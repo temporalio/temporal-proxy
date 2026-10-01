@@ -430,7 +430,7 @@ func newUpstreamTier(
 		return nil, nil, err
 	}
 
-	conn, err := connect.NewConn(o.pool.ConnOrCreate, res)
+	conn, err := connect.NewConn(o.pool.ConnOrCreate, res, connect.WithConnections(up.Connection.PoolSize()))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -514,6 +514,8 @@ func cloudAPIConn(cfg *config.Config, o *options, up *config.Upstream) (*transla
 		return nil, nil, fmt.Errorf("failed to resolve the Cloud API of upstream %q: %w", up.Name, err)
 	}
 
+	// A single connection, whatever maxConnections says: translated calls are
+	// short control-plane requests, not the long polls a pool spreads out.
 	conn, err := connect.NewConn(o.pool.ConnOrCreate, keyedResolver{Resolver: res, key: api.Name})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create the Cloud API client of upstream %q: %w", up.Name, err)

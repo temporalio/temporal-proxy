@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
@@ -22,12 +24,18 @@ type (
 	// call through a Resolver and fetches (lazily creating) the underlying
 	// pooled connection through a ConnFactory. With a dynamic Resolver a single
 	// Conn fronts many physical connections (e.g. one per namespace); with a
-	// static Resolver it always resolves to the same one. Construct one with
+	// static Resolver it always resolves to the same one. [WithConnections]
+	// spreads calls across several connections per target. Construct one with
 	// NewConn.
 	Conn struct {
 		factory  ConnFactory
 		resolver Resolver
+		size     int
+		next     atomic.Uint64
 	}
+
+	// ConnOption configures a Conn at construction.
+	ConnOption func(*Conn)
 
 	// ConnFactory returns the pooled connection for a (key, target) pair,
 	// creating it on first use. [Pool.ConnOrCreate] satisfies this signature:
@@ -64,15 +72,24 @@ type (
 // Creating it is not the same as opening it: gRPC connects on demand, so no
 // socket exists until [Conn.WaitReady] or the first request. A dynamic resolver
 // defers creation to the first call that resolves a given target.
-func NewConn(f ConnFactory, r Resolver) (*Conn, error) {
+func NewConn(f ConnFactory, r Resolver, opts ...ConnOption) (*Conn, error) {
 	cc := &Conn{
 		factory:  f,
 		resolver: r,
+		size:     1,
 	}
 
-	// Static resolvers create their connection up front
+	for _, opt := range opts {
+		opt(cc)
+	}
+
+	if cc.size < 1 {
+		return nil, fmt.Errorf("connection pool size must be at least 1, got %d", cc.size)
+	}
+
+	// Static resolvers create their connections up front
 	if r.IsStatic() {
-		if _, err := cc.conn(context.Background()); err != nil {
+		if _, _, err := cc.connections(context.Background()); err != nil {
 			return nil, fmt.Errorf("failed to initialize connection: %w", err)
 		}
 	}
@@ -88,6 +105,13 @@ func StaticResolver(hostPort string, opts ...grpc.DialOption) Resolver {
 		addr: hostPort,
 		opts: opts,
 	}
+}
+
+// WithConnections spreads calls across n connections per target, taken in turn.
+// Each is a separate pool entry, keyed by the resolved key with a "#i" suffix; at
+// the default of 1 the key is used as is.
+func WithConnections(n int) ConnOption {
+	return func(c *Conn) { c.size = n }
 }
 
 // WaitReady opens conns and blocks until each is ready or ctx is done,
@@ -148,8 +172,8 @@ func (c *Conn) NewStream(
 	return cc.NewStream(ctx, desc, method, opts...)
 }
 
-// WaitReady opens the underlying connection and blocks until it is ready or ctx
-// is done, whichever comes first. [NewConn] creates a static Conn's connection
+// WaitReady opens the underlying connections and blocks until each is ready or
+// ctx is done, whichever comes first. [NewConn] creates a static Conn's connection
 // but grpc.NewClient only dials on demand, so nothing is open until this runs (or
 // the first request arrives); this is what makes the connection real ahead of
 // serving traffic.
@@ -167,22 +191,85 @@ func (c *Conn) WaitReady(ctx context.Context) error {
 		return nil
 	}
 
-	// Resolved here rather than through conn so the target is in hand to name any
-	// error; the factory hands back the connection built in NewConn.
+	// The factory hands back the connections built in NewConn, along with the
+	// target to name any error.
+	conns, target, err := c.connections(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Connect moves a connection out of idle. It does not wait for the attempt to
+	// begin, let alone finish, so every one is started before any is awaited and
+	// they come up together.
+	for _, cc := range conns {
+		cc.Connect()
+	}
+
+	for _, cc := range conns {
+		if err := awaitReady(ctx, cc, target); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// conn resolves the request and returns the next pooled connection for it.
+func (c *Conn) conn(ctx context.Context) (*grpc.ClientConn, error) {
 	key, target, opts, err := c.resolver.Resolve(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	cc, err := c.factory(key, target, opts...)
+	i := 0
+	if c.size > 1 {
+		i = int((c.next.Add(1) - 1) % uint64(c.size))
+	}
+
+	return c.factory(c.member(key, i), target, opts...)
+}
+
+// connections resolves the request and returns every pooled connection for it,
+// creating any that do not exist yet, along with the dial target.
+func (c *Conn) connections(ctx context.Context) ([]*grpc.ClientConn, string, error) {
+	key, target, opts, err := c.resolver.Resolve(ctx)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 
-	// Connect moves the connection out of idle. It does not wait for the attempt
-	// to begin, let alone finish, so the state changes are awaited below.
-	cc.Connect()
+	conns := make([]*grpc.ClientConn, c.size)
+	for i := range conns {
+		if conns[i], err = c.factory(c.member(key, i), target, opts...); err != nil {
+			return nil, "", err
+		}
+	}
 
+	return conns, target, nil
+}
+
+// member is the pool key of connection i for key. A single connection keeps the
+// key unchanged.
+func (c *Conn) member(key string, i int) string {
+	if c.size == 1 {
+		return key
+	}
+
+	return key + "#" + strconv.Itoa(i)
+}
+
+// IsStatic reports that a staticResolver never varies with the request.
+func (r *staticResolver) IsStatic() bool {
+	return true
+}
+
+// Resolve returns the fixed address as both the cache key and dial target,
+// along with the configured dial options.
+func (r *staticResolver) Resolve(context.Context) (string, string, []grpc.DialOption, error) {
+	return r.addr, r.addr, r.opts, nil
+}
+
+// awaitReady blocks until cc is ready or ctx is done, naming target in any error.
+func awaitReady(ctx context.Context, cc *grpc.ClientConn, target string) error {
 	for {
 		switch state := cc.GetState(); state {
 		case connectivity.Ready:
@@ -198,25 +285,4 @@ func (c *Conn) WaitReady(ctx context.Context) error {
 			}
 		}
 	}
-}
-
-// conn resolves the request and returns the pooled connection for it.
-func (c *Conn) conn(ctx context.Context) (*grpc.ClientConn, error) {
-	key, target, opts, err := c.resolver.Resolve(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return c.factory(key, target, opts...)
-}
-
-// IsStatic reports that a staticResolver never varies with the request.
-func (r *staticResolver) IsStatic() bool {
-	return true
-}
-
-// Resolve returns the fixed address as both the cache key and dial target,
-// along with the configured dial options.
-func (r *staticResolver) Resolve(context.Context) (string, string, []grpc.DialOption, error) {
-	return r.addr, r.addr, r.opts, nil
 }

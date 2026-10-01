@@ -65,3 +65,41 @@ func TestGatewayAppliesTheUpstreamResponseLimit(t *testing.T) {
 		})
 	}
 }
+
+// Each upstream connection reaches the fake from its own source port, so the
+// distinct peers it saw are the connections the proxy spread calls across. A
+// proxy that ignored maxConnections would show one peer in both cases.
+func TestUpstreamCallsSpreadAcrossMaxConnections(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		max       int
+		wantPeers int
+	}{
+		{name: "the default keeps one connection", wantPeers: 1},
+		{name: "a configured pool uses every connection", max: 3, wantPeers: 3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			up := dataplanetest.NewUpstream(t)
+			cfg := dataplanetest.Config(up)
+			cfg.Upstreams[0].Connection.MaxConnections = tt.max
+			f := dataplanetest.Start(t, cfg)
+
+			for range 6 {
+				_, err := f.Client().GetSystemInfo(
+					f.Context(),
+					&workflowservice.GetSystemInfoRequest{},
+					grpc.WaitForReady(true),
+				)
+				require.NoError(t, err)
+			}
+
+			require.Len(t, up.Peers(), tt.wantPeers)
+		})
+	}
+}
