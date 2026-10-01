@@ -236,10 +236,8 @@ func forwardContext(ctx context.Context) context.Context {
 		return ctx
 	}
 
-	// Values already on the outgoing context win, so they are laid over this
-	// call's own copy of the incoming metadata, which then becomes the outgoing
-	// metadata. Building a fresh map and copying the incoming values into it would
-	// cost a whole extra copy on every request.
+	// Values already on the outgoing context win. Laying them over the incoming
+	// copy lets that copy become the outgoing metadata as is.
 	if outgoing, ok := metadata.FromOutgoingContext(ctx); ok {
 		for k, v := range outgoing {
 			if len(v) > 0 {

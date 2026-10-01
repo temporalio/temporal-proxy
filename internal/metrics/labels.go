@@ -78,10 +78,9 @@ func (l MetadataLabels) AppendValues(ctx context.Context, dst []string) []string
 		return dst
 	}
 
-	// Each header is read on its own rather than through FromIncomingContext,
-	// which copies every header on the request to answer for a few. The keys are
-	// lowercased at construction, so each read is a direct map lookup, and a
-	// context with no incoming metadata reads as absent values.
+	// Read each header directly: FromIncomingContext would copy every header on
+	// the request. Keys are lowercased at construction, so each read is a map
+	// lookup, and a context with no incoming metadata reads as absent values.
 	for _, h := range l.headers {
 		dst = append(dst, labelValue(metadata.ValueFromIncomingContext(ctx, h)))
 	}

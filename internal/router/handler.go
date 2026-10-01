@@ -47,8 +47,8 @@ func Handler(d Director, a services.Allowlist, rep *Reporter) grpc.StreamHandler
 			return status.Errorf(codes.Unimplemented, "unknown service %q", svc)
 		}
 
-		// The caller's own copy of the incoming metadata: it is routed on, then
-		// becomes the outgoing metadata, without copying it in between.
+		// This call's own copy of the incoming metadata: routed on, then forwarded
+		// as the outgoing metadata.
 		md := rpc.Incoming(ctx)
 
 		// An absent Target means PeekInterceptor did not run, so the namespace is
