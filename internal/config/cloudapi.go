@@ -63,7 +63,9 @@ type CloudAPI struct {
 // different host, so src's server name or client certificate would not apply to
 // it, and the dial default stands instead - verification against the system root
 // pool, which is what the real control plane presents. The connection settings
-// are inherited too, so one block tunes both connections to the same account.
+// are inherited too, so one block tunes both connections to the same account,
+// though the dataplane keeps this one to a single connection whatever
+// maxConnections says, since it carries no long polls.
 //
 // When this block is present its tls and insecure are authoritative, the same way
 // they are on an upstream: an absent tls still verifies against the system roots,

@@ -23,6 +23,7 @@ func TestConnection_Defaults(t *testing.T) {
 		wantSize    config.ByteSize
 		wantTime    time.Duration
 		wantTimeout time.Duration
+		wantPool    int
 	}{
 		{
 			name:        "absent block takes every default",
@@ -30,13 +31,15 @@ func TestConnection_Defaults(t *testing.T) {
 			wantSize:    128 << 20,
 			wantTime:    30 * time.Second,
 			wantTimeout: 15 * time.Second,
+			wantPool:    1,
 		},
 		{
 			name:        "explicit values are preserved",
-			yaml:        upstream + "    connection:\n      maxResponseSize: 64MiB\n      keepAlive:\n        time: 10s\n        timeout: 5s\n",
+			yaml:        upstream + "    connection:\n      maxResponseSize: 64MiB\n      maxConnections: 4\n      keepAlive:\n        time: 10s\n        timeout: 5s\n",
 			wantSize:    64 << 20,
 			wantTime:    10 * time.Second,
 			wantTimeout: 5 * time.Second,
+			wantPool:    4,
 		},
 		{
 			name:        "a bare integer size is bytes",
@@ -44,6 +47,7 @@ func TestConnection_Defaults(t *testing.T) {
 			wantSize:    8 << 20,
 			wantTime:    30 * time.Second,
 			wantTimeout: 15 * time.Second,
+			wantPool:    1,
 		},
 		{
 			name:        "each keepalive duration defaults on its own",
@@ -51,6 +55,7 @@ func TestConnection_Defaults(t *testing.T) {
 			wantSize:    128 << 20,
 			wantTime:    time.Minute,
 			wantTimeout: 15 * time.Second,
+			wantPool:    1,
 		},
 	}
 
@@ -65,6 +70,7 @@ func TestConnection_Defaults(t *testing.T) {
 			require.Equal(t, tt.wantSize, conn.ResponseLimit())
 			require.Equal(t, tt.wantTime, conn.KeepAlive.PingTime())
 			require.Equal(t, tt.wantTimeout, conn.KeepAlive.PingTimeout())
+			require.Equal(t, tt.wantPool, conn.PoolSize())
 		})
 	}
 }
@@ -94,6 +100,20 @@ func TestConnection_Validate(t *testing.T) {
 			name:     "a negative size is rejected",
 			cfg:      config.ConnectionConfig{MaxResponseSize: -1},
 			wantErrs: []validation.Error{{Field: "maxResponseSize", Message: "not greater than 0B"}},
+		},
+		{
+			name: "the largest pool is valid",
+			cfg:  config.ConnectionConfig{MaxConnections: 64},
+		},
+		{
+			name:     "a pool over 64 connections is rejected",
+			cfg:      config.ConnectionConfig{MaxConnections: 65},
+			wantErrs: []validation.Error{{Field: "maxConnections", Message: "not less than 65"}},
+		},
+		{
+			name:     "a negative pool is rejected",
+			cfg:      config.ConnectionConfig{MaxConnections: -1},
+			wantErrs: []validation.Error{{Field: "maxConnections", Message: "not greater than 0"}},
 		},
 		{
 			name: "the gRPC minimum ping time is valid",
