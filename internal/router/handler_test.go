@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"strings"
 	"sync"
@@ -237,6 +238,10 @@ func TestHandlerRoutesUsingReflectorAndDirector(t *testing.T) {
 	require.Equal(t, "/test.v1.Echo/Ping", dMethod)
 	require.Equal(t, "ns-from-reflector", dNS)
 	require.Equal(t, []string{"gold"}, dMD["x-route"])
+
+	// The handler routes on the same map it forwards, and stamps the namespace
+	// header onto it only after routing, so rules see what the caller sent.
+	require.Empty(t, dMD[meta.NamespaceHeader], "expected the namespace header to be stamped after routing")
 }
 
 func TestHandlerForwardsEmptyMessageHalfClose(t *testing.T) {
@@ -641,7 +646,9 @@ func (d *recordingDirector) Resolve(_ context.Context, method, namespace string,
 	d.calls++
 	d.method = method
 	d.namespace = namespace
-	d.md = md
+	// A Director must not retain md (the handler forwards the same map upstream
+	// afterwards), so keep a copy of what routing saw.
+	d.md = maps.Clone(md)
 	return router.Target{Upstream: "test-upstream", Conn: d.cc}, nil
 }
 

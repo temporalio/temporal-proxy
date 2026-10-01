@@ -122,24 +122,19 @@ func streamClientInterceptor(t *protoutil.Translator, out, in func(string) strin
 // values mapped through fn (local to remote). It is a no-op when the header is
 // absent, so upstreams the SDK never stamps it on are unaffected.
 func rewriteNamespaceHeader(ctx context.Context, fn func(string) string) context.Context {
-	md, ok := metadata.FromOutgoingContext(ctx)
-	if !ok {
-		return ctx
-	}
-
+	// The map, and the value slice Get hands back from it, are this call's own, so
+	// the values are mapped in place and the same map is attached.
+	md := rpc.Outgoing(ctx)
 	vals := md.Get(temporalNamespaceHeader)
 	if len(vals) == 0 {
 		return ctx
 	}
 
-	return rpc.WithOutgoing(ctx, func(out metadata.MD) {
-		mapped := make([]string, len(vals))
-		for i, v := range vals {
-			mapped[i] = fn(v)
-		}
+	for i, v := range vals {
+		vals[i] = fn(v)
+	}
 
-		out.Set(temporalNamespaceHeader, mapped...)
-	})
+	return metadata.NewOutgoingContext(ctx, md)
 }
 
 // translateStatusError rewrites namespace names carried in the typed status

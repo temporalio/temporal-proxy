@@ -3,7 +3,6 @@ package router
 import (
 	"errors"
 	"io"
-	"maps"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -48,12 +47,9 @@ func Handler(d Director, a services.Allowlist, rep *Reporter) grpc.StreamHandler
 			return status.Errorf(codes.Unimplemented, "unknown service %q", svc)
 		}
 
-		var md map[string][]string
-		outCtx := ctx
-		if inMD, ok := metadata.FromIncomingContext(ctx); ok {
-			outCtx = metadata.NewOutgoingContext(ctx, inMD.Copy())
-			md = inMD
-		}
+		// The caller's own copy of the incoming metadata: it is routed on, then
+		// becomes the outgoing metadata, without copying it in between.
+		md := rpc.Incoming(ctx)
 
 		// An absent Target means PeekInterceptor did not run, so the namespace is
 		// unknown rather than empty. Routing on the difference would quietly send
@@ -75,15 +71,17 @@ func Handler(d Director, a services.Allowlist, rep *Reporter) grpc.StreamHandler
 			return firstErr
 		}
 
-		// Carry the extracted namespace to the upstream proxy so it can resolve a
-		// templated address without re-parsing the payload. Set (not append) so a
-		// client-supplied value cannot influence routing.
-		outCtx = meta.WithNamespace(outCtx, peeked.Namespace)
-
-		target, err := d.Resolve(ctx, method, peeked.Namespace, maps.Clone(md))
+		target, err := d.Resolve(ctx, method, peeked.Namespace, md)
 		if err != nil {
 			return err
 		}
+
+		// Carry the extracted namespace to the upstream proxy so it can resolve a
+		// templated address without re-parsing the payload. Set (not append) so a
+		// client-supplied value cannot influence routing. It is set after Resolve,
+		// so routing rules still see exactly the metadata the caller sent.
+		md.Set(meta.NamespaceHeader, peeked.Namespace)
+		outCtx := metadata.NewOutgoingContext(ctx, md)
 
 		stream, err := target.Conn.NewStream(
 			outCtx,

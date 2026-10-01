@@ -78,11 +78,12 @@ func (l MetadataLabels) AppendValues(ctx context.Context, dst []string) []string
 		return dst
 	}
 
-	// A context with no incoming metadata yields a nil MD, and Get on that is a
-	// nil-map read, so an absent request context needs no separate branch.
-	md, _ := metadata.FromIncomingContext(ctx)
+	// Each header is read on its own rather than through FromIncomingContext,
+	// which copies every header on the request to answer for a few. The keys are
+	// lowercased at construction, so each read is a direct map lookup, and a
+	// context with no incoming metadata reads as absent values.
 	for _, h := range l.headers {
-		dst = append(dst, labelValue(md.Get(h)))
+		dst = append(dst, labelValue(metadata.ValueFromIncomingContext(ctx, h)))
 	}
 
 	return dst

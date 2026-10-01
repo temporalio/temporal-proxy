@@ -67,14 +67,14 @@ func WithVersion(ctx context.Context, version string) context.Context {
 }
 
 // withHeader returns ctx with key set to value on its outgoing gRPC metadata,
-// replacing any values already present for key. It copies the metadata rather
-// than writing through, since the map on ctx may be shared with other calls.
+// replacing any values already present for key. The map on ctx may be shared
+// with other calls, so this never writes through it; FromOutgoingContext already
+// returns a fresh copy, which rpc.Outgoing's tests hold gRPC to, so it is set on
+// that directly. This package imports no internal ones, hence not using it.
 func withHeader(ctx context.Context, key, value string) context.Context {
 	md, ok := metadata.FromOutgoingContext(ctx)
 	if !ok {
 		md = metadata.MD{}
-	} else {
-		md = md.Copy()
 	}
 
 	md.Set(key, value)

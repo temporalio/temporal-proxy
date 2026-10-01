@@ -227,12 +227,7 @@ func (f *Forwarder) resolveMethod(fullMethod string) *methodInfo {
 // router-stamped namespace from there, so this is load-bearing rather than
 // merely polite.
 func forwardContext(ctx context.Context) context.Context {
-	incoming, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return ctx
-	}
-
-	incoming = incoming.Copy()
+	incoming := rpc.Incoming(ctx)
 	for _, key := range transportHeaders {
 		incoming.Delete(key)
 	}
@@ -241,11 +236,17 @@ func forwardContext(ctx context.Context) context.Context {
 		return ctx
 	}
 
-	return rpc.WithOutgoing(ctx, func(outgoing metadata.MD) {
-		for k, v := range incoming {
-			if len(outgoing.Get(k)) == 0 {
-				outgoing.Set(k, v...)
+	// Values already on the outgoing context win, so they are laid over this
+	// call's own copy of the incoming metadata, which then becomes the outgoing
+	// metadata. Building a fresh map and copying the incoming values into it would
+	// cost a whole extra copy on every request.
+	if outgoing, ok := metadata.FromOutgoingContext(ctx); ok {
+		for k, v := range outgoing {
+			if len(v) > 0 {
+				incoming[k] = v
 			}
 		}
-	})
+	}
+
+	return metadata.NewOutgoingContext(ctx, incoming)
 }

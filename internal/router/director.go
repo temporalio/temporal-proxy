@@ -16,7 +16,9 @@ type (
 	// method, the namespace peeked from the first request message (empty when the
 	// client sent no message), and the incoming metadata, and returns the Target to
 	// forward over. A non-nil error aborts the stream and is returned to the caller
-	// verbatim, so implementations should return a gRPC status error.
+	// verbatim, so implementations should return a gRPC status error. md is only
+	// lent for the call: the handler forwards the same map upstream afterwards, so
+	// implementations must neither modify nor retain it.
 	Director interface {
 		Resolve(ctx context.Context, method, namespace string, md map[string][]string) (Target, error)
 	}

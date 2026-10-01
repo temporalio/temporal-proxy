@@ -72,6 +72,37 @@ func TestForwardContextKeepsExistingOutgoingValue(t *testing.T) {
 	require.Equal(t, []string{"Bearer upstream"}, out.Get("authorization"))
 }
 
+func TestForwardContextIgnoresEmptyOutgoingValue(t *testing.T) {
+	t.Parallel()
+
+	// A key set on the outgoing context with no values holds nothing to keep, so
+	// the caller's value still goes through rather than being blanked.
+	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs("x-team", "orders"))
+	ctx = metadata.NewOutgoingContext(ctx, metadata.MD{"x-team": nil, "x-stamped": {"proxy"}})
+
+	out, ok := metadata.FromOutgoingContext(forwardContext(ctx))
+	require.True(t, ok)
+	require.Equal(t, []string{"orders"}, out.Get("x-team"))
+	require.Equal(t, []string{"proxy"}, out.Get("x-stamped"))
+}
+
+func TestForwardContextLeavesIncomingMetadataAlone(t *testing.T) {
+	t.Parallel()
+
+	// Guard: the outgoing metadata is built from the incoming metadata without an
+	// explicit copy, so stripping the transport headers must not reach back into
+	// what the inbound call still holds.
+	in := metadata.Pairs("x-team", "orders", "user-agent", "grpc-go/1.0")
+	ctx := metadata.NewIncomingContext(t.Context(), in)
+
+	_ = forwardContext(ctx)
+
+	require.Equal(t, []string{"grpc-go/1.0"}, in.Get("user-agent"), "expected the inbound metadata to be untouched")
+	got, ok := metadata.FromIncomingContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, []string{"grpc-go/1.0"}, got.Get("user-agent"))
+}
+
 func TestForwardContextWithoutIncomingMetadata(t *testing.T) {
 	t.Parallel()
 

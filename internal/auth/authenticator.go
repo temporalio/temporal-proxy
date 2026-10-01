@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/temporalio/temporal-proxy/internal/rpc"
 	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
@@ -31,6 +32,10 @@ type (
 	// The target is what the gateway resolved for this stream. Its Namespace is
 	// empty for a request that named none, so an implementation weighing it must
 	// treat empty as "unknown" rather than as a value to match on.
+	//
+	// md is only lent for the call: the interceptor strips the secure headers out
+	// of the same map afterwards, so an implementation must neither modify nor
+	// retain it.
 	Authenticator interface {
 		Authenticate(ctx context.Context, target meta.Target, md metadata.MD) error
 		SecureHeaders() []string
@@ -63,7 +68,7 @@ func StreamServerInterceptor(a Authenticator, log logger.Logger) grpc.StreamServ
 	}
 
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		md, _ := metadata.FromIncomingContext(ss.Context())
+		md := rpc.Incoming(ss.Context())
 		if err := a.Authenticate(ss.Context(), meta.TargetFrom(ss.Context()), md); err != nil {
 			log.Warn(
 				"inbound authentication rejected",
@@ -78,16 +83,16 @@ func StreamServerInterceptor(a Authenticator, log logger.Logger) grpc.StreamServ
 		// The proxy terminates inbound auth, so strip the headers it consumed:
 		// the caller's credential must not be forwarded upstream, where it would
 		// otherwise collide with (or leak alongside) an outbound credential on
-		// the same header.
+		// the same header. md is this call's own copy, so the headers come
+		// straight out of it.
 		if hdrs := a.SecureHeaders(); len(hdrs) > 0 {
-			stripped := md.Copy()
 			for _, hdr := range hdrs {
-				stripped.Delete(hdr)
+				md.Delete(hdr)
 			}
 
 			ss = &strippedStream{
 				ServerStream: ss,
-				ctx:          metadata.NewIncomingContext(ss.Context(), stripped),
+				ctx:          metadata.NewIncomingContext(ss.Context(), md),
 			}
 		}
 

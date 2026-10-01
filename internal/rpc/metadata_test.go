@@ -9,6 +9,65 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/rpc"
 )
 
+func TestIncomingIsAPrivateCopy(t *testing.T) {
+	t.Parallel()
+
+	// Guard: Incoming hands back gRPC's accessor result without copying it again,
+	// which is only safe while that accessor builds a fresh map. gRPC does not
+	// document that it does, so this fails if an upgrade starts sharing the map.
+	original := metadata.Pairs("authorization", "Bearer k3y", "x-keep", "kept")
+	ctx := metadata.NewIncomingContext(t.Context(), original)
+
+	md := rpc.Incoming(ctx)
+	md.Delete("authorization")
+	md.Set("x-added", "added")
+	md["x-keep"][0] = "changed"
+
+	require.Equal(t, []string{"Bearer k3y"}, original.Get("authorization"), "expected the context's metadata to be untouched")
+	require.Empty(t, original.Get("x-added"))
+	require.Equal(t, []string{"kept"}, original.Get("x-keep"), "expected values to be copied, not shared")
+	require.Equal(t, []string{"kept"}, rpc.Incoming(ctx).Get("x-keep"))
+}
+
+func TestIncomingIsEmptyWithoutMetadata(t *testing.T) {
+	t.Parallel()
+
+	md := rpc.Incoming(t.Context())
+	require.NotNil(t, md, "expected empty metadata rather than nil, so callers can add keys")
+	require.Empty(t, md)
+}
+
+func TestOutgoingIsAPrivateCopy(t *testing.T) {
+	t.Parallel()
+
+	// Guard: the same contract as Incoming, for the outgoing accessor. Pairs added
+	// with AppendToOutgoingContext are held apart from the base map, so both are
+	// covered.
+	original := metadata.Pairs("x-keep", "kept")
+	ctx := metadata.AppendToOutgoingContext(metadata.NewOutgoingContext(t.Context(), original), "x-appended", "appended")
+
+	md := rpc.Outgoing(ctx)
+	md.Set("x-added", "added")
+	md["x-keep"][0] = "changed"
+	md["x-appended"][0] = "changed"
+
+	require.Empty(t, original.Get("x-added"), "expected the context's metadata to be untouched")
+	require.Equal(t, []string{"kept"}, original.Get("x-keep"), "expected values to be copied, not shared")
+
+	again := rpc.Outgoing(ctx)
+	require.Equal(t, []string{"kept"}, again.Get("x-keep"))
+	require.Equal(t, []string{"appended"}, again.Get("x-appended"))
+	require.Empty(t, again.Get("x-added"))
+}
+
+func TestOutgoingIsEmptyWithoutMetadata(t *testing.T) {
+	t.Parallel()
+
+	md := rpc.Outgoing(t.Context())
+	require.NotNil(t, md, "expected empty metadata rather than nil, so callers can add keys")
+	require.Empty(t, md)
+}
+
 func TestWithOutgoingLeavesTheCallersMetadataAlone(t *testing.T) {
 	t.Parallel()
 
