@@ -429,6 +429,43 @@ func TestUpstream_Validate(t *testing.T) {
 			},
 		},
 		{
+			name: "srv hostPort is accepted",
+			upstream: &config.Upstream{
+				Name:   "primary",
+				Listen: config.ListenConfig{HostPort: "srv:///_grpc._tcp.frontend.temporal.svc.cluster.local"},
+			},
+		},
+		{
+			name: "srv hostPort with a port is rejected",
+			upstream: &config.Upstream{
+				Name:   "primary",
+				Listen: config.ListenConfig{HostPort: "srv:///_grpc._tcp.frontend.example:7233"},
+			},
+			wantTuples: [][2]string{
+				{"", "hostPort"},
+			},
+		},
+		{
+			name: "host named srv is rejected rather than looked up as a record",
+			upstream: &config.Upstream{
+				Name:   "primary",
+				Listen: config.ListenConfig{HostPort: "srv:7233"},
+			},
+			wantTuples: [][2]string{
+				{"", "hostPort"},
+			},
+		},
+		{
+			name: "srv hostPort with two slashes is rejected",
+			upstream: &config.Upstream{
+				Name:   "primary",
+				Listen: config.ListenConfig{HostPort: "srv://frontend.example"},
+			},
+			wantTuples: [][2]string{
+				{"", "hostPort"},
+			},
+		},
+		{
 			name: "namespace override failure surfaces with the full namespaces path",
 			upstream: &config.Upstream{
 				Name:   "primary",

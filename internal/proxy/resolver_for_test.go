@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/proxy"
@@ -50,4 +51,30 @@ func TestResolverForRejectsUnknownTemplateField(t *testing.T) {
 
 	_, err := proxy.ResolverFor(up, nil, nil)
 	require.Error(t, err)
+}
+
+func TestResolverForSRV(t *testing.T) {
+	t.Parallel()
+
+	const target = "srv:///_grpc._tcp.frontend.temporal.svc"
+	up := &config.Upstream{
+		Name:   "frontends",
+		Listen: config.ListenConfig{HostPort: target, Insecure: true},
+	}
+
+	res, err := proxy.ResolverFor(up, nil, nil)
+	require.NoError(t, err)
+	require.True(t, res.IsStatic())
+
+	_, got, opts, err := res.Resolve(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, target, got)
+
+	// Without the SRV builder in opts, gRPC falls back to its dns resolver and
+	// the canonical target becomes "dns:///srv:///...".
+	cc, err := grpc.NewClient(got, opts...)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cc.Close() })
+
+	require.Equal(t, target, cc.CanonicalTarget())
 }
