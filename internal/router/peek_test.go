@@ -181,16 +181,42 @@ func TestPeekInterceptorSkipsServiceItDoesNotForward(t *testing.T) {
 	require.Equal(t, first, gotPayload)
 }
 
+func TestPeekInterceptorReplaysIntoATypedMessage(t *testing.T) {
+	t.Parallel()
+
+	// An upstream served in process reads typed messages from the gateway's
+	// stream, so the buffered first frame decodes into one exactly as the
+	// stream's codec would have decoded it off the wire.
+	first, err := proto.Marshal(&grpc_health_v1.HealthCheckRequest{Service: "abc"})
+	require.NoError(t, err)
+
+	ss := &fakeStream{ctx: t.Context(), recv: []recvStep{{payload: first}}}
+
+	got := new(grpc_health_v1.HealthCheckRequest)
+	var gotErr error
+
+	err = PeekInterceptor(&peekReflector{}, allowlistFunc(func(string) bool { return true }))(
+		nil,
+		ss,
+		&grpc.StreamServerInfo{FullMethod: "/test.v1.Echo/Ping"},
+		func(_ any, stream grpc.ServerStream) error {
+			gotErr = stream.RecvMsg(got)
+
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.NoError(t, gotErr)
+	require.Equal(t, "abc", got.GetService())
+	require.Equal(t, 1, ss.calls, "the first message must come from the buffer, not the wire")
+}
+
 func TestPeekInterceptorReportsUnexpectedReplayTarget(t *testing.T) {
 	t.Parallel()
 
-	// Only a service the router forwards is peeked, and the router reads frames, so
-	// a destination of any other type cannot arise: it would take a service both
-	// registered on this server and accepted by config.Services.Validate, which
-	// admits only forwardable names. Reporting it beats decoding it. Decoding would
-	// silently support a combination nothing produces, and a reader would have to
-	// work out which one; this says so, and cannot panic the process, which matters
-	// because the server installs no panic recovery.
+	// A destination that is neither a frame nor a proto message has nothing the
+	// buffered bytes can decode into. Reporting it cannot panic the process,
+	// which matters because the server installs no panic recovery.
 	first, err := proto.Marshal(&grpc_health_v1.HealthCheckRequest{Service: "abc"})
 	require.NoError(t, err)
 
@@ -203,7 +229,7 @@ func TestPeekInterceptorReportsUnexpectedReplayTarget(t *testing.T) {
 		ss,
 		&grpc.StreamServerInfo{FullMethod: "/test.v1.Echo/Ping"},
 		func(_ any, stream grpc.ServerStream) error {
-			gotErr = stream.RecvMsg(new(grpc_health_v1.HealthCheckRequest))
+			gotErr = stream.RecvMsg(new(string))
 
 			return nil
 		},
@@ -212,7 +238,7 @@ func TestPeekInterceptorReportsUnexpectedReplayTarget(t *testing.T) {
 
 	require.Error(t, gotErr)
 	require.Equal(t, codes.Internal, status.Code(gotErr))
-	require.Contains(t, status.Convert(gotErr).Message(), "frame")
+	require.Contains(t, status.Convert(gotErr).Message(), "cannot replay")
 }
 
 func TestPeekInterceptorReportsFirstReadFailure(t *testing.T) {

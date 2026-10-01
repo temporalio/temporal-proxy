@@ -7,14 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -61,6 +59,11 @@ type (
 	stubDirector struct {
 		upstream string
 		cc       *grpc.ClientConn
+	}
+
+	// handlerDirector routes every request to handle, served in process.
+	handlerDirector struct {
+		handle grpc.StreamHandler
 	}
 
 	stubReflector struct{}
@@ -156,14 +159,13 @@ func TestHandlerRejectsDisallowedService(t *testing.T) {
 	// the Director and the client is told the service is not implemented rather
 	// than that it could not be routed.
 	director := &recordingDirector{}
-	m, _ := newTestReporter(t)
 
 	allowlist := services.NewAllowlist([]string{services.WorkflowService})
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
 		grpc.ChainStreamInterceptor(router.PeekInterceptor(stubReflector{}, allowlist)),
-		grpc.UnknownServiceHandler(router.Handler(director, allowlist, m)),
+		grpc.UnknownServiceHandler(router.Handler(director, allowlist)),
 	)
 	serve(t, relay, relayLis)
 
@@ -206,7 +208,6 @@ func TestHandlerRoutesUsingReflectorAndDirector(t *testing.T) {
 
 	reflector := &recordingReflector{ns: "ns-from-reflector"}
 	var director *recordingDirector
-	m, _ := newTestReporter(t)
 	relay := newRelayWith(
 		t,
 		func(s *grpc.Server) { s.RegisterService(&echoDesc, nil) },
@@ -215,7 +216,6 @@ func TestHandlerRoutesUsingReflectorAndDirector(t *testing.T) {
 			return director
 		},
 		reflector,
-		m,
 	)
 
 	ctx := metadata.AppendToOutgoingContext(t.Context(), "x-route", "gold")
@@ -244,7 +244,6 @@ func TestHandlerForwardsEmptyMessageHalfClose(t *testing.T) {
 
 	reflector := &recordingReflector{ns: "unused"}
 	var director *recordingDirector
-	m, _ := newTestReporter(t)
 	relay := newRelayWith(
 		t,
 		func(s *grpc.Server) { s.RegisterService(&countDesc, nil) },
@@ -253,7 +252,6 @@ func TestHandlerForwardsEmptyMessageHalfClose(t *testing.T) {
 			return director
 		},
 		reflector,
-		m,
 	)
 
 	stream, err := relay.NewStream(
@@ -287,13 +285,11 @@ func TestHandlerForwardsEveryClientMessage(t *testing.T) {
 	// see the replayed frame exactly once and then every later message. A wrong
 	// count here means the relay is either swallowing or duplicating requests.
 	reflector := &recordingReflector{ns: "orders"}
-	m, _ := newTestReporter(t)
 	relay := newRelayWith(
 		t,
 		func(s *grpc.Server) { s.RegisterService(&countDesc, nil) },
 		func(cc *grpc.ClientConn) router.Director { return stubDirector{cc: cc} },
 		reflector,
-		m,
 	)
 
 	stream, err := relay.NewStream(
@@ -427,10 +423,9 @@ func TestHandlerCoHostsLocalHealthWithForwarding(t *testing.T) {
 	upstreamConn := dialBufconn(t, upstreamLis)
 	t.Cleanup(func() { _ = upstreamConn.Close() })
 
-	m, _ := newTestReporter(t)
 	svr, err := server.New(
 		server.WithStreamInterceptor(router.PeekInterceptor(stubReflector{}, stubAllowlist{})),
-		server.WithUnknownServiceHandler(router.Handler(stubDirector{cc: upstreamConn}, stubAllowlist{}, m)),
+		server.WithUnknownServiceHandler(router.Handler(stubDirector{cc: upstreamConn}, stubAllowlist{})),
 		server.WithServerCodec(router.Codec()),
 	)
 	require.NoError(t, err)
@@ -454,7 +449,7 @@ func TestHandlerCoHostsLocalHealthWithForwarding(t *testing.T) {
 	<-errCh
 }
 
-func TestHandlerRecordsStreamSetupError(t *testing.T) {
+func TestForwardToReturnsStreamSetupFailure(t *testing.T) {
 	t.Parallel()
 
 	echoDesc := grpc.ServiceDesc{
@@ -475,17 +470,16 @@ func TestHandlerRecordsStreamSetupError(t *testing.T) {
 	upstream.RegisterService(&echoDesc, nil)
 	serve(t, upstream, upstreamLis)
 
-	// A closed connection makes NewStream fail synchronously, exercising the
-	// stream_setup path.
+	// A closed connection makes NewStream fail synchronously, with Canceled for a
+	// connection that is closing, so that failure is what reaches the caller.
 	brokenConn := dialBufconn(t, upstreamLis)
 	require.NoError(t, brokenConn.Close())
 
-	m, reg := newTestReporter(t, "primary")
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
 		grpc.ChainStreamInterceptor(router.PeekInterceptor(stubReflector{}, stubAllowlist{})),
-		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: brokenConn}, stubAllowlist{}, m)),
+		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: brokenConn}, stubAllowlist{})),
 	)
 	serve(t, relay, relayLis)
 
@@ -493,50 +487,62 @@ func TestHandlerRecordsStreamSetupError(t *testing.T) {
 	t.Cleanup(func() { _ = relayConn.Close() })
 
 	err := relayConn.Invoke(t.Context(), "/test.v1.Echo/Ping", &grpc_health_v1.HealthCheckRequest{}, new(grpc_health_v1.HealthCheckResponse))
-	require.Error(t, err)
-
-	require.NoError(t, testutil.GatherAndCompare(reg, strings.NewReader(`
-# HELP tmprl_proxy_router_forwarding_errors_total Total router-originated forwarding failures, labeled by upstream and reason.
-# TYPE tmprl_proxy_router_forwarding_errors_total counter
-tmprl_proxy_router_forwarding_errors_total{reason="no_connection",upstream="primary"} 0
-tmprl_proxy_router_forwarding_errors_total{reason="stream_setup",upstream="primary"} 1
-`), "tmprl_proxy_router_forwarding_errors_total"))
+	require.Equal(t, codes.Canceled, status.Code(err))
 }
 
-func TestHandlerRelayedUpstreamErrorIsNotAForwardingError(t *testing.T) {
+func TestHandlerServesATargetsHandlerInProcess(t *testing.T) {
 	t.Parallel()
 
-	m, reg := newTestReporter(t, "primary")
+	// A Target's handler gets the gateway's own stream: the first message, replayed
+	// from the peek buffer, decodes into the handler's type; the routed namespace,
+	// not the one the caller sent, is on the outgoing metadata; and what the
+	// handler sets on the stream reaches the caller.
+	type seen struct{ service, namespace string }
+	got := make(chan seen, 1)
+
+	handle := func(_ any, ss grpc.ServerStream) error {
+		req := new(grpc_health_v1.HealthCheckRequest)
+		if err := ss.RecvMsg(req); err != nil {
+			return err
+		}
+		got <- seen{service: req.GetService(), namespace: meta.NamespaceFrom(ss.Context())}
+
+		if err := ss.SetHeader(metadata.Pairs("x-header", "h")); err != nil {
+			return err
+		}
+		ss.SetTrailer(metadata.Pairs("x-trailer", "t"))
+
+		return ss.SendMsg(&grpc_health_v1.HealthCheckResponse{Status: grpc_health_v1.HealthCheckResponse_SERVING})
+	}
+
 	relayLis := bufconn.Listen(1024 * 1024)
-
-	upstreamLis := bufconn.Listen(1024 * 1024)
-	upstream := grpc.NewServer()
-	grpc_health_v1.RegisterHealthServer(upstream, health.NewServer())
-	serve(t, upstream, upstreamLis)
-	upstreamConn := dialBufconn(t, upstreamLis)
-	t.Cleanup(func() { _ = upstreamConn.Close() })
-
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.ChainStreamInterceptor(router.PeekInterceptor(stubReflector{}, stubAllowlist{})),
-		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "primary", cc: upstreamConn}, stubAllowlist{}, m)),
+		grpc.ChainStreamInterceptor(router.PeekInterceptor(&recordingReflector{ns: "orders"}, stubAllowlist{})),
+		grpc.UnknownServiceHandler(router.Handler(handlerDirector{handle: handle}, stubAllowlist{})),
 	)
 	serve(t, relay, relayLis)
 
 	relayConn := dialBufconn(t, relayLis)
 	t.Cleanup(func() { _ = relayConn.Close() })
 
-	// The upstream returns NotFound for an unknown service; the proxy relays it.
-	_, err := grpc_health_v1.NewHealthClient(relayConn).Check(t.Context(), &grpc_health_v1.HealthCheckRequest{Service: "nope"})
-	require.Equal(t, codes.NotFound, status.Code(err))
+	ctx := metadata.AppendToOutgoingContext(t.Context(), meta.NamespaceHeader, "forged")
+	var header, trailer metadata.MD
+	resp := new(grpc_health_v1.HealthCheckResponse)
+	err := relayConn.Invoke(
+		ctx,
+		"/test.v1.Echo/Ping",
+		&grpc_health_v1.HealthCheckRequest{Service: "abc"},
+		resp,
+		grpc.Header(&header),
+		grpc.Trailer(&trailer),
+	)
+	require.NoError(t, err)
 
-	// A relayed non-OK status must NOT be counted as a forwarding error.
-	require.NoError(t, testutil.GatherAndCompare(reg, strings.NewReader(`
-# HELP tmprl_proxy_router_forwarding_errors_total Total router-originated forwarding failures, labeled by upstream and reason.
-# TYPE tmprl_proxy_router_forwarding_errors_total counter
-tmprl_proxy_router_forwarding_errors_total{reason="no_connection",upstream="primary"} 0
-tmprl_proxy_router_forwarding_errors_total{reason="stream_setup",upstream="primary"} 0
-`), "tmprl_proxy_router_forwarding_errors_total"))
+	require.Equal(t, seen{service: "abc", namespace: "orders"}, <-got)
+	require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.GetStatus())
+	require.Equal(t, []string{"h"}, header.Get("x-header"))
+	require.Equal(t, []string{"t"}, trailer.Get("x-trailer"))
 }
 
 func TestHandlerStampsNamespace(t *testing.T) {
@@ -544,12 +550,11 @@ func TestHandlerStampsNamespace(t *testing.T) {
 
 	upstream, got := capturingUpstream(t)
 
-	m, _ := newTestReporter(t)
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
 		grpc.ChainStreamInterceptor(router.PeekInterceptor(&recordingReflector{ns: "orders"}, stubAllowlist{})),
-		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "u", cc: upstream}, stubAllowlist{}, m)),
+		grpc.UnknownServiceHandler(router.Handler(stubDirector{upstream: "u", cc: upstream}, stubAllowlist{})),
 	)
 	serve(t, relay, relayLis)
 
@@ -585,12 +590,11 @@ func TestHandlerRequiresPeekInterceptor(t *testing.T) {
 	t.Cleanup(func() { _ = upstreamConn.Close() })
 
 	director := &recordingDirector{cc: upstreamConn}
-	m, _ := newTestReporter(t)
 
 	relayLis := bufconn.Listen(1024 * 1024)
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
-		grpc.UnknownServiceHandler(router.Handler(director, stubAllowlist{}, m)),
+		grpc.UnknownServiceHandler(router.Handler(director, stubAllowlist{})),
 	)
 	serve(t, relay, relayLis)
 
@@ -608,8 +612,12 @@ func TestHandlerRequiresPeekInterceptor(t *testing.T) {
 	require.Zero(t, calls, "an unrouted request must not reach the Director")
 }
 
+func (d handlerDirector) Resolve(context.Context, string, string, map[string][]string) (router.Target, error) {
+	return router.Target{Upstream: "in-process", Handle: d.handle}, nil
+}
+
 func (s stubDirector) Resolve(context.Context, string, string, map[string][]string) (router.Target, error) {
-	return router.Target{Upstream: s.upstream, Conn: s.cc}, nil
+	return router.Target{Upstream: s.upstream, Handle: router.ForwardTo(s.cc)}, nil
 }
 
 func (stubReflector) Namespace(string, []byte) string { return "" }
@@ -642,7 +650,7 @@ func (d *recordingDirector) Resolve(_ context.Context, method, namespace string,
 	d.method = method
 	d.namespace = namespace
 	d.md = md
-	return router.Target{Upstream: "test-upstream", Conn: d.cc}, nil
+	return router.Target{Upstream: "test-upstream", Handle: router.ForwardTo(d.cc)}, nil
 }
 
 func (d *recordingDirector) snapshot() (calls int, method, namespace string, md map[string][]string) {
@@ -721,12 +729,10 @@ func newLabeledTestReporter(
 func newRelayToUpstream(t *testing.T, registerUpstream func(*grpc.Server)) *grpc.ClientConn {
 	t.Helper()
 
-	m, _ := newTestReporter(t)
 	return newRelayWith(
 		t, registerUpstream,
 		func(cc *grpc.ClientConn) router.Director { return stubDirector{cc: cc} },
 		stubReflector{},
-		m,
 	)
 }
 
@@ -738,7 +744,6 @@ func newRelayWith(
 	registerUpstream func(*grpc.Server),
 	makeDirector func(cc *grpc.ClientConn) router.Director,
 	reflector router.Reflector,
-	reporter *router.Reporter,
 ) *grpc.ClientConn {
 	t.Helper()
 
@@ -754,7 +759,7 @@ func newRelayWith(
 	relay := grpc.NewServer(
 		grpc.ForceServerCodecV2(router.Codec()),
 		grpc.ChainStreamInterceptor(router.PeekInterceptor(reflector, stubAllowlist{})),
-		grpc.UnknownServiceHandler(router.Handler(makeDirector(upstreamConn), stubAllowlist{}, reporter)),
+		grpc.UnknownServiceHandler(router.Handler(makeDirector(upstreamConn), stubAllowlist{})),
 	)
 	serve(t, relay, relayLis)
 

@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"errors"
 	"io"
 	"maps"
@@ -17,27 +18,34 @@ import (
 
 type (
 	// Target is the routing result returned by Director.Resolve on success: the
-	// chosen upstream's name (always non-empty) and the connection to forward the
-	// stream over. On a non-nil error the Target is unused and callers must ignore
-	// its fields.
+	// chosen upstream's name (always non-empty) and the handler that serves the
+	// stream. Handle receives the routed stream, whose outgoing metadata carries
+	// the resolved namespace; it must let that value override any the caller
+	// sent. On a non-nil error the Target is unused and callers must ignore its
+	// fields.
 	Target struct {
 		Upstream string
-		Conn     grpc.ClientConnInterface
+		Handle   grpc.StreamHandler
+	}
+
+	// routedStream is the gateway's stream as a Target's handler sees it: the same
+	// stream, with a context carrying the namespace the router resolved as
+	// outgoing metadata.
+	routedStream struct {
+		grpc.ServerStream
+		ctx context.Context
 	}
 )
 
-// Handler returns a grpc.StreamHandler suitable for grpc.UnknownServiceHandler,
-// reporting a stream_setup forwarding error via rep when opening the upstream
-// stream fails. A method whose service a does not allow is rejected with
-// Unimplemented before any upstream work, so the proxy answers as a server that
-// does not implement it rather than revealing that an upstream might.
-// It reads the request namespace from the [meta.Target] that [PeekInterceptor]
-// resolved, asks d for the upstream connection, then transparently forwards the
-// stream to that upstream using the same full method name: it replays the first
-// frame, pumps raw frames in both directions, and propagates header, trailer, and
-// status verbatim.
-func Handler(d Director, a services.Allowlist, rep *Reporter) grpc.StreamHandler {
-	return func(_ any, serverStream grpc.ServerStream) error {
+// Handler returns a grpc.StreamHandler suitable for grpc.UnknownServiceHandler.
+// A method whose service a does not allow is rejected with Unimplemented before
+// any upstream work, so the proxy answers as a server that does not implement it
+// rather than revealing that an upstream might. It reads the request namespace
+// from the [meta.Target] that [PeekInterceptor] resolved, asks d for the
+// upstream, and hands the stream to the Target's handler with the first frame
+// still buffered and the namespace as outgoing metadata.
+func Handler(d Director, a services.Allowlist) grpc.StreamHandler {
+	return func(srv any, serverStream grpc.ServerStream) error {
 		ctx := serverStream.Context()
 		method, err := rpc.FullMethod(ctx)
 		if err != nil {
@@ -48,13 +56,6 @@ func Handler(d Director, a services.Allowlist, rep *Reporter) grpc.StreamHandler
 			return status.Errorf(codes.Unimplemented, "unknown service %q", svc)
 		}
 
-		var md map[string][]string
-		outCtx := ctx
-		if inMD, ok := metadata.FromIncomingContext(ctx); ok {
-			outCtx = metadata.NewOutgoingContext(ctx, inMD.Copy())
-			md = inMD
-		}
-
 		// An absent Target means PeekInterceptor did not run, so the namespace is
 		// unknown rather than empty. Routing on the difference would quietly send
 		// every request to the default upstream, so say so instead.
@@ -62,6 +63,41 @@ func Handler(d Director, a services.Allowlist, rep *Reporter) grpc.StreamHandler
 		if peeked.FullName == "" {
 			return status.Error(codes.Internal, "router: no target on the request context")
 		}
+
+		inMD, _ := metadata.FromIncomingContext(ctx)
+		target, err := d.Resolve(ctx, method, peeked.Namespace, maps.Clone(inMD))
+		if err != nil {
+			return err
+		}
+
+		// The namespace travels as outgoing metadata so the handler can carry it on
+		// to the upstream without re-parsing the payload. It is set, not appended,
+		// and outgoing values win over the caller's, so a client-supplied value
+		// cannot influence routing downstream.
+		return target.Handle(srv, &routedStream{
+			ServerStream: serverStream,
+			ctx:          meta.WithNamespace(ctx, peeked.Namespace),
+		})
+	}
+}
+
+// ForwardTo returns a handler that forwards a routed stream over cc using the
+// same full method name: it replays the first frame, pumps raw frames in both
+// directions, and propagates header, trailer, and status verbatim. The caller's
+// metadata goes with it, with the routed namespace laid over it.
+func ForwardTo(cc grpc.ClientConnInterface) grpc.StreamHandler {
+	return func(_ any, serverStream grpc.ServerStream) error {
+		ctx := serverStream.Context()
+		method, err := rpc.FullMethod(ctx)
+		if err != nil {
+			return err
+		}
+
+		outCtx := ctx
+		if inMD, ok := metadata.FromIncomingContext(ctx); ok {
+			outCtx = metadata.NewOutgoingContext(ctx, inMD.Copy())
+		}
+		outCtx = meta.WithNamespace(outCtx, meta.NamespaceFrom(ctx))
 
 		// Collect the first client frame so it can be replayed upstream. The peek
 		// interceptor already took it off the wire and reported any failure reading
@@ -75,27 +111,13 @@ func Handler(d Director, a services.Allowlist, rep *Reporter) grpc.StreamHandler
 			return firstErr
 		}
 
-		// Carry the extracted namespace to the upstream proxy so it can resolve a
-		// templated address without re-parsing the payload. Set (not append) so a
-		// client-supplied value cannot influence routing.
-		outCtx = meta.WithNamespace(outCtx, peeked.Namespace)
-
-		target, err := d.Resolve(ctx, method, peeked.Namespace, maps.Clone(md))
-		if err != nil {
-			return err
-		}
-
-		stream, err := target.Conn.NewStream(
+		stream, err := cc.NewStream(
 			outCtx,
 			&grpc.StreamDesc{ServerStreams: true, ClientStreams: true},
 			method,
 			grpc.ForceCodecV2(Codec()),
 		)
 		if err != nil {
-			if rep != nil {
-				rep.ForwardingError(ctx, target.Upstream, reasonStreamSetup)
-			}
-
 			return err
 		}
 
@@ -113,3 +135,6 @@ func Handler(d Director, a services.Allowlist, rep *Reporter) grpc.StreamHandler
 		)
 	}
 }
+
+// Context returns the context carrying the resolved namespace.
+func (s *routedStream) Context() context.Context { return s.ctx }

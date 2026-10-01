@@ -37,19 +37,21 @@ reaches a different upstream with no change to the Worker.
 
     subgraph Proxy[Temporal Proxy]
         direction LR
-        Gateway["Gateway<br/>routes by Namespace<br/>codec-transparent (no payload parsing)"]
+        Gateway["Gateway<br/>routes by Namespace"]
         ProxyA["Per-upstream proxy A<br/>Namespace translation<br/>payload encryption (optional)"]
         ProxyB["Per-upstream proxy B<br/>Namespace translation<br/>payload encryption (optional)"]
-        Gateway -->|unix socket| ProxyA
-        Gateway -->|unix socket| ProxyB
+        Gateway -->|in process| ProxyA
+        Gateway -->|in process| ProxyB
     end
 
     Cloud[Temporal Cloud]
     SelfHosted[Self-hosted Temporal Service]
+    LocalWorker[Local Worker]
 
     Worker --> Gateway
     Client --> Gateway
     UI --> Gateway
+    LocalWorker -->|unix socket| ProxyA
     ProxyA --> Cloud
     ProxyB --> SelfHosted
 ```
@@ -82,8 +84,8 @@ reaches a different upstream with no change to the Worker.
   `/metrics`. The listen address and the metric prefix stamped onto every metric name are set under `metrics:` in the
   config, along with the labels every series carries: constants such as the region the proxy runs in, and request
   metadata carried onto the request-scoped series, so they can be sliced by a dimension only your callers know.
-- **Codec-transparent.** The gateway never parses payloads. It peeks the Namespace, picks an upstream, and relays raw
-  frames in both directions.
+- **Codec-transparent.** Payload data passes through untouched unless encryption is configured. The proxy reads only
+  the Namespace and the fields it translates, and needs no knowledge of your data converter or codec.
 - **Multiple deployment options.** Ship as a Go binary, a container image, or a Helm chart.
 
 ## Installation
