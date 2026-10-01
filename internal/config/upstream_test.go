@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -442,6 +443,19 @@ func TestUpstream_Validate(t *testing.T) {
 			},
 			wantTuples: [][2]string{
 				{"namespaces.rules.overrides[0]", "remote"},
+			},
+		},
+		{
+			name: "connection failure surfaces with the full connection path",
+			upstream: &config.Upstream{
+				Name:   "primary",
+				Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
+				Connection: config.ConnectionConfig{
+					KeepAlive: config.KeepAliveConfig{Time: time.Second},
+				},
+			},
+			wantTuples: [][2]string{
+				{"connection.keepAlive", "time"},
 			},
 		},
 		{

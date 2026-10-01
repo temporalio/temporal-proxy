@@ -108,13 +108,15 @@ func WithResolverLogger(l logger.Logger) ResolverOption {
 // start, and reused for every request; otherwise it returns a DynamicResolver
 // that renders the target and server name, and rebuilds credentials, per request.
 // opts holds the request-independent dial options (namespace translation and
-// outbound credentials). log, when non-nil, is threaded into the DynamicResolver
-// for per-request debug entries.
+// outbound credentials); the upstream's connection settings are appended here.
+// log, when non-nil, is threaded into the DynamicResolver for per-request debug
+// entries.
 func ResolverFor(upstream *config.Upstream, opts []grpc.DialOption, log logger.Logger) (connect.Resolver, error) {
 	// One Dialer per upstream owns the TLS-mode decision and parses its
 	// certificate material once, so a templated upstream reuses it across every
 	// per-request dial (only the rendered server name varies).
 	dialer := upstream.Listen.Dialer()
+	opts = append(slices.Clone(opts), ConnectionDialOptions(&upstream.Connection)...)
 
 	if upstream.IsTemplated() {
 		translator := func(s string) string { return s }

@@ -35,6 +35,13 @@ upstreams:
     credentials:
       static:
         apiKey: $TEMPORAL_API_KEY
+    # Optional: tune the connection to Cloud. The values below are the defaults,
+    # which match the Temporal Go SDK.
+    # connection:
+    #   maxResponseSize: 128MiB # largest response accepted; MB is 10^6, MiB is 2^20
+    #   keepAlive:
+    #     time: 30s    # ping an idle connection this often (10s minimum)
+    #     timeout: 15s # close it when a ping goes unanswered this long
 
   # Namespace-less system calls have no namespace to derive a host from, so they
   # use a fixed namespace endpoint. Any namespace in the account serves them;

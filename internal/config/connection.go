@@ -1,0 +1,91 @@
+package config
+
+import (
+	"cmp"
+	"time"
+
+	"github.com/temporalio/temporal-proxy/pkg/validation"
+)
+
+const (
+	// defaultMaxResponseSize matches the Temporal Go SDK's receive limit, so a
+	// response a worker accepts on a direct connection is not refused by the proxy.
+	defaultMaxResponseSize ByteSize = 128 << 20 // 134217728 (128MiB)
+
+	// defaultKeepAliveTime and defaultKeepAliveTimeout match the Temporal Go
+	// SDK's keepalive, which a Temporal Service already permits.
+	defaultKeepAliveTime    = 30 * time.Second
+	defaultKeepAliveTimeout = 15 * time.Second
+
+	// maxResponseSizeLimit is one past the largest size gRPC can represent, since
+	// it takes the limit as an int32-sized int.
+	maxResponseSizeLimit ByteSize = 2 << 30 // 2147483648 (2GiB)
+
+	// minKeepAliveTime is gRPC's floor on the ping interval, which a Temporal
+	// Service also enforces. gRPC raises a lower value to it with only a log
+	// line, so a lower value is rejected rather than silently changed.
+	minKeepAliveTime = 10 * time.Second
+)
+
+type (
+	// ConnectionConfig tunes the gRPC connection to an upstream. Every field is
+	// optional; see the accessors for what an absent one means.
+	ConnectionConfig struct {
+		MaxResponseSize ByteSize        `yaml:"maxResponseSize"`
+		KeepAlive       KeepAliveConfig `yaml:"keepAlive"`
+	}
+
+	// KeepAliveConfig sets how often an idle connection is pinged (Time) and how
+	// long to wait for the ack before the connection is closed (Timeout).
+	KeepAliveConfig struct {
+		Time    time.Duration `yaml:"time"`
+		Timeout time.Duration `yaml:"timeout"`
+	}
+)
+
+// ResponseLimit is the largest response accepted from the upstream: the
+// configured size when there is one, and [defaultMaxResponseSize] when the field
+// is absent.
+func (c *ConnectionConfig) ResponseLimit() ByteSize {
+	return cmp.Or(c.MaxResponseSize, defaultMaxResponseSize)
+}
+
+// Validate requires a positive response size that gRPC can represent and valid
+// keepalive settings. Fields are checked through their accessors, so an absent
+// field is the default (which passes).
+func (c *ConnectionConfig) Validate() error {
+	return validation.Validate(
+		"",
+		validation.Field(
+			"maxResponseSize",
+			c.ResponseLimit(),
+			validation.GT[ByteSize](0),
+			validation.LT(maxResponseSizeLimit),
+		),
+		validation.Nested("keepAlive", &c.KeepAlive),
+	)
+}
+
+// PingTime is how long a connection may sit idle before it is pinged: the
+// configured time when there is one, and [defaultKeepAliveTime] when the field
+// is absent.
+func (k *KeepAliveConfig) PingTime() time.Duration {
+	return cmp.Or(k.Time, defaultKeepAliveTime)
+}
+
+// PingTimeout is how long to wait for a ping ack before closing the connection:
+// the configured timeout when there is one, and [defaultKeepAliveTimeout] when
+// the field is absent.
+func (k *KeepAliveConfig) PingTimeout() time.Duration {
+	return cmp.Or(k.Timeout, defaultKeepAliveTimeout)
+}
+
+// Validate requires a ping time at or above gRPC's minimum and a positive
+// timeout.
+func (k *KeepAliveConfig) Validate() error {
+	return validation.Validate(
+		"",
+		validation.Field("time", k.PingTime(), validation.GTE(minKeepAliveTime)),
+		validation.Field("timeout", k.PingTimeout(), validation.GT[time.Duration](0)),
+	)
+}

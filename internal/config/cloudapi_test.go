@@ -3,6 +3,7 @@ package config_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -37,6 +38,20 @@ func TestCloudAPIUpstreamDefaults(t *testing.T) {
 	require.Equal(t, cloud.APIHostPort, api.Listen.HostPort)
 	require.False(t, api.Listen.Insecure, "the real control plane is always TLS")
 	require.True(t, api.IsCloud())
+}
+
+// TestCloudAPIUpstreamInheritsConnection keeps one connection block in charge of
+// both connections to the same Cloud account.
+func TestCloudAPIUpstreamInheritsConnection(t *testing.T) {
+	t.Parallel()
+
+	conn := config.ConnectionConfig{
+		MaxResponseSize: 8 << 20,
+		KeepAlive:       config.KeepAliveConfig{Time: time.Minute, Timeout: 20 * time.Second},
+	}
+
+	api := config.CloudAPI{}.Upstream(&config.Upstream{Name: "frontend", Connection: conn})
+	require.Equal(t, conn, api.Connection)
 }
 
 // TestAPITranslationsZeroValueIsTheUnconfiguredCase pins what the block an
