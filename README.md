@@ -46,12 +46,10 @@ reaches a different upstream with no change to the Worker.
 
     Cloud[Temporal Cloud]
     SelfHosted[Self-hosted Temporal Service]
-    LocalWorker[Local Worker]
 
     Worker --> Gateway
     Client --> Gateway
     UI --> Gateway
-    LocalWorker -->|unix socket| ProxyA
     ProxyA --> Cloud
     ProxyB --> SelfHosted
 ```
