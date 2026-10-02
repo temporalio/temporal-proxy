@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/temporalio/temporal-proxy/internal/rpc"
 	"github.com/temporalio/temporal-proxy/internal/services"
@@ -108,17 +109,22 @@ func (s *replayStream) RecvMsg(m any) error {
 	payload := s.first.payload
 	s.first = nil
 
-	// Only a forwarded service is peeked and the router reads frames, so any other
-	// destination type means the two have drifted apart. Reported rather than
-	// decoded: decoding would quietly support a pairing nothing produces, and an
-	// error here cannot take the process down, which a type assertion could since
-	// the server installs no panic recovery.
-	f, ok := m.(*frame)
-	if !ok {
-		return status.Errorf(codes.Internal, "router: cannot replay the first request into %T, want a frame", m)
+	// A frame takes the bytes as they are, for a handler that relays them
+	// unparsed. A handler that reads typed messages, such as an upstream's
+	// forwarder, gets the buffered bytes decoded the way the stream's codec would
+	// have decoded them off the wire. Any other destination has nothing to decode
+	// into, and is reported rather than panicking, since the server installs no
+	// panic recovery.
+	switch dst := m.(type) {
+	case *frame:
+		dst.payload = payload
+	case proto.Message:
+		if err := proto.Unmarshal(payload, dst); err != nil {
+			return status.Errorf(codes.Internal, "router: decoding the first request failed: %v", err)
+		}
+	default:
+		return status.Errorf(codes.Internal, "router: cannot replay the first request into %T", m)
 	}
-
-	f.payload = payload
 
 	return nil
 }

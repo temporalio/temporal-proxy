@@ -260,10 +260,17 @@ func (f *Fixture) Context() context.Context {
 func (f *Fixture) UpstreamConn(name string) *grpc.ClientConn {
 	f.t.Helper()
 
+	return DialUnix(f.t, f.SocketPath(name))
+}
+
+// SocketPath is the unix socket path the named upstream's proxy binds.
+func (f *Fixture) SocketPath(name string) string {
+	f.t.Helper()
+
 	path, err := f.dp.SocketPath(name)
 	require.NoError(f.t, err)
 
-	return DialUnix(f.t, path)
+	return path
 }
 
 // applyDefaults fills in the fields every case would otherwise repeat. Routing

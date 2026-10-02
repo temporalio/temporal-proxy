@@ -13,8 +13,9 @@ const (
 	// no upstream was chosen.
 	upstreamUnknown = "unknown"
 
-	reasonNoConnection = "no_connection"
-	reasonStreamSetup  = "stream_setup"
+	// reasonNoHandler is the forwarding-error reason for a request routed to an
+	// upstream with no handler to serve it.
+	reasonNoHandler = "no_handler"
 )
 
 type (
@@ -82,7 +83,7 @@ func NewReporter(f *metrics.Factory, upstreams []string, labels metrics.Metadata
 	}
 
 	outcomes := []Outcome{OutcomeMatch, OutcomeDefault, OutcomeSystem}
-	reasons := []string{reasonNoConnection, reasonStreamSetup}
+	reasons := []string{reasonNoHandler}
 	for _, u := range upstreams {
 		for _, o := range outcomes {
 			r.decHandle[decisionKey{u, o}] = decisions.WithLabelValues(u, o.String())
