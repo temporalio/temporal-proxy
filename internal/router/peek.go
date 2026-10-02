@@ -109,11 +109,12 @@ func (s *replayStream) RecvMsg(m any) error {
 	payload := s.first.payload
 	s.first = nil
 
-	// ForwardTo reads frames and relays the bytes as they are. An in-process
-	// handler, such as an upstream's forwarder, reads typed messages, so the
-	// buffered bytes are decoded the way the stream's codec would have decoded
-	// them off the wire. Any other destination has nothing to decode into, and is
-	// reported rather than panicking, since the server installs no panic recovery.
+	// A frame takes the bytes as they are, for a handler that relays them
+	// unparsed. A handler that reads typed messages, such as an upstream's
+	// forwarder, gets the buffered bytes decoded the way the stream's codec would
+	// have decoded them off the wire. Any other destination has nothing to decode
+	// into, and is reported rather than panicking, since the server installs no
+	// panic recovery.
 	switch dst := m.(type) {
 	case *frame:
 		dst.payload = payload
