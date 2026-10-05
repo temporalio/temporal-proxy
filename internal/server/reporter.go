@@ -34,12 +34,13 @@ var durationBuckets = []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10
 type Reporter struct {
 	duration *prometheus.HistogramVec
 	requests *prometheus.CounterVec
+	panics   *prometheus.CounterVec
 	labels   metrics.MetadataLabels
 }
 
 // NewReporter builds the Prometheus-backed Reporter. f must already be scoped to
 // the "server" subsystem by the caller. labels are the configured metadata
-// labels carried on both collectors, and may be the zero value.
+// labels carried on every collector, and may be the zero value.
 func NewReporter(f *metrics.Factory, labels metrics.MetadataLabels) *Reporter {
 	return &Reporter{
 		duration: f.NewHistogram(prometheus.HistogramOpts{
@@ -51,8 +52,18 @@ func NewReporter(f *metrics.Factory, labels metrics.MetadataLabels) *Reporter {
 			Name: "requests_total",
 			Help: "Total RPCs served, labeled by method and gRPC status code.",
 		}, append([]string{"method", "code"}, labels.Names()...)),
+		panics: f.NewCounter(prometheus.CounterOpts{
+			Name: "panics_total",
+			Help: "Total panics recovered while serving an RPC, labeled by method.",
+		}, append([]string{"method"}, labels.Names()...)),
 		labels: labels,
 	}
+}
+
+// Panic counts one panic recovered serving method. ctx is the request's, and
+// supplies the configured metadata label values.
+func (r *Reporter) Panic(ctx context.Context, method string) {
+	r.panics.WithLabelValues(append([]string{method}, r.labels.AppendValues(ctx, nil)...)...).Inc()
 }
 
 // Observe records one completed RPC: its duration on the method histogram and a

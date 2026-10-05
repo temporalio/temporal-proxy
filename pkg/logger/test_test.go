@@ -64,6 +64,20 @@ func TestTestLoggerLevels(t *testing.T) {
 	require.True(t, l.ContainsEntry(logger.LevelError, "e"))
 }
 
+func TestTestLoggerTagsOf(t *testing.T) {
+	t.Parallel()
+
+	l := logger.NewTestLogger()
+	l.Warn("watch out", tag.String("k", "v"))
+	l.With(tag.String("base", "b")).Error("boom", tag.String("k", "first"))
+	l.Error("boom", tag.String("k", "second"))
+
+	require.Equal(t, map[string]any{"k": "v"}, l.TagsOf(logger.LevelWarn, "watch out"))
+	require.Equal(t, map[string]any{"base": "b", "k": "first"}, l.TagsOf(logger.LevelError, "boom"))
+	require.Nil(t, l.TagsOf(logger.LevelError, "watch out"))
+	require.Nil(t, l.TagsOf(logger.LevelInfo, "missing"))
+}
+
 func TestTestLoggerFatal(t *testing.T) {
 	t.Parallel()
 
