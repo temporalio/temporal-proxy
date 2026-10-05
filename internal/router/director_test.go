@@ -17,12 +17,9 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
 
-type fakeConn struct{ grpc.ClientConnInterface }
-
 func TestDirectorResolve(t *testing.T) {
 	t.Parallel()
 
-	conn := &fakeConn{}
 	mux, err := router.CompileMux(config.Routing{
 		DefaultUpstream: "primary",
 		Rules: []config.RoutingRule{
@@ -31,10 +28,16 @@ func TestDirectorResolve(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// Handlers are not comparable, so each records its upstream when called.
+	var served string
+	handler := func(upstream string) grpc.StreamHandler {
+		return func(any, grpc.ServerStream) error { served = upstream; return nil }
+	}
+
 	rep, reg := newTestReporter(t, "primary", "prod")
 	d := router.NewDirector(
 		mux,
-		map[string]grpc.ClientConnInterface{"primary": conn, "prod": conn},
+		map[string]grpc.StreamHandler{"primary": handler("primary"), "prod": handler("prod")},
 		rep,
 		nil,
 	)
@@ -42,7 +45,8 @@ func TestDirectorResolve(t *testing.T) {
 	target, err := d.Resolve(t.Context(), "/svc/Method", "prod-1", nil)
 	require.NoError(t, err)
 	require.Equal(t, "prod", target.Upstream)
-	require.Same(t, conn, target.Conn)
+	require.NoError(t, target.Handle(nil, nil))
+	require.Equal(t, "prod", served)
 
 	requireDecisions(t, reg, `
 tmprl_proxy_router_decisions_total{outcome="default",upstream="primary"} 0
@@ -74,7 +78,7 @@ tmprl_proxy_router_decisions_total{outcome="unroutable",upstream="unknown"} 1
 `)
 }
 
-func TestDirectorResolveNoConnection(t *testing.T) {
+func TestDirectorResolveNoHandler(t *testing.T) {
 	t.Parallel()
 
 	mux, err := router.CompileMux(config.Routing{DefaultUpstream: "primary"})
@@ -85,10 +89,10 @@ func TestDirectorResolveNoConnection(t *testing.T) {
 
 	_, err = d.Resolve(t.Context(), "/svc/Method", "anything", nil)
 	require.Equal(t, codes.Unavailable, status.Code(err))
-	require.ErrorContains(t, err, `no connection for upstream "primary"`)
+	require.ErrorContains(t, err, `no handler for upstream "primary"`)
 
-	// The decision is recorded before the connection lookup, so a missing
-	// connection counts as both a decision and a forwarding error.
+	// The decision is recorded before the handler lookup, so a missing handler
+	// counts as both a decision and a forwarding error.
 	requireDecisions(t, reg, `
 tmprl_proxy_router_decisions_total{outcome="default",upstream="primary"} 1
 tmprl_proxy_router_decisions_total{outcome="match",upstream="primary"} 0
@@ -96,8 +100,7 @@ tmprl_proxy_router_decisions_total{outcome="system",upstream="primary"} 0
 tmprl_proxy_router_decisions_total{outcome="unroutable",upstream="unknown"} 0
 `)
 	requireForwardingErrors(t, reg, `
-tmprl_proxy_router_forwarding_errors_total{reason="no_connection",upstream="primary"} 1
-tmprl_proxy_router_forwarding_errors_total{reason="stream_setup",upstream="primary"} 0
+tmprl_proxy_router_forwarding_errors_total{reason="no_handler",upstream="primary"} 1
 `)
 }
 
@@ -111,7 +114,7 @@ func TestDirectorLogsRoutingDecision(t *testing.T) {
 	log := logger.NewTestLogger()
 	d := router.NewDirector(
 		mux,
-		map[string]grpc.ClientConnInterface{"primary": &fakeConn{}},
+		map[string]grpc.StreamHandler{"primary": func(any, grpc.ServerStream) error { return nil }},
 		rep,
 		log,
 	)

@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"github.com/temporalio/temporal-proxy/internal/auth"
@@ -78,11 +77,13 @@ type (
 		key string
 	}
 
-	// upstreamTier is one upstream's proxy and the socket it binds.
+	// upstreamTier is one upstream's forwarder, served in process to the gateway
+	// and on the socket it binds.
 	upstreamTier struct {
 		name string
 		path string
 		svr  *proxy.Server
+		fw   *proxy.Forwarder
 	}
 )
 
@@ -162,7 +163,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		logger:   o.logger,
 	}
 
-	conns := make(map[string]grpc.ClientConnInterface, len(cfg.Upstreams))
+	handlers := make(map[string]grpc.StreamHandler, len(cfg.Upstreams))
 	for i := range cfg.Upstreams {
 		up := &cfg.Upstreams[i]
 
@@ -181,27 +182,14 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 			dp.ready = append(dp.ready, ready)
 		}
 
-		// The gateway dials this socket. Creating the connection does not open
-		// one, so nothing connects until the proxy has bound it. Every response
-		// from the upstream crosses this hop too, so it takes the upstream's limit.
-		sock := "unix://" + path
-		conn, err := o.pool.ConnOrCreate(
-			sock,
-			sock,
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(int(up.Connection.ResponseLimit()))),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create upstream client[%q]: %w", up.Name, err)
-		}
-
-		conns[up.Name] = conn
+		// The gateway calls this upstream's forwarder directly with the stream it
+		// accepted. The socket stays for local workers that dial it.
+		handlers[up.Name] = tier.fw.Handle
 	}
 
 	handler := router.Handler(
-		router.NewDirector(mux, conns, reps.router, o.logger),
+		router.NewDirector(mux, handlers, reps.router, o.logger),
 		o.allowlist,
-		reps.router,
 	)
 
 	gateway, err := server.New(
@@ -457,7 +445,7 @@ func newUpstreamTier(
 		ready = conn
 	}
 
-	return &upstreamTier{name: up.Name, path: path, svr: svr}, ready, nil
+	return &upstreamTier{name: up.Name, path: path, svr: svr, fw: fw}, ready, nil
 }
 
 // Resolve returns the overriding cache key with the wrapped resolver's target and

@@ -14,17 +14,17 @@ import (
 type (
 	// Director selects the upstream for a request. Resolve receives the full
 	// method, the namespace peeked from the first request message (empty when the
-	// client sent no message), and the incoming metadata, and returns the Target to
-	// forward over. A non-nil error aborts the stream and is returned to the caller
-	// verbatim, so implementations should return a gRPC status error.
+	// client sent no message), and the incoming metadata, and returns the Target
+	// whose handler serves the stream. A non-nil error aborts the stream and is
+	// returned to the caller verbatim, so implementations should return a gRPC
+	// status error.
 	Director interface {
 		Resolve(ctx context.Context, method, namespace string, md map[string][]string) (Target, error)
 	}
 
-	// director maps the upstream name the Mux chooses to that upstream's
-	// connection.
+	// director maps the upstream name the Mux chooses to that upstream's handler.
 	director struct {
-		conns    map[string]grpc.ClientConnInterface
+		handlers map[string]grpc.StreamHandler
 		mux      *Mux
 		reporter *Reporter
 		logger   logger.Logger
@@ -32,10 +32,11 @@ type (
 )
 
 // NewDirector returns the Director that routes a request with mux and looks the
-// chosen upstream up in conns. A nil log falls back to the default logger.
+// chosen upstream's handler up in handlers. A nil log falls back to the default
+// logger.
 func NewDirector(
 	mux *Mux,
-	conns map[string]grpc.ClientConnInterface,
+	handlers map[string]grpc.StreamHandler,
 	rep *Reporter,
 	log logger.Logger,
 ) Director {
@@ -44,7 +45,7 @@ func NewDirector(
 	}
 
 	return &director{
-		conns:    conns,
+		handlers: handlers,
 		mux:      mux,
 		reporter: rep,
 		logger:   log.With(tag.Component("router")),
@@ -54,9 +55,9 @@ func NewDirector(
 // Resolve routes a request by matching it against the Mux and returning the
 // Target for the resulting upstream. It fails with FailedPrecondition when
 // no upstream matches (and no default is configured) and with Unavailable when
-// the matched upstream has no connection. It records a decision metric on
-// every call, plus a no_connection forwarding-error metric when the chosen
-// upstream has no connection.
+// the matched upstream has no handler. It records a decision metric on every
+// call, plus a no_handler forwarding-error metric when the chosen upstream has
+// no handler.
 func (d *director) Resolve(
 	ctx context.Context,
 	method, namespace string,
@@ -70,10 +71,10 @@ func (d *director) Resolve(
 
 	d.reporter.Decision(ctx, upstream, outcome)
 
-	cc, ok := d.conns[upstream]
+	handle, ok := d.handlers[upstream]
 	if !ok {
-		d.reporter.ForwardingError(ctx, upstream, reasonNoConnection)
-		return Target{}, status.Errorf(codes.Unavailable, "router: no connection for upstream %q", upstream)
+		d.reporter.ForwardingError(ctx, upstream, reasonNoHandler)
+		return Target{}, status.Errorf(codes.Unavailable, "router: no handler for upstream %q", upstream)
 	}
 
 	d.logger.Debug(
@@ -84,5 +85,5 @@ func (d *director) Resolve(
 		tag.Stringer("outcome", outcome),
 	)
 
-	return Target{Upstream: upstream, Conn: cc}, nil
+	return Target{Upstream: upstream, Handle: handle}, nil
 }

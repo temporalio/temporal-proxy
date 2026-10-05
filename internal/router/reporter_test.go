@@ -36,8 +36,7 @@ tmprl_proxy_router_decisions_total{outcome="unroutable",upstream="unknown"} 0
 		const wantErrors = `
 # HELP tmprl_proxy_router_forwarding_errors_total Total router-originated forwarding failures, labeled by upstream and reason.
 # TYPE tmprl_proxy_router_forwarding_errors_total counter
-tmprl_proxy_router_forwarding_errors_total{reason="no_connection",upstream="primary"} 0
-tmprl_proxy_router_forwarding_errors_total{reason="stream_setup",upstream="primary"} 0
+tmprl_proxy_router_forwarding_errors_total{reason="no_handler",upstream="primary"} 0
 `
 		require.NoError(t, testutil.GatherAndCompare(
 			reg, strings.NewReader(wantErrors), "tmprl_proxy_router_forwarding_errors_total",
@@ -52,7 +51,7 @@ tmprl_proxy_router_forwarding_errors_total{reason="stream_setup",upstream="prima
 		m.Decision(t.Context(), "primary", router.OutcomeMatch)
 		m.Decision(t.Context(), "primary", router.OutcomeMatch)
 		m.Decision(t.Context(), "unknown", router.OutcomeUnroutable)
-		m.ForwardingError(t.Context(), "primary", "no_connection")
+		m.ForwardingError(t.Context(), "primary", "no_handler")
 
 		const wantDecisions = `
 # HELP tmprl_proxy_router_decisions_total Total routing decisions, labeled by chosen upstream and outcome.
@@ -69,8 +68,7 @@ tmprl_proxy_router_decisions_total{outcome="unroutable",upstream="unknown"} 1
 		const wantErrors = `
 # HELP tmprl_proxy_router_forwarding_errors_total Total router-originated forwarding failures, labeled by upstream and reason.
 # TYPE tmprl_proxy_router_forwarding_errors_total counter
-tmprl_proxy_router_forwarding_errors_total{reason="no_connection",upstream="primary"} 1
-tmprl_proxy_router_forwarding_errors_total{reason="stream_setup",upstream="primary"} 0
+tmprl_proxy_router_forwarding_errors_total{reason="no_handler",upstream="primary"} 1
 `
 		require.NoError(t, testutil.GatherAndCompare(
 			reg, strings.NewReader(wantErrors), "tmprl_proxy_router_forwarding_errors_total",
@@ -126,7 +124,7 @@ func TestReporterMetadataLabels(t *testing.T) {
 
 		ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs("x-tenant", "acme"))
 		m.Decision(ctx, "primary", router.OutcomeMatch)
-		m.ForwardingError(ctx, "primary", "no_connection")
+		m.ForwardingError(ctx, "primary", "no_handler")
 
 		// A request without the header still reports the label, empty.
 		m.Decision(t.Context(), "primary", router.OutcomeMatch)
@@ -144,7 +142,7 @@ tmprl_proxy_router_decisions_total{outcome="match",tenant="acme",upstream="prima
 		const wantErrors = `
 # HELP tmprl_proxy_router_forwarding_errors_total Total router-originated forwarding failures, labeled by upstream and reason.
 # TYPE tmprl_proxy_router_forwarding_errors_total counter
-tmprl_proxy_router_forwarding_errors_total{reason="no_connection",tenant="acme",upstream="primary"} 1
+tmprl_proxy_router_forwarding_errors_total{reason="no_handler",tenant="acme",upstream="primary"} 1
 `
 		require.NoError(t, testutil.GatherAndCompare(
 			reg, strings.NewReader(wantErrors), "tmprl_proxy_router_forwarding_errors_total",

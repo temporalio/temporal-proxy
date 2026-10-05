@@ -33,10 +33,10 @@ const echoMethod = "/" + services.WorkflowService + "/GetSystemInfo"
 
 // echoDesc is a stand-in gRPC service, registered under a real service name so
 // the allowlist admits it. Its handler answers a WorkflowService method with a
-// HealthCheckResponse, and that mismatch is the point: the exchange completes
-// only if the gateway's codec moves bytes without parsing them against either
-// descriptor. dataplanetest.Upstream answers the same method for real, which is
-// the right fake elsewhere but cannot prove that.
+// HealthCheckResponse. The upstream's forwarder types the exchange as
+// GetSystemInfo, and protobuf decodes each message's bytes as the other type
+// without error, so the stand-in answers through it; dataplanetest.Upstream
+// answers the same method for real elsewhere.
 var echoDesc = grpc.ServiceDesc{
 	ServiceName: services.WorkflowService,
 	HandlerType: (*any)(nil),
@@ -57,9 +57,9 @@ var echoDesc = grpc.ServiceDesc{
 
 // TestGatewayForwardsAnAllowedUnregisteredMethod drives a request through the
 // real gateway, over TCP, for a method the gateway itself never registers.
-// Reaching a correct response proves the router's pass-through codec and
-// forwarding handler are actually wired onto the server, not merely that a
-// [Dataplane] and its upstream both exist.
+// Reaching a correct response proves the router and the upstream's forwarder
+// are actually wired onto the server, not merely that a [Dataplane] and its
+// upstream both exist.
 // targetRecorder is an Authenticator that admits every caller and records the
 // Target it was handed.
 type targetRecorder struct {

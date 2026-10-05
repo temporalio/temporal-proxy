@@ -143,7 +143,7 @@ func driveReporters(t *testing.T, reg *prometheus.Registry, m config.Metrics, md
 	ctx := metadata.NewIncomingContext(t.Context(), md)
 
 	reps.Router.Decision(ctx, "cloud", router.OutcomeMatch)
-	reps.Router.ForwardingError(ctx, "cloud", "no_connection")
+	reps.Router.ForwardingError(ctx, "cloud", "no_handler")
 	reps.Server.Observe(ctx, "/svc/Method", codes.OK, time.Millisecond)
 	reps.Encryption.VaultOp(ctx, "encrypt", "success", "ns1", 0.01)
 }
