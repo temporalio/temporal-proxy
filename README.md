@@ -64,6 +64,13 @@ reaches a different upstream with no change to the Worker.
   overrides) in both requests and responses.
 - **TLS termination and outbound credentials.** Terminate inbound TLS/mTLS and attach the upstream's own TLS and
   credentials (API key or mTLS), so client code carries none of it.
+- **SRV discovery.** Set an upstream's `hostPort` to `srv:///<record>` (for example
+  `srv:///_grpc._tcp.temporal-frontend.temporal.svc.cluster.local`) and the proxy balances round-robin across every
+  backend the record lists. It re-reads the record every 30 seconds, and within 5 seconds of a backend failing.
+  `maxConnections` applies per backend, so 4 connections across 10 backends opens 40. Over TLS, every backend's
+  certificate is verified against the record name minus its leading `_service._proto` labels
+  (`temporal-frontend.temporal.svc.cluster.local` above), not the host each record points at; set `tls.serverName` when
+  the certificates carry a different name.
 - **Payload encryption.** Optionally seal payloads with envelope encryption on the hop to an upstream and open them on
   responses, so the upstream only ever sees ciphertext while local Workers keep exchanging cleartext. DEKs are wrapped
   by a KMS key (AWS KMS, Azure Key Vault, or GCP KMS), rotate automatically, and can be overridden per Namespace.

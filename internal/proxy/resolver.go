@@ -16,6 +16,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/template"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/internal/transport/meta"
+	"github.com/temporalio/temporal-proxy/internal/transport/resolve"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
@@ -108,7 +109,7 @@ func WithResolverLogger(l logger.Logger) ResolverOption {
 // start, and reused for every request; otherwise it returns a DynamicResolver
 // that renders the target and server name, and rebuilds credentials, per request.
 // opts holds the request-independent dial options (namespace translation and
-// outbound credentials); the upstream's connection settings are appended here.
+// outbound credentials); the upstream's connection settings and the srv:/// resolver are appended here.
 // log, when non-nil, is threaded into the DynamicResolver for per-request debug
 // entries.
 func ResolverFor(upstream *config.Upstream, opts []grpc.DialOption, log logger.Logger) (connect.Resolver, error) {
@@ -117,6 +118,7 @@ func ResolverFor(upstream *config.Upstream, opts []grpc.DialOption, log logger.L
 	// per-request dial (only the rendered server name varies).
 	dialer := upstream.Listen.Dialer()
 	opts = append(slices.Clone(opts), ConnectionDialOptions(&upstream.Connection)...)
+	opts = append(opts, grpc.WithResolvers(resolve.NewSRVBuilder()))
 
 	if upstream.IsTemplated() {
 		translator := func(s string) string { return s }
