@@ -29,7 +29,8 @@ type (
 	Option func(*options)
 
 	options struct {
-		cipher Cipher
+		cipher    Cipher
+		encryptor []EncryptorOption
 	}
 )
 
@@ -45,7 +46,7 @@ func NewChain(opts ...Option) Chain {
 	// because ciphertext does not compress.
 	var codecs []Codec
 	if o.cipher != nil {
-		codecs = append(codecs, NewEncryptor(o.cipher))
+		codecs = append(codecs, NewEncryptor(o.cipher, o.encryptor...))
 	}
 
 	return Chain{codecs: codecs}
@@ -58,6 +59,14 @@ func WithCipher(c Cipher) Option {
 		if c != nil {
 			o.cipher = c
 		}
+	}
+}
+
+// WithEncryptorOptions passes opts to the [Encryptor] the chain builds. Without
+// [WithCipher] there is no encryptor, so they have no effect.
+func WithEncryptorOptions(opts ...EncryptorOption) Option {
+	return func(o *options) {
+		o.encryptor = append(o.encryptor, opts...)
 	}
 }
 

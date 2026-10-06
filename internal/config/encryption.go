@@ -29,13 +29,15 @@ type (
 	// (local) namespace names, matching the namespace the vault seals under at
 	// request time. Failures also seals the message and stack trace of outbound
 	// failures, the way the Temporal SDK's EncodeCommonAttributes does; it requires
-	// Enabled.
+	// Enabled. SkipEncodings lists payload encodings already encrypted before they
+	// reach the proxy, which are forwarded unsealed.
 	Encryption struct {
-		Enabled   bool                 `yaml:"enabled"`
-		Failures  bool                 `yaml:"failures"`
-		CacheSize *int                 `yaml:"cacheSize"`
-		Default   *KeyPolicy           `yaml:"default"`
-		Overrides map[string]KeyPolicy `yaml:"overrides"`
+		Enabled       bool                 `yaml:"enabled"`
+		Failures      bool                 `yaml:"failures"`
+		CacheSize     *int                 `yaml:"cacheSize"`
+		Default       *KeyPolicy           `yaml:"default"`
+		Overrides     map[string]KeyPolicy `yaml:"overrides"`
+		SkipEncodings []string             `yaml:"skipEncodings"`
 	}
 
 	// KeyPolicy describes the KMS key backing a DEK and its rotation schedule.
@@ -94,6 +96,11 @@ func (e *Encryption) Validate() error {
 			validation.Nested(subject, &policy),
 		)
 	}
+
+	rules = append(rules,
+		validation.Field("skipEncodings", e.SkipEncodings, validation.Unique[string]()),
+		validation.Children("skipEncodings", e.SkipEncodings, nonBlankEncoding()),
+	)
 
 	return validation.Validate("", rules...)
 }
@@ -190,6 +197,18 @@ func validKeyURIRef() validation.Check[*url.URL] {
 
 		if strings.EqualFold(u.Scheme, extensionKeyScheme) && u.Host == "" {
 			return fmt.Errorf("extension key URI must name an extension server: %s", u)
+		}
+
+		return nil
+	}
+}
+
+// nonBlankEncoding rejects a blank skipEncodings entry, which would match every
+// payload that carries no encoding at all.
+func nonBlankEncoding() validation.Check[*string] {
+	return func(s *string) error {
+		if *s == "" {
+			return errors.New("must not be blank")
 		}
 
 		return nil

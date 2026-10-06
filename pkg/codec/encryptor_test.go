@@ -32,6 +32,7 @@ type fakeCipher struct {
 	encErr    error             // when set, Encrypt returns it
 	decErr    error             // when set, Decrypt returns it
 	decReturn []byte            // when set, Decrypt returns these bytes instead of the unsealed plaintext
+	unknown   string            // when set, Decrypt fails with crypto.ErrUnknownKey for messages under this KEK ID
 }
 
 func TestEncryptorRoundtrip(t *testing.T) {
@@ -96,6 +97,86 @@ func TestEncryptorEncodeEmpty(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, out)
 	require.Empty(t, c.encrypted)
+}
+
+// TestEncryptorEncodeSkipsListedEncodings pins which payloads are forwarded as-is.
+// Dropping the skip check in Encode fails every wantSkip row; matching with
+// strings.EqualFold fails the case-sensitivity row; keeping blank entries in
+// WithSkipEncodings fails the blank row.
+func TestEncryptorEncodeSkipsListedEncodings(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		encoding string
+		skip     []string
+		wantSkip bool
+	}{
+		{name: "listed custom encoding", encoding: "acme/aes-gcm", skip: []string{"acme/aes-gcm"}, wantSkip: true},
+		{
+			// Matching is on the marker alone, so samples-style codec output
+			// without our wrapped DEK is skipped too.
+			name:     "listed binary/encrypted without our key material",
+			encoding: codec.EncryptionEncoding,
+			skip:     []string{codec.EncryptionEncoding},
+			wantSkip: true,
+		},
+		{name: "unlisted encoding", encoding: "json/plain", skip: []string{"acme/aes-gcm"}},
+		{name: "match is case-sensitive", encoding: "ACME/AES-GCM", skip: []string{"acme/aes-gcm"}},
+		{name: "empty list", encoding: "acme/aes-gcm"},
+		{name: "blank entry never matches a blank encoding", encoding: "", skip: []string{""}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			c := &fakeCipher{}
+			var skipped []string
+			enc := codec.NewEncryptor(c,
+				codec.WithSkipEncodings(tc.skip...),
+				codec.WithSkipObserver(func(op, encoding string) { skipped = append(skipped, op+" "+encoding) }),
+			)
+
+			p := testPayload(tc.encoding, `"data"`)
+			got, err := enc.Encode([]*common.Payload{p})
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+
+			if tc.wantSkip {
+				require.Same(t, p, got[0])
+				require.Empty(t, c.encrypted)
+				require.Equal(t, []string{codec.SkipOpEncrypt + " " + tc.encoding}, skipped)
+				return
+			}
+
+			require.Len(t, c.encrypted, 1)
+			require.True(t, bytes.HasPrefix(got[0].Data, []byte(sealPrefix)))
+			require.Empty(t, skipped)
+		})
+	}
+}
+
+// TestEncryptorEncodeMixedBatch shows each payload is decided on its own and order
+// is kept. Returning early from Encode on the first skip fails the length check;
+// reading p.Metadata on a payload with none must not match anything.
+func TestEncryptorEncodeMixedBatch(t *testing.T) {
+	t.Parallel()
+
+	c := &fakeCipher{}
+	plain := testPayload("json/plain", `"plain"`)
+	workerSealed := testPayload("acme/aes-gcm", "ciphertext-from-a-worker")
+	bare := &common.Payload{Data: []byte("no metadata")}
+
+	got, err := codec.NewEncryptor(c, codec.WithSkipEncodings("acme/aes-gcm")).
+		Encode([]*common.Payload{plain, workerSealed, bare})
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+
+	require.True(t, bytes.HasPrefix(got[0].Data, []byte(sealPrefix)))
+	require.Same(t, workerSealed, got[1])
+	require.True(t, bytes.HasPrefix(got[2].Data, []byte(sealPrefix)))
+	require.Len(t, c.encrypted, 2)
 }
 
 func TestEncryptorDecodePassesThrough(t *testing.T) {
@@ -252,6 +333,100 @@ func TestEncryptorErrors(t *testing.T) {
 	})
 }
 
+// TestEncryptorDecodeUnknownKey pins when a payload sealed elsewhere is passed
+// through. Dropping the skips(EncryptionEncoding) guard fails the two "fails"
+// rows; matching any error instead of crypto.ErrUnknownKey fails the "other
+// errors" row.
+func TestEncryptorDecodeUnknownKey(t *testing.T) {
+	t.Parallel()
+
+	const otherKEK = "other-proxy-kek"
+	errKMS := errors.New("kms unavailable")
+
+	tests := []struct {
+		name    string
+		skip    []string
+		cipher  *fakeCipher
+		wantErr error
+	}{
+		{
+			name:   "passes through when binary/encrypted is listed",
+			skip:   []string{codec.EncryptionEncoding},
+			cipher: &fakeCipher{unknown: otherKEK},
+		},
+		{
+			name:    "fails when nothing is listed",
+			cipher:  &fakeCipher{unknown: otherKEK},
+			wantErr: crypto.ErrUnknownKey,
+		},
+		{
+			name:    "fails when only custom encodings are listed",
+			skip:    []string{"acme/aes-gcm"},
+			cipher:  &fakeCipher{unknown: otherKEK},
+			wantErr: crypto.ErrUnknownKey,
+		},
+		{
+			name:    "other decrypt errors stay fatal",
+			skip:    []string{codec.EncryptionEncoding},
+			cipher:  &fakeCipher{decErr: errKMS},
+			wantErr: errKMS,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			theirs := sealedUnder(t, otherKEK, testPayload("json/plain", `"x"`))
+			var skipped []string
+			enc := codec.NewEncryptor(tc.cipher,
+				codec.WithSkipEncodings(tc.skip...),
+				codec.WithSkipObserver(func(op, encoding string) { skipped = append(skipped, op+" "+encoding) }),
+			)
+
+			got, err := enc.Decode([]*common.Payload{theirs})
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+				require.Nil(t, got)
+				require.Empty(t, skipped)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			require.Same(t, theirs, got[0])
+			require.Equal(t, []string{codec.SkipOpDecrypt + " " + codec.EncryptionEncoding}, skipped)
+		})
+	}
+}
+
+// TestEncryptorDecodeMixedOwnership shows a chained hop opens what it sealed and
+// passes through what it didn't, in one batch. Breaking or returning on the
+// pass-through instead of continuing the loop fails it.
+func TestEncryptorDecodeMixedOwnership(t *testing.T) {
+	t.Parallel()
+
+	original := testPayload("json/plain", `"ours"`)
+	want := proto.Clone(original).(*common.Payload)
+
+	ours, err := codec.NewEncryptor(&fakeCipher{}).Encode([]*common.Payload{original})
+	require.NoError(t, err)
+	theirs := sealedUnder(t, "other-proxy-kek", testPayload("json/plain", `"theirs"`))
+
+	var skipped []string
+	got, err := codec.NewEncryptor(
+		&fakeCipher{unknown: "other-proxy-kek"},
+		codec.WithSkipEncodings(codec.EncryptionEncoding),
+		codec.WithSkipObserver(func(op, encoding string) { skipped = append(skipped, op+" "+encoding) }),
+	).Decode([]*common.Payload{theirs, ours[0]})
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+
+	require.Same(t, theirs, got[0])
+	require.True(t, proto.Equal(want, got[1]))
+	require.Equal(t, []string{codec.SkipOpDecrypt + " " + codec.EncryptionEncoding}, skipped)
+}
+
 func (f *fakeCipher) Encrypt(data []byte) (*crypto.Message, error) {
 	if f.encErr != nil {
 		return nil, f.encErr
@@ -267,6 +442,10 @@ func (f *fakeCipher) Encrypt(data []byte) (*crypto.Message, error) {
 
 func (f *fakeCipher) Decrypt(msg *crypto.Message) ([]byte, error) {
 	f.decrypted = append(f.decrypted, msg)
+
+	if f.unknown != "" && msg.KeyMaterial.KEKID == f.unknown {
+		return nil, fmt.Errorf("%w: %s", crypto.ErrUnknownKey, f.unknown)
+	}
 
 	if f.decErr != nil {
 		return nil, f.decErr
@@ -287,6 +466,20 @@ func testPayload(encoding, data string) *common.Payload {
 		Metadata: map[string][]byte{codec.MetadataEncoding: []byte(encoding)},
 		Data:     []byte(data),
 	}
+}
+
+// sealedUnder returns p sealed by fakeCipher, then relabeled as if a cipher
+// holding kekID had sealed it, the way another proxy's output would arrive.
+func sealedUnder(t *testing.T, kekID string, p *common.Payload) *common.Payload {
+	t.Helper()
+
+	sealed, err := codec.NewEncryptor(&fakeCipher{}).Encode([]*common.Payload{p})
+	require.NoError(t, err)
+
+	out := proto.Clone(sealed[0]).(*common.Payload)
+	out.Metadata[codec.MetadataEncryptionKeyID] = []byte(kekID)
+
+	return out
 }
 
 // markedPayload builds a payload carrying the sealed-payload encoding marker

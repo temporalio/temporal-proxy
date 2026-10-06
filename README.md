@@ -75,6 +75,12 @@ reaches a different upstream with no change to the Worker.
   responses, so the upstream only ever sees ciphertext while local Workers keep exchanging cleartext. DEKs are wrapped
   by a KMS key (AWS KMS, Azure Key Vault, or GCP KMS), rotate automatically, and can be overridden per Namespace.
   Set `encryption.failures` to seal failure messages and stack traces too, as the SDK's `EncodeCommonAttributes` does.
+
+  Payloads a Worker's own codec already encrypted, or that an earlier proxy sealed, can be forwarded as they are by
+  listing their encoding under `encryption.skipEncodings`. Listing an encoding trusts every Worker that sets it: the
+  proxy cannot tell ciphertext from plaintext labeled that way. Listing `binary/encrypted` also returns responses sealed
+  under a KEK this proxy doesn't hold, including its own if a key was removed from config, rather than failing the
+  call, so alert on `vault_ops_total{result="unknown_key"}`.
 - **Pluggable key management.** For a backend the proxy has no built-in support for, such as an on-prem HSM or an
   internal key service, point it at an extension server you run and it wraps DEKs through that instead. Only key
   material is exchanged; payloads never reach it.
@@ -234,25 +240,30 @@ label reports blank there even though the same series populates it for a request
 fixed label is added to every series in the table, and to nothing registered outside the proxy's own collectors, so
 the runtime's `go_*` and `process_*` series stay as they are.
 
-| Subsystem      | Metric                       | Type      | Labels                             |
-| -------------- | ---------------------------- | --------- | ---------------------------------- |
-| `server`       | `requests_total`             | counter   | `method`, `code`                   |
-| `server`       | `request_duration_seconds`   | histogram | `method`                           |
-| `server`       | `panics_total`               | counter   | `method`                           |
-| `router`       | `decisions_total`            | counter   | `upstream`, `outcome`              |
-| `router`       | `forwarding_errors_total`    | counter   | `upstream`, `reason`               |
-| `encryption`   | `vault_ops_total`            | counter   | `operation`, `result`, `namespace` |
-| `encryption`   | `vault_ops_duration_seconds` | histogram | `operation`, `namespace`           |
-| `encryption`   | `kek_ops_total`              | counter   | `provider`, `operation`, `result`  |
-| `encryption`   | `kek_ops_duration_seconds`   | histogram | `provider`, `operation`            |
-| `encryption`   | `dek_ops_total`              | counter   | `operation`, `result`              |
-| `encryption`   | `dek_ops_duration_seconds`   | histogram | `operation`                        |
-| `encryption`   | `dek_rotations_total`        | counter   | `reason`                           |
-| `encryption`   | `dek_cache_hits_total`       | counter   | none                               |
-| `encryption`   | `dek_cache_misses_total`     | counter   | none                               |
-| `encryption`   | `dek_cache_size`             | gauge     | none                               |
-| `codec_server` | `requests_total`             | counter   | `route`, `code`                    |
-| `codec_server` | `request_duration_seconds`   | histogram | `route`                            |
+`payloads_skipped_total` carries the metadata labels too (blank, as with `vault_ops`, for operations from the codec
+server, since an HTTP request carries no gRPC metadata), and `vault_ops_total` reports `result="unknown_key"` for a
+payload sealed under a KEK the proxy doesn't hold.
+
+| Subsystem      | Metric                       | Type      | Labels                               |
+| -------------- | ---------------------------- | --------- | ------------------------------------ |
+| `server`       | `requests_total`             | counter   | `method`, `code`                     |
+| `server`       | `request_duration_seconds`   | histogram | `method`                             |
+| `server`       | `panics_total`               | counter   | `method`                             |
+| `router`       | `decisions_total`            | counter   | `upstream`, `outcome`                |
+| `router`       | `forwarding_errors_total`    | counter   | `upstream`, `reason`                 |
+| `encryption`   | `vault_ops_total`            | counter   | `operation`, `result`, `namespace`   |
+| `encryption`   | `vault_ops_duration_seconds` | histogram | `operation`, `namespace`             |
+| `encryption`   | `payloads_skipped_total`     | counter   | `operation`, `encoding`, `namespace` |
+| `encryption`   | `kek_ops_total`              | counter   | `provider`, `operation`, `result`    |
+| `encryption`   | `kek_ops_duration_seconds`   | histogram | `provider`, `operation`              |
+| `encryption`   | `dek_ops_total`              | counter   | `operation`, `result`                |
+| `encryption`   | `dek_ops_duration_seconds`   | histogram | `operation`                          |
+| `encryption`   | `dek_rotations_total`        | counter   | `reason`                             |
+| `encryption`   | `dek_cache_hits_total`       | counter   | none                                 |
+| `encryption`   | `dek_cache_misses_total`     | counter   | none                                 |
+| `encryption`   | `dek_cache_size`             | gauge     | none                                 |
+| `codec_server` | `requests_total`             | counter   | `route`, `code`                      |
+| `codec_server` | `request_duration_seconds`   | histogram | `route`                              |
 
 The `encryption` subsystem only reports once encryption keys are configured, and `codec_server` only reports once the
 codec server is enabled. Its `route` label is the matched pattern (`/decode`, and so on), never the request path,

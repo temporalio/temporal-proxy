@@ -10,6 +10,10 @@ import (
 	"sync"
 )
 
+// ErrUnknownKey is returned when a DEK names a KEK the registry holds neither as
+// an active nor as a decrypt-only key.
+var ErrUnknownKey = errors.New("unknown key")
+
 type (
 	// KEK defines an interface for a Key Encryption Key.
 	// These keys are used to encrypt/decrypt DEKs and are customer-managed (e.g. via AWS/GCP KMS).
@@ -182,7 +186,7 @@ func (r *KEKRegistry) Decrypt(ctx context.Context, m *DEKMaterial) (*DEK, error)
 
 	k, ok := r.keyIDs[m.KEKID]
 	if !ok {
-		return nil, fmt.Errorf("unknown key: %s", m.KEKID)
+		return nil, fmt.Errorf("%w: %s", ErrUnknownKey, m.KEKID)
 	}
 
 	ct, err := base64.StdEncoding.DecodeString(m.EncryptedDEK)

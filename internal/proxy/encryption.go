@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
@@ -46,11 +47,16 @@ func (c *cipher) Decrypt(m *crypto.Message) ([]byte, error) {
 	return pt, err
 }
 
-// resultLabel maps an error to the "result" metric label value.
+// resultLabel maps an error to the "result" metric label value. An unknown key
+// gets its own value: on a chained hop it is expected, and on a standalone proxy
+// it means a KEK went missing, neither of which is a vault failure.
 func resultLabel(err error) string {
-	if err != nil {
+	switch {
+	case err == nil:
+		return "success"
+	case errors.Is(err, crypto.ErrUnknownKey):
+		return "unknown_key"
+	default:
 		return "error"
 	}
-
-	return "success"
 }

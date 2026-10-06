@@ -20,6 +20,10 @@ func TestNewChainNoCodecs(t *testing.T) {
 	}{
 		{name: "no options"},
 		{name: "nil cipher is ignored", opts: []codec.Option{codec.WithCipher(nil)}},
+		{
+			name: "encryptor options alone add no codec",
+			opts: []codec.Option{codec.WithEncryptorOptions(codec.WithSkipEncodings("json/plain"))},
+		},
 	}
 
 	for _, tc := range tests {
@@ -91,4 +95,22 @@ func TestChainCipherErrors(t *testing.T) {
 		_, err = chain.Decode(sealed)
 		require.ErrorContains(t, err, "failed to decrypt payload")
 	})
+}
+
+// TestNewChainForwardsEncryptorOptions shows WithEncryptorOptions reaches the
+// encryptor NewChain builds. Dropping o.encryptor from the NewEncryptor call in
+// NewChain fails it.
+func TestNewChainForwardsEncryptorOptions(t *testing.T) {
+	t.Parallel()
+
+	chain := codec.NewChain(
+		codec.WithCipher(&fakeCipher{}),
+		codec.WithEncryptorOptions(codec.WithSkipEncodings("acme/aes-gcm")),
+	)
+
+	p := testPayload("acme/aes-gcm", "ciphertext-from-a-worker")
+	got, err := chain.Encode([]*common.Payload{p})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Same(t, p, got[0])
 }

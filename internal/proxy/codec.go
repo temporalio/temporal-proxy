@@ -32,6 +32,12 @@ type (
 		// are sealed with every other payload. It requires Encrypt.
 		EncodeFailures bool
 
+		// SkipEncodings lists payload encodings already encrypted before they
+		// reach the proxy. Outbound payloads under one are forwarded unsealed, and
+		// listing codec.EncryptionEncoding also returns inbound payloads sealed
+		// under a KEK the vault doesn't hold, rather than failing the call.
+		SkipEncodings []string
+
 		// Reporter records the duration and result of each vault operation. It is
 		// required whenever a Vault is set.
 		Reporter *Reporter
@@ -82,6 +88,21 @@ func NewCodecs(opts CodecOptions) (*Codecs, error) {
 		c.inbound = append(c.inbound, enc)
 		if opts.Encrypt {
 			c.outbound = append(c.outbound, enc)
+		}
+
+		// The set is built once here; only the observer is bound per request.
+		if len(opts.SkipEncodings) > 0 {
+			encodings := codec.WithSkipEncodings(opts.SkipEncodings...)
+			skip := func(ctx context.Context, ns string) codec.Option {
+				return codec.WithEncryptorOptions(encodings, codec.WithSkipObserver(func(op, encoding string) {
+					opts.Reporter.PayloadSkipped(ctx, op, encoding, ns)
+				}))
+			}
+
+			c.inbound = append(c.inbound, skip)
+			if opts.Encrypt {
+				c.outbound = append(c.outbound, skip)
+			}
 		}
 	}
 

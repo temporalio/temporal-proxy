@@ -222,6 +222,39 @@ func TestNewTwiceOverOneMetricsFactoryDoesNotPanic(t *testing.T) {
 	}
 }
 
+// TestNewWarnsWhenSkipEncodingsHasNoKeys covers a list with nothing to apply it
+// to. Removing the warning fails the first case; dropping the length check fails
+// the second.
+func TestNewWarnsWhenSkipEncodingsHasNoKeys(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		skip     []string
+		wantWarn bool
+	}{
+		{name: "list without keys", skip: []string{"acme/aes-gcm"}, wantWarn: true},
+		{name: "no list"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := testConfig()
+			cfg.Encryption.SkipEncodings = tc.skip
+
+			log := logger.NewTestLogger()
+			deps := newTestDeps(t, cfg)
+			deps.logger = log
+
+			_, err := dataplane.New(deps.ctx, cfg, deps.opts()...)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantWarn, log.Contains(skipEncodingsUnusedWarning))
+		})
+	}
+}
+
 // opts returns d as the options [dataplane.New] takes, less any named in omit,
 // so a caller can prove New reports one as missing. Names are the ones New
 // reports.
@@ -302,6 +335,11 @@ func testingKeyURL(t *testing.T) url.URL {
 // spelled once here rather than approximated at each assertion.
 const cloudAPIUnusedWarning = "apiTranslations is configured but no upstream is Temporal Cloud, so no method " +
 	"will be translated"
+
+// skipEncodingsUnusedWarning is the message New logs for a skip list with no
+// encryption codec to act on.
+const skipEncodingsUnusedWarning = "encryption.skipEncodings is set but no encryption keys are configured, so it " +
+	"has no effect"
 
 // stagingCloudAPI is an override that says something, which is what an inert
 // block has to be to be worth warning about: one that says nothing is
