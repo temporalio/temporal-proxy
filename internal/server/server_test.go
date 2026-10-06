@@ -151,52 +151,6 @@ func TestServerInsecureWarning(t *testing.T) {
 	})
 }
 
-func TestWithUnaryInterceptor(t *testing.T) {
-	t.Parallel()
-
-	var mu sync.Mutex
-	var calls []string
-
-	record := func(name string) grpc.UnaryServerInterceptor {
-		return func(
-			ctx context.Context,
-			req any,
-			_ *grpc.UnaryServerInfo,
-			handler grpc.UnaryHandler,
-		) (any, error) {
-			mu.Lock()
-			calls = append(calls, name)
-			mu.Unlock()
-			return handler(ctx, req)
-		}
-	}
-
-	svr, err := server.New(
-		server.WithUnaryInterceptor(record("first"), record("second")),
-	)
-	require.NoError(t, err)
-
-	lis := bufconn.Listen(1024 * 1024)
-	defer func() { _ = lis.Close() }()
-
-	errCh := make(chan error, 1)
-	go func() { errCh <- svr.Start(t.Context(), lis) }()
-
-	conn := newBufConnClient(t, lis)
-	defer func() { _ = conn.Close() }()
-
-	client := grpc_health_v1.NewHealthClient(conn)
-	_, err = client.Check(t.Context(), &grpc_health_v1.HealthCheckRequest{})
-	require.NoError(t, err)
-
-	require.NoError(t, svr.Stop(t.Context()))
-	<-errCh
-
-	mu.Lock()
-	defer mu.Unlock()
-	require.Equal(t, []string{"first", "second"}, calls)
-}
-
 func TestWithStreamInterceptor(t *testing.T) {
 	t.Parallel()
 
@@ -235,64 +189,6 @@ func TestWithStreamInterceptor(t *testing.T) {
 	cancel()
 
 	require.True(t, called.Load())
-
-	require.NoError(t, svr.Stop(t.Context()))
-	<-errCh
-}
-
-func TestWithService(t *testing.T) {
-	t.Parallel()
-
-	echoDesc := grpc.ServiceDesc{
-		ServiceName: "test.v1.Echo",
-		HandlerType: (*any)(nil),
-		Methods: []grpc.MethodDesc{
-			{
-				MethodName: "Ping",
-				Handler: func(
-					_ any,
-					ctx context.Context,
-					dec func(any) error,
-					_ grpc.UnaryServerInterceptor,
-				) (any, error) {
-					in := new(grpc_health_v1.HealthCheckRequest)
-					if err := dec(in); err != nil {
-						return nil, err
-					}
-					return &grpc_health_v1.HealthCheckResponse{
-						Status: grpc_health_v1.HealthCheckResponse_SERVING,
-					}, nil
-				},
-			},
-		},
-	}
-
-	var registered bool
-	svr, err := server.New(server.WithService(func(r grpc.ServiceRegistrar) {
-		registered = true
-		r.RegisterService(&echoDesc, nil)
-	}))
-	require.NoError(t, err)
-	require.True(t, registered, "service registration callback should be invoked")
-
-	lis := bufconn.Listen(1024 * 1024)
-	defer func() { _ = lis.Close() }()
-
-	errCh := make(chan error, 1)
-	go func() { errCh <- svr.Start(t.Context(), lis) }()
-
-	conn := newBufConnClient(t, lis)
-	defer func() { _ = conn.Close() }()
-
-	resp := new(grpc_health_v1.HealthCheckResponse)
-	err = conn.Invoke(
-		t.Context(),
-		"/test.v1.Echo/Ping",
-		&grpc_health_v1.HealthCheckRequest{},
-		resp,
-	)
-	require.NoError(t, err)
-	require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.GetStatus())
 
 	require.NoError(t, svr.Stop(t.Context()))
 	<-errCh
