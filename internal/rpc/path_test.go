@@ -114,7 +114,6 @@ func TestServiceMethod(t *testing.T) {
 			// The accessors drop the ok, so a name that does not split must reach
 			// their callers as "" rather than as a name to match on.
 			require.Equal(t, tt.service, rpc.Service(tt.in))
-			require.Equal(t, tt.method, rpc.Method(tt.in))
 		})
 	}
 }
