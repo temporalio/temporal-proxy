@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -11,21 +12,33 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
 
-// RecoveryInterceptor returns a stream server interceptor that turns a panic
+// RecoveryHandler is told of each panic [WithRecoveryHandler] recovers, after it
+// has been logged. ctx is the request's and method its full gRPC method name.
+// [Reporter.Panic] is one, counting the panic by method.
+type RecoveryHandler func(ctx context.Context, method string)
+
+// WithRecoveryHandler appends a stream server interceptor that turns a panic
 // further down the chain into a generic Internal status, logging the panic and
-// its stack to log and counting it on r. It covers both a panic on the handler's
-// goroutine and one an [rpc.Pump] direction recovered and returned as an
-// [rpc.PanicError], since forwarding runs interceptors on those goroutines too.
+// its stack to log and then calling fn, which may be nil. It covers both a panic
+// on the handler's goroutine and one an [rpc.Pump] direction recovered and
+// returned as an [rpc.PanicError], since forwarding runs interceptors on those
+// goroutines too.
 //
-// It recovers only what runs after it in the chain, and only on streams: a
-// registered unary method, such as the health service's Check, bypasses stream
-// interceptors. Forwarded methods are all served as streams. Put it after
-// [Reporter.StreamInterceptor], so a recovered RPC is still recorded with its
-// Internal code; that interceptor does nothing that can panic on its own.
+// The interceptor takes its place in the chain in the order supplied alongside
+// [WithStreamInterceptor], and recovers only what runs after it, and only on
+// streams: a registered unary method, such as the health service's Check,
+// bypasses stream interceptors. Forwarded methods are all served as streams. Put
+// it after [Reporter.StreamInterceptor], so a recovered RPC is still recorded
+// with its Internal code; that interceptor does nothing that can panic on its
+// own.
 //
 // Recovery keeps the process serving, not its state sound: a panic can leave a
 // lock held or a cache half-written, and nothing here can tell.
-func (r *Reporter) RecoveryInterceptor(log logger.Logger) grpc.StreamServerInterceptor {
+func WithRecoveryHandler(log logger.Logger, fn RecoveryHandler) Option {
+	return WithStreamInterceptor(recoveryInterceptor(log, fn))
+}
+
+func recoveryInterceptor(log logger.Logger, fn RecoveryHandler) grpc.StreamServerInterceptor {
 	return func(
 		srv any,
 		ss grpc.ServerStream,
@@ -47,7 +60,9 @@ func (r *Reporter) RecoveryInterceptor(log logger.Logger) grpc.StreamServerInter
 				tag.String("panic", fmt.Sprint(pe.Value)),
 				tag.String("stack", string(pe.Stack)),
 			)
-			r.Panic(ss.Context(), info.FullMethod)
+			if fn != nil {
+				fn(ss.Context(), info.FullMethod)
+			}
 
 			// Unwrapped, so the caller sees the generic status and not the panic.
 			err = pe

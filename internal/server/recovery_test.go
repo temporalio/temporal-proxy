@@ -26,14 +26,14 @@ const (
 	panicValue   = "secret request contents"
 )
 
-func TestRecoveryInterceptorRecoversHandlerPanic(t *testing.T) {
+func TestWithRecoveryHandlerRecoversHandlerPanic(t *testing.T) {
 	t.Parallel()
 
 	r, reg := newTestReporter(t, metrics.MetadataLabels{})
 	log := logger.NewTestLogger()
 
-	err := r.RecoveryInterceptor(log)(nil, &fakeStream{ctx: t.Context()}, &grpc.StreamServerInfo{FullMethod: panicMethod},
-		func(any, grpc.ServerStream) error { panic(panicValue) },
+	err := serveOne(t, func(any, grpc.ServerStream) error { panic(panicValue) },
+		server.WithRecoveryHandler(log, r.Panic),
 	)
 
 	requireGenericInternal(t, err)
@@ -42,15 +42,15 @@ func TestRecoveryInterceptorRecoversHandlerPanic(t *testing.T) {
 }
 
 // A Pump direction cannot panic onto the handler's goroutine, so it hands the
-// panic back as an error, and the interceptor must treat that the same way.
-func TestRecoveryInterceptorReportsPanicReturnedByThePump(t *testing.T) {
+// panic back as an error, and recovery must treat that the same way.
+func TestWithRecoveryHandlerReportsPanicReturnedByThePump(t *testing.T) {
 	t.Parallel()
 
 	r, reg := newTestReporter(t, metrics.MetadataLabels{})
 	log := logger.NewTestLogger()
 
-	err := r.RecoveryInterceptor(log)(nil, &fakeStream{ctx: t.Context()}, &grpc.StreamServerInfo{FullMethod: panicMethod},
-		func(any, grpc.ServerStream) error { return fmt.Errorf("forwarding: %w", panicErr()) },
+	err := serveOne(t, func(any, grpc.ServerStream) error { return fmt.Errorf("forwarding: %w", panicErr()) },
+		server.WithRecoveryHandler(log, r.Panic),
 	)
 
 	requireGenericInternal(t, err)
@@ -58,35 +58,68 @@ func TestRecoveryInterceptorReportsPanicReturnedByThePump(t *testing.T) {
 	requirePanicCount(t, reg, 1)
 }
 
-func TestRecoveryInterceptorPassesThroughWithoutPanic(t *testing.T) {
+func TestWithRecoveryHandlerPassesThroughWithoutPanic(t *testing.T) {
 	t.Parallel()
 
 	r, reg := newTestReporter(t, metrics.MetadataLabels{})
 	log := logger.NewTestLogger()
-	want := status.Error(codes.NotFound, "no such workflow")
 
-	err := r.RecoveryInterceptor(log)(nil, &fakeStream{ctx: t.Context()}, &grpc.StreamServerInfo{FullMethod: panicMethod},
-		func(any, grpc.ServerStream) error { return want },
+	err := serveOne(t, func(any, grpc.ServerStream) error { return status.Error(codes.NotFound, "no such workflow") },
+		server.WithRecoveryHandler(log, r.Panic),
 	)
 
-	require.Same(t, want, err, "an error with no panic must pass through untouched")
+	st, ok := status.FromError(err)
+	require.True(t, ok, "want a status error, got %v", err)
+	require.Equal(t, codes.NotFound, st.Code(), "an error with no panic must pass through untouched")
+	require.Equal(t, "no such workflow", st.Message())
 	require.False(t, log.Contains(panicMessage))
 	requirePanicCount(t, reg, 0)
 }
 
-// TestRecoveryInterceptorAfterReporterRecordsInternal runs the two interceptors
-// in the order the gateway installs them, over a real server, so a panicked RPC
-// is seen by the caller as Internal and recorded as one in requests_total.
-func TestRecoveryInterceptorAfterReporterRecordsInternal(t *testing.T) {
+func TestWithRecoveryHandlerAcceptsNilHandler(t *testing.T) {
+	t.Parallel()
+
+	log := logger.NewTestLogger()
+
+	err := serveOne(t, func(any, grpc.ServerStream) error { panic(panicValue) },
+		server.WithRecoveryHandler(log, nil),
+	)
+
+	requireGenericInternal(t, err)
+	requirePanicLogged(t, log)
+}
+
+// TestWithRecoveryHandlerAfterReporterRecordsInternal installs recovery after
+// the reporter, as the gateway does, so a panicked RPC is seen by the caller as
+// Internal and recorded as one in requests_total.
+func TestWithRecoveryHandlerAfterReporterRecordsInternal(t *testing.T) {
 	t.Parallel()
 
 	r, reg := newTestReporter(t, metrics.MetadataLabels{})
 	log := logger.NewTestLogger()
 
-	svr, err := server.New(
-		server.WithStreamInterceptor(r.StreamInterceptor(), r.RecoveryInterceptor(log)),
-		server.WithUnknownServiceHandler(func(any, grpc.ServerStream) error { panic(panicValue) }),
+	err := serveOne(t, func(any, grpc.ServerStream) error { panic(panicValue) },
+		server.WithStreamInterceptor(r.StreamInterceptor()),
+		server.WithRecoveryHandler(log, r.Panic),
 	)
+
+	requireGenericInternal(t, err)
+	requirePanicLogged(t, log)
+	requirePanicCount(t, reg, 1)
+	require.NoError(t, testutil.GatherAndCompare(reg, strings.NewReader(`
+# HELP tmprl_proxy_server_requests_total Total RPCs served, labeled by method and gRPC status code.
+# TYPE tmprl_proxy_server_requests_total counter
+tmprl_proxy_server_requests_total{code="Internal",method="`+panicMethod+`"} 1
+`), "tmprl_proxy_server_requests_total"))
+}
+
+// serveOne starts a server with opts that answers every unregistered method with
+// handler, makes one call to panicMethod, stops the server, and returns the
+// error the caller saw.
+func serveOne(t *testing.T, handler grpc.StreamHandler, opts ...server.Option) error {
+	t.Helper()
+
+	svr, err := server.New(append(opts, server.WithUnknownServiceHandler(handler))...)
 	require.NoError(t, err)
 
 	lis := bufconn.Listen(1024 * 1024)
@@ -98,19 +131,12 @@ func TestRecoveryInterceptorAfterReporterRecordsInternal(t *testing.T) {
 	conn := newBufConnClient(t, lis)
 	defer func() { _ = conn.Close() }()
 
-	err = conn.Invoke(t.Context(), panicMethod, &grpc_health_v1.HealthCheckRequest{}, &grpc_health_v1.HealthCheckResponse{})
-	requireGenericInternal(t, err)
+	callErr := conn.Invoke(t.Context(), panicMethod, &grpc_health_v1.HealthCheckRequest{}, &grpc_health_v1.HealthCheckResponse{})
 
 	require.NoError(t, svr.Stop(t.Context()))
 	require.NoError(t, <-errCh)
 
-	requirePanicLogged(t, log)
-	requirePanicCount(t, reg, 1)
-	require.NoError(t, testutil.GatherAndCompare(reg, strings.NewReader(`
-# HELP tmprl_proxy_server_requests_total Total RPCs served, labeled by method and gRPC status code.
-# TYPE tmprl_proxy_server_requests_total counter
-tmprl_proxy_server_requests_total{code="Internal",method="`+panicMethod+`"} 1
-`), "tmprl_proxy_server_requests_total"))
+	return callErr
 }
 
 // panicErr recovers a panic the way a Pump direction does.

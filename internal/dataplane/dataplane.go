@@ -185,7 +185,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		server.WithStreamInterceptor(reps.server.StreamInterceptor()),
 		// Straight after the reporter, so a panic in any interceptor after it or in
 		// the handler is recovered and still recorded as an Internal request.
-		server.WithStreamInterceptor(reps.server.RecoveryInterceptor(o.logger)),
+		server.WithRecoveryHandler(o.logger, reps.server.Panic),
 		// Ahead of authentication: it resolves what the request is addressing, and
 		// an authenticator decides on that as well as on the caller's credentials.
 		server.WithStreamInterceptor(router.PeekInterceptor(o.extractor, o.allowlist)),
