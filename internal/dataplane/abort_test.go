@@ -13,14 +13,14 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
 
-// TestAbortFiresOnceWhenServingStopsUnexpectedly closes the listeners out from
-// under the serving goroutines, which is the only way into the unexpected-exit
+// TestAbortFiresWhenServingStopsUnexpectedly closes the gateway's listener out
+// from under its serving goroutine, which is the only way into the unexpected-exit
 // path: Stop and cancelling the serving context are both clean shutdowns, and a
 // taken port fails before serving starts.
-func TestAbortFiresOnceWhenServingStopsUnexpectedly(t *testing.T) {
+func TestAbortFiresWhenServingStopsUnexpectedly(t *testing.T) {
 	t.Parallel()
 
-	aborts := make(chan error, 2)
+	aborts := make(chan error, 1)
 
 	cfg := abortConfig(t)
 	d := newTestDeps(t, cfg)
@@ -37,13 +37,8 @@ func TestAbortFiresOnceWhenServingStopsUnexpectedly(t *testing.T) {
 	t.Cleanup(func() { _ = dp.Stop(context.WithoutCancel(t.Context())) })
 
 	listeners := dp.Listeners()
-	require.Len(t, listeners, 2, "one upstream socket and the gateway")
-	require.Equal(t, "unix", listeners[0].Addr().Network(), "upstream sockets bind before the gateway")
-	require.Equal(t, "tcp", listeners[1].Addr().Network())
-
-	for _, lis := range listeners {
-		require.NoError(t, lis.Close())
-	}
+	require.Len(t, listeners, 1, "only the gateway binds")
+	require.NoError(t, listeners[0].Close())
 
 	select {
 	case err := <-aborts:
@@ -51,14 +46,6 @@ func TestAbortFiresOnceWhenServingStopsUnexpectedly(t *testing.T) {
 		require.ErrorContains(t, err, "stopped serving")
 	case <-time.After(10 * time.Second):
 		t.Fatal("Abort was not called after serving stopped")
-	}
-
-	// Both tiers stopped serving, but a caller is told once: the first report is
-	// the one that brings the process down.
-	select {
-	case err := <-aborts:
-		t.Fatalf("Abort fired more than once: %v", err)
-	case <-time.After(500 * time.Millisecond):
 	}
 }
 
@@ -87,10 +74,8 @@ func TestAbortIsOptional(t *testing.T) {
 	)
 }
 
-// abortConfig points the only upstream at a template, so the plane binds a
-// socket and serves without anything having to be reachable during Start. The
-// socket path is derived from the hostPort, so naming the test in it keeps
-// parallel planes off each other's sockets.
+// abortConfig points the only upstream at a template, so the plane serves
+// without anything having to be reachable during Start.
 func abortConfig(t *testing.T) *config.Config {
 	t.Helper()
 

@@ -23,7 +23,6 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/server"
 	"github.com/temporalio/temporal-proxy/internal/services"
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
-	"github.com/temporalio/temporal-proxy/internal/transport/socket"
 	"github.com/temporalio/temporal-proxy/internal/version"
 	"github.com/temporalio/temporal-proxy/pkg/crypto"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
@@ -37,7 +36,6 @@ type (
 		ctx       context.Context
 		gateway   *server.Server
 		hostPort  string
-		upstreams []*upstreamTier
 		ready     []*connect.Conn
 		codecs    *proxy.Codecs
 		abort     func(error)
@@ -76,20 +74,11 @@ type (
 
 		key string
 	}
-
-	// upstreamTier is one upstream's forwarder, served in process to the gateway
-	// and on the socket it binds.
-	upstreamTier struct {
-		name string
-		path string
-		svr  *proxy.Server
-		fw   *proxy.Forwarder
-	}
 )
 
-// New validates cfg in full, compiles the routing table, derives each upstream's
-// socket path once, and builds both tiers. ctx is long lived and drives each
-// tier's health check; the context passed to Start bounds startup only. Neither
+// New validates cfg in full, compiles the routing table, and builds the gateway
+// and every upstream's forwarder. ctx is long lived and drives the gateway's
+// health check; the context passed to Start bounds startup only. Neither
 // stops serving, which only Stop does. New binds nothing and dials nothing. Every
 // Prometheus collector is registered here, so New must be called once per
 // registry.
@@ -167,24 +156,18 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 	for i := range cfg.Upstreams {
 		up := &cfg.Upstreams[i]
 
-		path, err := socket.UnixPath(up.Listen.HostPort)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve proxy socket path[%q]: %w", up.Name, err)
-		}
-
-		tier, ready, err := newUpstreamTier(cfg, o, up, path, codecs)
+		fw, ready, err := newUpstreamForwarder(cfg, o, up, codecs)
 		if err != nil {
 			return nil, err
 		}
 
-		dp.upstreams = append(dp.upstreams, tier)
 		if ready != nil {
 			dp.ready = append(dp.ready, ready)
 		}
 
 		// The gateway calls this upstream's forwarder directly with the stream it
-		// accepted. The socket stays for local workers that dial it.
-		handlers[up.Name] = tier.fw.Handle
+		// accepted.
+		handlers[up.Name] = fw.Handle
 	}
 
 	handler := router.Handler(
@@ -268,8 +251,8 @@ func WithVault(v *crypto.Vault) Option {
 	return Option(func(o *options) { o.vault = v })
 }
 
-// WithLogger sets the logger used by the dataplane and both tiers, defaulting to
-// [logger.Default]. A nil logger keeps the default, so an absent optional
+// WithLogger sets the logger used by the gateway and every upstream, defaulting
+// to [logger.Default]. A nil logger keeps the default, so an absent optional
 // dependency can be passed straight through.
 func WithLogger(log logger.Logger) Option {
 	return Option(func(o *options) {
@@ -280,8 +263,8 @@ func WithLogger(log logger.Logger) Option {
 }
 
 // WithAbort sets a function called at most once, from the goroutine that was
-// serving, when a tier stops for a reason other than Stop. It must not block and
-// must not call back into the Dataplane.
+// serving, when the gateway stops for a reason other than Stop. It must not
+// block and must not call back into the Dataplane.
 func WithAbort(fn func(error)) Option {
 	return Option(func(o *options) { o.abort = fn })
 }
@@ -298,18 +281,6 @@ func (d *Dataplane) Addr() net.Addr {
 // the request path transforms payloads exactly as a proxied request would.
 func (d *Dataplane) Codecs() *proxy.Codecs {
 	return d.codecs
-}
-
-// SocketPath is the unix path the named upstream's proxy binds and the gateway
-// dials. It is the single derivation of that path.
-func (d *Dataplane) SocketPath(upstream string) (string, error) {
-	for _, up := range d.upstreams {
-		if up.name == upstream {
-			return up.path, nil
-		}
-	}
-
-	return "", fmt.Errorf("dataplane: no upstream named %q", upstream)
 }
 
 // validate reports the first required dependency that is missing, by field
@@ -338,16 +309,16 @@ func validate(ctx context.Context, cfg *config.Config, o *options) error {
 	return nil
 }
 
-// newUpstreamTier builds one upstream's proxy. It returns the tier, the
-// connection to open eagerly at start (nil for a templated upstream, which
-// resolves per request and has nothing to open yet), and any error.
-func newUpstreamTier(
+// newUpstreamForwarder builds one upstream's forwarder. It returns the
+// forwarder, the connection to open eagerly at start (nil for a templated
+// upstream, which resolves per request and has nothing to open yet), and any
+// error.
+func newUpstreamForwarder(
 	cfg *config.Config,
 	o *options,
 	up *config.Upstream,
-	path string,
 	codecs *proxy.Codecs,
-) (*upstreamTier, *connect.Conn, error) {
+) (*proxy.Forwarder, *connect.Conn, error) {
 	// Request-independent dial options: namespace translation and outbound
 	// credentials. Per-request credentials are added by the resolver.
 	var dialOpts []grpc.DialOption
@@ -428,16 +399,6 @@ func newUpstreamTier(
 		return nil, nil, err
 	}
 
-	svr, err := proxy.New(
-		up.Listen.HostPort,
-		fw,
-		proxy.WithLogger(o.logger),
-		proxy.WithSocketPath(path),
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create proxy for upstream %q: %w", up.Name, err)
-	}
-
 	// Only a static upstream holds a connection worth opening before serving; a
 	// templated one resolves its target per request.
 	var ready *connect.Conn
@@ -445,7 +406,7 @@ func newUpstreamTier(
 		ready = conn
 	}
 
-	return &upstreamTier{name: up.Name, path: path, svr: svr, fw: fw}, ready, nil
+	return fw, ready, nil
 }
 
 // Resolve returns the overriding cache key with the wrapped resolver's target and

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
@@ -14,20 +16,11 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/dataplane/dataplanetest"
 )
 
-func TestStartBindsUpstreamSocketsBeforeTheGatewayAccepts(t *testing.T) {
+func TestStartReturnsOnceTheGatewayAccepts(t *testing.T) {
 	t.Parallel()
 
 	cfg := liveConfig(t)
 	dp := startPlane(t, newTestDeps(t, cfg))
-
-	// Every upstream socket must already accept by the time Start returns; the
-	// gateway routes to them immediately.
-	path, err := dp.SocketPath("primary")
-	require.NoError(t, err)
-
-	conn, err := net.Dial("unix", path)
-	require.NoError(t, err, "upstream socket must be accepting once Start returns")
-	require.NoError(t, conn.Close())
 
 	require.NotNil(t, dp.Addr())
 
@@ -69,10 +62,8 @@ func TestStartFailsOnUnreachableStaticUpstream(t *testing.T) {
 		"an unreachable static upstream must fail startup",
 	)
 
-	// A failed Start rolls back: the gateway never bound, and the upstream
-	// socket it did bind is closed again rather than left listening.
+	// A failed Start rolls back: the gateway never bound.
 	require.Nil(t, dp.Addr())
-	requireNotServing(t, dp, "primary")
 }
 
 func TestStartFailsWhenTheGatewayPortIsTaken(t *testing.T) {
@@ -82,7 +73,7 @@ func TestStartFailsWhenTheGatewayPortIsTaken(t *testing.T) {
 	first := startPlane(t, newTestDeps(t, cfg))
 
 	// A second plane on the address the first is already accepting on cannot
-	// bind, so its Start fails after its own upstream sockets are up.
+	// bind, so its Start fails after its upstream connections are open.
 	cfg = liveConfig(t)
 	cfg.Listen.HostPort = first.Addr().String()
 
@@ -95,13 +86,9 @@ func TestStartFailsWhenTheGatewayPortIsTaken(t *testing.T) {
 
 	require.ErrorContains(t, second.Start(ctx), "failed to create listener")
 	require.Nil(t, second.Addr())
-	requireNotServing(t, second, "primary")
 
 	// Rolling the second plane back must not disturb the first.
-	path, err := first.SocketPath("primary")
-	require.NoError(t, err)
-
-	conn, err := net.Dial("unix", path)
+	conn, err := net.Dial("tcp", first.Addr().String())
 	require.NoError(t, err, "the first plane must still be serving")
 	require.NoError(t, conn.Close())
 }
@@ -147,17 +134,6 @@ func TestStopWithoutStart(t *testing.T) {
 	require.NoError(t, dp.Stop(t.Context()), "Stop before Start has nothing to drain")
 }
 
-func TestSocketPathUnknownUpstream(t *testing.T) {
-	t.Parallel()
-
-	cfg := liveConfig(t)
-	dp, err := dataplane.New(t.Context(), cfg, newTestDeps(t, cfg).opts()...)
-	require.NoError(t, err)
-
-	_, err = dp.SocketPath("nope")
-	require.ErrorContains(t, err, "nope")
-}
-
 func TestStartWithTemplatedAndStaticUpstreams(t *testing.T) {
 	t.Parallel()
 
@@ -169,37 +145,16 @@ func TestStartWithTemplatedAndStaticUpstreams(t *testing.T) {
 	})
 
 	// Nothing is listening for the templated upstream, which is the point: it
-	// resolves per request, so it is excluded from the readiness wait and still
-	// gets a socket of its own.
+	// resolves per request, so it is excluded from the readiness wait and Start
+	// still succeeds.
 	dp := startPlane(t, newTestDeps(t, cfg))
-
-	for _, name := range []string{"primary", "templated"} {
-		path, err := dp.SocketPath(name)
-		require.NoError(t, err)
-
-		conn, err := net.Dial("unix", path)
-		require.NoError(t, err, "upstream %q must be accepting once Start returns", name)
-		require.NoError(t, conn.Close())
-	}
+	require.NotNil(t, dp.Addr())
 }
 
-// TestStopClosesEveryUpstreamSocket proves a normal Stop tears down every
-// upstream tier, not just the one Start bound most recently: each of two
-// upstreams answers a real health check before Stop and refuses connections
-// after it.
-func TestStopClosesEveryUpstreamSocket(t *testing.T) {
+func TestStopClosesTheGateway(t *testing.T) {
 	t.Parallel()
 
-	cfg := testConfig()
-	// Neither upstream is named "primary", so the default upstream testConfig
-	// wires up must be cleared: nothing here routes through the gateway, but a
-	// stale reference still fails Config.Validate.
-	cfg.Routing = config.Routing{}
-	cfg.Upstreams = config.UpstreamList{
-		{Name: "a", Listen: dataplanetest.NewUpstream(t).Listen()},
-		{Name: "b", Listen: dataplanetest.NewUpstream(t).Listen()},
-	}
-
+	cfg := liveConfig(t)
 	dp, err := dataplane.New(t.Context(), cfg, newTestDeps(t, cfg).opts()...)
 	require.NoError(t, err)
 
@@ -207,27 +162,28 @@ func TestStopClosesEveryUpstreamSocket(t *testing.T) {
 	defer cancel()
 	require.NoError(t, dp.Start(ctx))
 
-	for _, name := range []string{"a", "b"} {
-		path, err := dp.SocketPath(name)
-		require.NoError(t, err)
+	addr := dp.Addr().String()
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
 
-		resp, err := grpc_health_v1.NewHealthClient(dataplanetest.DialUnix(t, path)).Check(
-			t.Context(), &grpc_health_v1.HealthCheckRequest{},
-		)
-		require.NoError(t, err, "upstream %q must be serving before Stop", name)
-		require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.GetStatus())
-	}
+	resp, err := grpc_health_v1.NewHealthClient(conn).Check(
+		t.Context(), &grpc_health_v1.HealthCheckRequest{},
+	)
+	require.NoError(t, err, "the gateway must be serving before Stop")
+	require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.GetStatus())
 
 	require.NoError(t, dp.Stop(context.WithoutCancel(t.Context())))
 
-	for _, name := range []string{"a", "b"} {
-		requireNotServing(t, dp, name)
+	gw, err := net.Dial("tcp", addr)
+	if err == nil {
+		_ = gw.Close()
+		t.Fatalf("the gateway is still accepting on %s", addr)
 	}
 }
 
 // liveConfig is testConfig pointed at an upstream that is actually listening,
-// which Start must reach before the gateway binds. The ephemeral port also
-// keeps the derived unix socket path unique across parallel tests.
+// which Start must reach before the gateway binds.
 func liveConfig(t *testing.T) *config.Config {
 	t.Helper()
 
@@ -255,20 +211,4 @@ func startPlane(t *testing.T, d testDeps) *dataplane.Dataplane {
 	t.Cleanup(func() { _ = dp.Stop(context.WithoutCancel(t.Context())) })
 
 	return dp
-}
-
-// requireNotServing asserts the named upstream's socket is gone, which is how a
-// rolled-back Start or a completed Stop proves it leaked neither a listener nor
-// a socket file.
-func requireNotServing(t *testing.T, dp *dataplane.Dataplane, upstream string) {
-	t.Helper()
-
-	path, err := dp.SocketPath(upstream)
-	require.NoError(t, err)
-
-	conn, err := net.Dial("unix", path)
-	if err == nil {
-		_ = conn.Close()
-		t.Fatalf("upstream %q is still accepting on %s", upstream, path)
-	}
 }

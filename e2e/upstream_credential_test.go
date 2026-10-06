@@ -14,8 +14,8 @@ import (
 // TestProxyAttachesUpstreamCredential proves the static credential configured
 // on an upstream actually reaches that upstream: it stands up a fake
 // WorkflowService server over TLS, points a real dataplane at it
-// with a static credential configured, drives a request through the proxy's
-// local socket, and asserts the fake upstream observed the
+// with a static credential configured, drives a request through the gateway,
+// and asserts the fake upstream observed the
 // "authorization: Bearer <key>" header. The static provider requires
 // transport security, so this exercises the same TLS + per-RPC credential
 // dial path production traffic takes; construction in isolation cannot prove
@@ -32,8 +32,7 @@ func TestProxyAttachesUpstreamCredential(t *testing.T) {
 
 	f := dataplanetest.Start(t, cfg)
 
-	conn := f.UpstreamConn(dataplanetest.DefaultUpstream)
-	_, err := workflowservice.NewWorkflowServiceClient(conn).GetSystemInfo(
+	_, err := f.Client().GetSystemInfo(
 		f.Context(), &workflowservice.GetSystemInfoRequest{}, grpc.WaitForReady(true),
 	)
 	require.NoError(t, err)

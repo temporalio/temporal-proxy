@@ -55,18 +55,16 @@ go run ./cmd/proxy serve -c examples/codecserver/config.yaml
 ```
 
 ```text
-{"level":"info","namespace":"default","uri":"testing://<redacted>","time":"2026-09-30T14:54:14-04:00","message":"Registering crypto key"}
-{"level":"warn","component":"codecserver","time":"2026-09-30T14:54:14-04:00","message":"Codec server is running without authentication, which is only allowed on a loopback bind"}
-{"level":"info","component":"codecserver","addr":"127.0.0.1:8081","time":"2026-09-30T14:54:14-04:00","message":"Starting the codec server"}
-{"level":"warn","addr":"/var/folders/6m/x_q_q9nx6ns3ygnf48xzqrn80000gn/T/127-0-0-1-7233-6689a1b6.sock","time":"2026-09-30T14:54:14-04:00","message":"Running with insecure credentials. Configure TLS for production use."}
-{"level":"info","addr":"/var/folders/6m/x_q_q9nx6ns3ygnf48xzqrn80000gn/T/127-0-0-1-7233-6689a1b6.sock","time":"2026-09-30T14:54:14-04:00","message":"Starting the server"}
-{"level":"warn","addr":"127.0.0.1:7234","time":"2026-09-30T14:54:14-04:00","message":"Running with insecure credentials. Configure TLS for production use."}
-{"level":"info","addr":"127.0.0.1:7234","time":"2026-09-30T14:54:14-04:00","message":"Starting the server"}
-{"level":"info","component":"metrics","addr":":9090","time":"2026-09-30T14:54:14-04:00","message":"Starting metrics server"}
+{"level":"info","namespace":"default","uri":"testing://<redacted>","time":"2026-10-06T14:34:19-04:00","message":"Registering crypto key"}
+{"level":"warn","component":"codecserver","time":"2026-10-06T14:34:19-04:00","message":"Codec server is running without authentication, which is only allowed on a loopback bind"}
+{"level":"info","component":"codecserver","addr":"127.0.0.1:8081","time":"2026-10-06T14:34:19-04:00","message":"Starting the codec server"}
+{"level":"info","component":"metrics","addr":":9090","time":"2026-10-06T14:34:19-04:00","message":"Starting metrics server"}
+{"level":"warn","addr":"127.0.0.1:7234","time":"2026-10-06T14:34:19-04:00","message":"Running with insecure credentials. Configure TLS for production use."}
+{"level":"info","addr":"127.0.0.1:7234","time":"2026-10-06T14:34:19-04:00","message":"Starting the server"}
 ```
 
 These warnings are expected here. The codec server runs without authentication because it is bound to loopback, and the
-`insecure credentials` lines describe the plaintext gateway and an internal socket on this machine.
+`insecure credentials` line describes the plaintext gateway on this machine.
 
 ## Start a Workflow through the gateway
 

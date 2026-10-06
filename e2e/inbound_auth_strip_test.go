@@ -21,10 +21,9 @@ import (
 // gateway but never reaches the upstream, and the upstream sees exactly one
 // authorization value, the configured static API key.
 //
-// TestProxyAttachesUpstreamCredential (in upstream_credential_socket_test.go)
-// dials the per-upstream proxy's socket directly and so cannot exercise the
-// gateway or router at all; this test is the only one that proves both strips
-// hold together end to end.
+// TestProxyAttachesUpstreamCredential (in upstream_credential_test.go) runs
+// without inbound auth, so it proves only the outbound attach; this test is the
+// only one that proves both strips hold together end to end.
 func TestEndToEndInboundAuthStrippedOutboundCredentialAttached(t *testing.T) {
 	t.Parallel()
 

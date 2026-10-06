@@ -1,24 +1,27 @@
 package proxy_test
 
-// These tests drive real requests through a real [proxy.Server] over its unix
-// socket, so they use only the exported surface and live in the external test
+// These tests drive real requests through a real [proxy.Forwarder] served over
+// loopback TCP, so they use only the exported surface and live in the external test
 // package. forward_test.go stays in package proxy for the unit tests that need
 // the forwarder's unexported internals.
 
 import (
 	"context"
 	"io"
+	"net"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/reflection/grpc_reflection_v1"
 	"google.golang.org/grpc/status"
 
+	"github.com/temporalio/temporal-proxy/internal/proxy"
 	"github.com/temporalio/temporal-proxy/internal/services"
 )
 
@@ -59,7 +62,7 @@ func TestStreamForwardsBidiReflection(t *testing.T) {
 	// ServerReflectionInfo is the only streaming method across every forwardable
 	// service, so it is the only way to exercise the streaming path at all. The
 	// upstream is the sole reflection provider (the proxy's local server registers
-	// only the health service), so a response naming WorkflowService proves the
+	// nothing), so a response naming WorkflowService proves the
 	// stream reached it and came back.
 	addr := serveUpstream(t, func(s *grpc.Server) {
 		workflowservice.RegisterWorkflowServiceServer(s, &metadataStampingService{})
@@ -134,4 +137,61 @@ func (*metadataStampingService) GetSystemInfo(
 	}
 
 	return &workflowservice.GetSystemInfoResponse{}, nil
+}
+
+// forwarder builds a forwarder for the named services over a plain client conn
+// to upstream, standing in for the pool-backed connection used in production.
+func forwarder(t *testing.T, upstream string, allowed ...string) *proxy.Forwarder {
+	t.Helper()
+
+	if len(allowed) == 0 {
+		allowed = services.Default()
+	}
+
+	conn, err := grpc.NewClient(upstream, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	fw, err := proxy.NewForwarder(conn, services.NewAllowlist(allowed))
+	require.NoError(t, err)
+
+	return fw
+}
+
+// serveUpstream starts a plaintext gRPC server on a loopback port, registers any
+// services supplied, and returns its address for use as an upstream hostPort.
+func serveUpstream(t *testing.T, register ...func(*grpc.Server)) string {
+	t.Helper()
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	svr := grpc.NewServer()
+	for _, reg := range register {
+		reg(svr)
+	}
+
+	go func() { _ = svr.Serve(lis) }()
+	t.Cleanup(svr.Stop)
+
+	return lis.Addr().String()
+}
+
+// startProxy serves a forwarder for the named services to upstream on a
+// loopback port and returns a client connection to it.
+func startProxy(t *testing.T, upstream string, allowed ...string) *grpc.ClientConn {
+	t.Helper()
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	svr := grpc.NewServer(grpc.UnknownServiceHandler(forwarder(t, upstream, allowed...).Handle))
+	go func() { _ = svr.Serve(lis) }()
+	t.Cleanup(svr.Stop)
+
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	return conn
 }

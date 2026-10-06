@@ -104,18 +104,3 @@ func TestStartAppBuildsConfigDrivenCollaborators(t *testing.T) {
 	_, err = f.Client().GetSystemInfo(bad, &workflowservice.GetSystemInfoRequest{})
 	require.Equal(t, codes.Unauthenticated, status.Code(err))
 }
-
-func TestUpstreamConnReachesTheProxySocketDirectly(t *testing.T) {
-	t.Parallel()
-
-	up := dataplanetest.NewUpstream(t)
-	f := dataplanetest.Start(t, dataplanetest.Config(up))
-
-	// The per-upstream socket is a supported access path for local workers, so
-	// it must serve without going through the gateway.
-	client := workflowservice.NewWorkflowServiceClient(f.UpstreamConn(dataplanetest.DefaultUpstream))
-
-	_, err := client.GetSystemInfo(f.Context(), &workflowservice.GetSystemInfoRequest{}, grpc.WaitForReady(true))
-	require.NoError(t, err)
-	require.NotNil(t, up.Metadata())
-}

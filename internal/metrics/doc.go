@@ -6,7 +6,7 @@
 //
 // A reporter emitting while a request is in flight also takes a
 // [MetadataLabels], built from the configured header-to-name pairs, and carries
-// those labels on its collectors. Values are read from the request's incoming metadata at each emit
-// rather than resolved once and carried along, because the proxy forwards over a
-// socket that context values do not cross while metadata does.
+// those labels on its collectors. Values are read from the request's incoming
+// metadata at each emit, which every hop's context already carries, so nothing
+// has to resolve and stash them up front.
 package metrics

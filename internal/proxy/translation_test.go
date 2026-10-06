@@ -20,7 +20,6 @@ import (
 
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
 	"github.com/temporalio/temporal-proxy/internal/services"
-	"github.com/temporalio/temporal-proxy/internal/transport/socket"
 )
 
 type (
@@ -152,17 +151,17 @@ func TestOutboundNamespaceTranslation(t *testing.T) {
 	fw, err := NewForwarder(cc, services.NewAllowlist(services.Default()))
 	require.NoError(t, err)
 
-	svr, err := New(lis.Addr().String(), fw)
+	proxyLis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
+	svr := grpc.NewServer(grpc.UnknownServiceHandler(fw.Handle))
+	go func() { _ = svr.Serve(proxyLis) }()
+	t.Cleanup(svr.Stop)
+
+	conn, err := grpc.NewClient(proxyLis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
 
 	ctx := t.Context()
-	srvLis, err := svr.Listen(ctx)
-	require.NoError(t, err)
-	go func() { _ = svr.Start(ctx, srvLis) }()
-	t.Cleanup(func() { _ = svr.Stop(context.Background()) })
-
-	conn := dialUnixSocket(t, lis.Addr().String())
-	defer func() { _ = conn.Close() }()
 
 	client := workflowservice.NewWorkflowServiceClient(conn)
 
@@ -195,20 +194,4 @@ func local(s string) string { return "local-" + s }
 
 func namespaceInfo(name string) *namespacepb.NamespaceInfo {
 	return &namespacepb.NamespaceInfo{Name: name}
-}
-
-// dialUnixSocket returns a client connection to the proxy's unix socket for the
-// given upstream host. The socket path matches what proxy.Start binds.
-func dialUnixSocket(t *testing.T, upstream string) *grpc.ClientConn {
-	t.Helper()
-
-	path, err := socket.UnixPath(upstream)
-	require.NoError(t, err)
-
-	conn, err := grpc.NewClient(
-		"unix://"+path,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	require.NoError(t, err)
-	return conn
 }
