@@ -77,7 +77,7 @@ func TestUpstreamCallsSpreadAcrossMaxConnections(t *testing.T) {
 		max       int
 		wantPeers int
 	}{
-		{name: "the default keeps one connection", wantPeers: 1},
+		{name: "the default pool uses 32 connections", wantPeers: 32},
 		{name: "a configured pool uses every connection", max: 3, wantPeers: 3},
 	}
 
@@ -90,7 +90,7 @@ func TestUpstreamCallsSpreadAcrossMaxConnections(t *testing.T) {
 			cfg.Upstreams[0].Connection.MaxConnections = tt.max
 			f := dataplanetest.Start(t, cfg)
 
-			for range 6 {
+			for range 64 {
 				_, err := f.Client().GetSystemInfo(
 					f.Context(),
 					&workflowservice.GetSystemInfoRequest{},

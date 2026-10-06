@@ -31,7 +31,7 @@ func TestConnection_Defaults(t *testing.T) {
 			wantSize:    128 << 20,
 			wantTime:    30 * time.Second,
 			wantTimeout: 15 * time.Second,
-			wantPool:    1,
+			wantPool:    32,
 		},
 		{
 			name:        "explicit values are preserved",
@@ -47,7 +47,7 @@ func TestConnection_Defaults(t *testing.T) {
 			wantSize:    8 << 20,
 			wantTime:    30 * time.Second,
 			wantTimeout: 15 * time.Second,
-			wantPool:    1,
+			wantPool:    32,
 		},
 		{
 			name:        "each keepalive duration defaults on its own",
@@ -55,7 +55,7 @@ func TestConnection_Defaults(t *testing.T) {
 			wantSize:    128 << 20,
 			wantTime:    time.Minute,
 			wantTimeout: 15 * time.Second,
-			wantPool:    1,
+			wantPool:    32,
 		},
 	}
 
@@ -70,7 +70,42 @@ func TestConnection_Defaults(t *testing.T) {
 			require.Equal(t, tt.wantSize, conn.ResponseLimit())
 			require.Equal(t, tt.wantTime, conn.KeepAlive.PingTime())
 			require.Equal(t, tt.wantTimeout, conn.KeepAlive.PingTimeout())
-			require.Equal(t, tt.wantPool, conn.PoolSize())
+			require.Equal(t, tt.wantPool, conn.PoolSize(cfg.Upstreams[0].IsTemplated()))
+		})
+	}
+}
+
+func TestConnection_PoolSize(t *testing.T) {
+	t.Parallel()
+
+	const (
+		static    = "hostPort: 127.0.0.1:7233\nupstreams:\n  - name: up\n    hostPort: 127.0.0.1:7234\n"
+		srv       = "hostPort: 127.0.0.1:7233\nupstreams:\n  - name: up\n    hostPort: srv:///_grpc._tcp.temporal.example\n"
+		templated = "hostPort: 127.0.0.1:7233\nupstreams:\n  - name: up\n    hostPort: \"{{ .RemoteNamespace }}.example:7233\"\n"
+		explicit  = "    connection:\n      maxConnections: 8\n"
+	)
+
+	tests := []struct {
+		name     string
+		yaml     string
+		wantPool int
+	}{
+		{name: "a static upstream defaults to 32", yaml: static, wantPool: 32},
+		{name: "an SRV upstream defaults to 32", yaml: srv, wantPool: 32},
+		{name: "a templated upstream defaults to 4", yaml: templated, wantPool: 4},
+		{name: "an explicit count overrides the static default", yaml: static + explicit, wantPool: 8},
+		{name: "an explicit count overrides the templated default", yaml: templated + explicit, wantPool: 8},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := config.Load(strings.NewReader(tt.yaml))
+			require.NoError(t, err)
+
+			up := cfg.Upstreams[0]
+			require.Equal(t, tt.wantPool, up.Connection.PoolSize(up.IsTemplated()))
 		})
 	}
 }

@@ -17,8 +17,15 @@ const (
 	defaultKeepAliveTime    = 30 * time.Second
 	defaultKeepAliveTimeout = 15 * time.Second
 
-	// defaultMaxConnections keeps every call to an upstream on one connection.
-	defaultMaxConnections = 1
+	// defaultMaxConnections spreads calls to a static or SRV upstream across
+	// enough connections that long polls, which each hold a stream for up to a
+	// minute, do not fill a connection's stream limit and stall other calls.
+	defaultMaxConnections = 32
+
+	// defaultTemplatedMaxConnections is the smaller pool for a templated
+	// upstream, which dials a separate target per namespace, so the default
+	// does not multiply into hundreds of connections across many namespaces.
+	defaultTemplatedMaxConnections = 4
 
 	// maxResponseSizeLimit is one past the largest size gRPC can represent, since
 	// it takes the limit as an int32-sized int.
@@ -58,16 +65,23 @@ func (c *ConnectionConfig) ResponseLimit() ByteSize {
 	return cmp.Or(c.MaxResponseSize, defaultMaxResponseSize)
 }
 
-// PoolSize is how many connections calls to the upstream are spread across: the
-// configured count when there is one, and [defaultMaxConnections] when the field
-// is absent.
-func (c *ConnectionConfig) PoolSize() int {
+// PoolSize is how many connections calls to each upstream target are spread
+// across: the configured count when there is one. When the field is absent it is
+// [defaultTemplatedMaxConnections] for a templated upstream (see
+// [Upstream.IsTemplated]), which has a target per namespace, and
+// [defaultMaxConnections] otherwise.
+func (c *ConnectionConfig) PoolSize(templated bool) int {
+	if templated {
+		return cmp.Or(c.MaxConnections, defaultTemplatedMaxConnections)
+	}
+
 	return cmp.Or(c.MaxConnections, defaultMaxConnections)
 }
 
 // Validate requires a positive response size that gRPC can represent, a pool of
-// 1 to 64 connections, and valid keepalive settings. Fields are checked through their accessors, so an absent
-// field is the default (which passes).
+// 1 to 64 connections, and valid keepalive settings. Fields are checked through
+// their accessors, so an absent field is the default (which passes; both pool
+// defaults are in range, so the static one stands in for either).
 func (c *ConnectionConfig) Validate() error {
 	return validation.Validate(
 		"",
@@ -79,7 +93,7 @@ func (c *ConnectionConfig) Validate() error {
 		),
 		validation.Field(
 			"maxConnections",
-			c.PoolSize(),
+			c.PoolSize(false),
 			validation.GT(0),
 			validation.LT(maxConnectionsLimit),
 		),
