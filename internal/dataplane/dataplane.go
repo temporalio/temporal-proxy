@@ -394,7 +394,7 @@ func newUpstreamForwarder(
 		return nil, nil, err
 	}
 
-	fw, err := proxy.NewForwarder(conn, o.allowlist, proxy.WithProtoTypes(o.types))
+	fw, err := proxy.NewForwarder(conn, proxy.WithProtoTypes(o.types))
 	if err != nil {
 		return nil, nil, err
 	}

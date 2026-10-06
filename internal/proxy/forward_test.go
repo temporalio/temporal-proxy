@@ -82,25 +82,20 @@ func TestForwardContextWithoutIncomingMetadata(t *testing.T) {
 func TestNewForwarderValidation(t *testing.T) {
 	t.Parallel()
 
-	allowed := services.NewAllowlist(services.Default())
-
 	tests := []struct {
-		name    string
-		cc      grpc.ClientConnInterface
-		allowed services.Allowlist
-		err     string
+		name string
+		cc   grpc.ClientConnInterface
+		err  string
 	}{
-		{name: "nil client connection", allowed: allowed, err: "nil client connection"},
-		{name: "nil allowlist", cc: &testutil.ClientConn{}, err: "nil allowlist"},
-		{name: "both nil reports the connection first", err: "nil client connection"},
-		{name: "a connection and an allowlist is enough", cc: &testutil.ClientConn{}, allowed: allowed},
+		{name: "nil client connection", err: "nil client connection"},
+		{name: "a connection is enough", cc: &testutil.ClientConn{}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			fw, err := NewForwarder(tt.cc, tt.allowed)
+			fw, err := NewForwarder(tt.cc)
 			if tt.err != "" {
 				require.ErrorContains(t, err, tt.err)
 				require.Nil(t, fw)
@@ -119,12 +114,12 @@ func TestWithProtoTypes(t *testing.T) {
 
 	custom := partialTypes{}
 
-	fw, err := NewForwarder(&testutil.ClientConn{}, services.NewAllowlist(services.Default()), WithProtoTypes(custom))
+	fw, err := NewForwarder(&testutil.ClientConn{}, WithProtoTypes(custom))
 	require.NoError(t, err)
 	require.Equal(t, custom, fw.types)
 
 	// A nil registry leaves the default in place rather than disabling resolution.
-	fw, err = NewForwarder(&testutil.ClientConn{}, services.NewAllowlist(services.Default()), WithProtoTypes(nil))
+	fw, err = NewForwarder(&testutil.ClientConn{}, WithProtoTypes(nil))
 	require.NoError(t, err)
 	require.Equal(t, protoregistry.GlobalTypes, fw.types)
 }
@@ -164,7 +159,7 @@ func TestResolveMethod(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			fw, err := NewForwarder(&testutil.ClientConn{}, services.NewAllowlist(services.Default()), WithProtoTypes(tt.types))
+			fw, err := NewForwarder(&testutil.ClientConn{}, WithProtoTypes(tt.types))
 			require.NoError(t, err)
 
 			got := fw.resolveMethod(tt.in)
@@ -183,7 +178,7 @@ func TestResolveMethod(t *testing.T) {
 func TestLookupCachesResolvedMethods(t *testing.T) {
 	t.Parallel()
 
-	fw, err := NewForwarder(&testutil.ClientConn{}, services.NewAllowlist(services.Default()))
+	fw, err := NewForwarder(&testutil.ClientConn{})
 	require.NoError(t, err)
 
 	const method = "/" + services.WorkflowService + "/GetSystemInfo"
@@ -210,7 +205,6 @@ func TestHandleErrors(t *testing.T) {
 		name     string
 		method   string
 		noStream bool
-		allowed  []string
 		conn     *testutil.ClientConn
 		ss       testutil.ServerStream
 		code     codes.Code
@@ -223,71 +217,57 @@ func TestHandleErrors(t *testing.T) {
 			msg:      "no server transport stream",
 		},
 		{
-			name:    "a service that is not on the allowlist",
-			method:  "/" + services.OperatorService + "/DeleteNamespace",
-			allowed: []string{services.WorkflowService},
-			code:    codes.Unimplemented,
-			msg:     "unknown service " + services.OperatorService,
+			name:   "a method the compiled descriptors do not have",
+			method: "/" + services.WorkflowService + "/NoSuchMethod",
+			code:   codes.Unimplemented,
+			msg:    "unknown method",
 		},
 		{
-			name:    "a method the compiled descriptors do not have",
-			method:  "/" + services.WorkflowService + "/NoSuchMethod",
-			allowed: services.Default(),
-			code:    codes.Unimplemented,
-			msg:     "unknown method",
+			name:   "an upstream that rejects the unary call",
+			method: unaryMethod,
+			conn:   &testutil.ClientConn{InvokeErr: status.Error(codes.PermissionDenied, "denied")},
+			code:   codes.PermissionDenied,
+			msg:    "denied",
 		},
 		{
-			name:    "an upstream that rejects the unary call",
-			method:  unaryMethod,
-			allowed: services.Default(),
-			conn:    &testutil.ClientConn{InvokeErr: status.Error(codes.PermissionDenied, "denied")},
-			code:    codes.PermissionDenied,
-			msg:     "denied",
+			name:   "a caller that cannot receive the relayed header",
+			method: unaryMethod,
+			conn:   &testutil.ClientConn{Header: metadata.Pairs("x-upstream", "1")},
+			ss:     testutil.ServerStream{HeaderErr: errors.New("header refused")},
+			code:   codes.Internal,
+			msg:    "header refused",
 		},
 		{
-			name:    "a caller that cannot receive the relayed header",
-			method:  unaryMethod,
-			allowed: services.Default(),
-			conn:    &testutil.ClientConn{Header: metadata.Pairs("x-upstream", "1")},
-			ss:      testutil.ServerStream{HeaderErr: errors.New("header refused")},
-			code:    codes.Internal,
-			msg:     "header refused",
+			name:   "a caller that cannot receive the response",
+			method: unaryMethod,
+			ss:     testutil.ServerStream{SendErr: errors.New("broken pipe")},
+			code:   codes.Internal,
+			msg:    "broken pipe",
 		},
 		{
-			name:    "a caller that cannot receive the response",
-			method:  unaryMethod,
-			allowed: services.Default(),
-			ss:      testutil.ServerStream{SendErr: errors.New("broken pipe")},
-			code:    codes.Internal,
-			msg:     "broken pipe",
+			name:   "an upstream stream that cannot be opened",
+			method: streamMethod,
+			conn:   &testutil.ClientConn{StreamErr: status.Error(codes.Unavailable, "upstream down")},
+			code:   codes.Unavailable,
+			msg:    "upstream down",
 		},
 		{
-			name:    "an upstream stream that cannot be opened",
-			method:  streamMethod,
-			allowed: []string{services.Reflection},
-			conn:    &testutil.ClientConn{StreamErr: status.Error(codes.Unavailable, "upstream down")},
-			code:    codes.Unavailable,
-			msg:     "upstream down",
-		},
-		{
-			name:    "an upstream stream that fails before its header",
-			method:  streamMethod,
-			allowed: []string{services.Reflection},
-			conn:    &testutil.ClientConn{Stream: &testutil.ClientStream{HeaderErr: status.Error(codes.Aborted, "header failed")}},
-			ss:      testutil.ServerStream{RecvErr: io.EOF},
-			code:    codes.Aborted,
-			msg:     "header failed",
+			name:   "an upstream stream that fails before its header",
+			method: streamMethod,
+			conn:   &testutil.ClientConn{Stream: &testutil.ClientStream{HeaderErr: status.Error(codes.Aborted, "header failed")}},
+			ss:     testutil.ServerStream{RecvErr: io.EOF},
+			code:   codes.Aborted,
+			msg:    "header failed",
 		},
 		{
 			// The request pump reports first because the response pump is parked in
 			// RecvMsg, so this pins the mapping of a caller-side stream failure.
-			name:    "a caller whose request stream breaks",
-			method:  streamMethod,
-			allowed: []string{services.Reflection},
-			conn:    &testutil.ClientConn{Stream: &testutil.ClientStream{BlockRecv: make(chan struct{})}},
-			ss:      testutil.ServerStream{RecvErr: errors.New("caller vanished")},
-			code:    codes.Internal,
-			msg:     "caller vanished",
+			name:   "a caller whose request stream breaks",
+			method: streamMethod,
+			conn:   &testutil.ClientConn{Stream: &testutil.ClientStream{BlockRecv: make(chan struct{})}},
+			ss:     testutil.ServerStream{RecvErr: errors.New("caller vanished")},
+			code:   codes.Internal,
+			msg:    "caller vanished",
 		},
 	}
 
@@ -304,7 +284,7 @@ func TestHandleErrors(t *testing.T) {
 				t.Cleanup(func() { close(cs.BlockRecv) })
 			}
 
-			fw, err := NewForwarder(conn, services.NewAllowlist(tt.allowed))
+			fw, err := NewForwarder(conn)
 			require.NoError(t, err)
 
 			ss := tt.ss
@@ -329,10 +309,7 @@ func TestStreamTreatsWrappedEOFAsHalfClose(t *testing.T) {
 	// otherwise successful call.
 	wrapped := fmt.Errorf("transport closed: %w", io.EOF)
 
-	fw, err := NewForwarder(
-		&testutil.ClientConn{Stream: &testutil.ClientStream{RecvErr: wrapped}},
-		services.NewAllowlist([]string{services.Reflection}),
-	)
+	fw, err := NewForwarder(&testutil.ClientConn{Stream: &testutil.ClientStream{RecvErr: wrapped}})
 	require.NoError(t, err)
 
 	ss := testutil.ServerStream{

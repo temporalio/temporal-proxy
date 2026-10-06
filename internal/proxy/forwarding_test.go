@@ -68,7 +68,7 @@ func TestStreamForwardsBidiReflection(t *testing.T) {
 		workflowservice.RegisterWorkflowServiceServer(s, &metadataStampingService{})
 		reflection.Register(s)
 	})
-	conn := startProxy(t, addr, services.Reflection)
+	conn := startProxy(t, addr)
 
 	stream, err := grpc_reflection_v1.NewServerReflectionClient(conn).ServerReflectionInfo(
 		t.Context(),
@@ -139,20 +139,16 @@ func (*metadataStampingService) GetSystemInfo(
 	return &workflowservice.GetSystemInfoResponse{}, nil
 }
 
-// forwarder builds a forwarder for the named services over a plain client conn
-// to upstream, standing in for the pool-backed connection used in production.
-func forwarder(t *testing.T, upstream string, allowed ...string) *proxy.Forwarder {
+// forwarder builds a forwarder over a plain client conn to upstream, standing in
+// for the pool-backed connection used in production.
+func forwarder(t *testing.T, upstream string) *proxy.Forwarder {
 	t.Helper()
-
-	if len(allowed) == 0 {
-		allowed = services.Default()
-	}
 
 	conn, err := grpc.NewClient(upstream, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 
-	fw, err := proxy.NewForwarder(conn, services.NewAllowlist(allowed))
+	fw, err := proxy.NewForwarder(conn)
 	require.NoError(t, err)
 
 	return fw
@@ -177,15 +173,15 @@ func serveUpstream(t *testing.T, register ...func(*grpc.Server)) string {
 	return lis.Addr().String()
 }
 
-// startProxy serves a forwarder for the named services to upstream on a
-// loopback port and returns a client connection to it.
-func startProxy(t *testing.T, upstream string, allowed ...string) *grpc.ClientConn {
+// startProxy serves a forwarder to upstream on a loopback port and returns a
+// client connection to it.
+func startProxy(t *testing.T, upstream string) *grpc.ClientConn {
 	t.Helper()
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
-	svr := grpc.NewServer(grpc.UnknownServiceHandler(forwarder(t, upstream, allowed...).Handle))
+	svr := grpc.NewServer(grpc.UnknownServiceHandler(forwarder(t, upstream).Handle))
 	go func() { _ = svr.Serve(lis) }()
 	t.Cleanup(svr.Stop)
 
