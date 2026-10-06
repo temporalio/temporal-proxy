@@ -22,9 +22,10 @@ const (
 	// minute, do not fill a connection's stream limit and stall other calls.
 	defaultMaxConnections = 32
 
-	// defaultTemplatedMaxConnections is the smaller pool for a templated
-	// upstream, which dials a separate target per namespace, so the default
-	// does not multiply into hundreds of connections across many namespaces.
+	// defaultTemplatedMaxConnections is the default for a templated upstream.
+	// maxConnections applies per target, and a templated upstream resolves a
+	// separate target for every namespace, so its total is this times the number
+	// of namespaces it serves.
 	defaultTemplatedMaxConnections = 4
 
 	// maxResponseSizeLimit is one past the largest size gRPC can represent, since
