@@ -222,6 +222,53 @@ func TestForwardReportsResponseFailures(t *testing.T) {
 	}
 }
 
+// Interceptors on a forwarded stream run inside the directions' goroutines, where
+// a panic would take the process down, so each direction recovers it and Forward
+// returns it. A panicking allocator stands in for a panicking interceptor.
+func TestForwardReturnsPanicInEitherDirection(t *testing.T) {
+	t.Parallel()
+
+	alloc := func() any { return &frame{} }
+	panics := func() any { panic("boom") }
+
+	tests := []struct {
+		name    string
+		in, out rpc.Frame
+		// park holds the response direction, so a request-direction panic is the
+		// only outcome Forward can select.
+		park bool
+	}{
+		{name: "in the request direction", in: panics, out: alloc, park: true},
+		// The request direction half-closes at once, and the call carries on to
+		// the response direction's panic.
+		{name: "in the response direction", in: alloc, out: panics},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cs := &clientStream{}
+			if tt.park {
+				cs.park = make(chan struct{})
+				t.Cleanup(func() { close(cs.park) })
+			}
+
+			err := rpc.NewPump(cs, &serverStream{}).Forward(tt.in, tt.out)
+
+			var pe *rpc.PanicError
+			require.ErrorAs(t, err, &pe)
+			require.Equal(t, "boom", pe.Value)
+			require.Contains(t, string(pe.Stack), "pump_test.go")
+
+			st, ok := status.FromError(err)
+			require.True(t, ok)
+			require.Equal(t, codes.Internal, st.Code())
+			require.Equal(t, "internal error", st.Message())
+		})
+	}
+}
+
 // Header returns the configured header, or HeaderErr when one is set.
 func (s *clientStream) Header() (metadata.MD, error) {
 	if err := s.HeaderErr; err != nil {

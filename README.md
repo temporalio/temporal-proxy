@@ -237,6 +237,7 @@ the runtime's `go_*` and `process_*` series stay as they are.
 | -------------- | ---------------------------- | --------- | ---------------------------------- |
 | `server`       | `requests_total`             | counter   | `method`, `code`                   |
 | `server`       | `request_duration_seconds`   | histogram | `method`                           |
+| `server`       | `panics_total`               | counter   | `method`                           |
 | `router`       | `decisions_total`            | counter   | `upstream`, `outcome`              |
 | `router`       | `forwarding_errors_total`    | counter   | `upstream`, `reason`               |
 | `encryption`   | `vault_ops_total`            | counter   | `operation`, `result`, `namespace` |

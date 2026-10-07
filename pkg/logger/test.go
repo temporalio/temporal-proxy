@@ -77,6 +77,30 @@ func (t *TestLogger) ContainsEntry(l Level, msg string, tags ...tag.Tag) bool {
 	return false
 }
 
+// TagsOf returns the tags of the first entry logged at level l with message msg,
+// keyed by tag key, or nil when there is none. It suits an entry carrying a tag
+// whose value a test cannot predict, such as a stack trace, which rules out
+// [TestLogger.ContainsEntry].
+func (t *TestLogger) TagsOf(l Level, msg string) map[string]any {
+	t.store.mu.Lock()
+	defer t.store.mu.Unlock()
+
+	for _, entry := range t.store.entries {
+		if entry.level != l || entry.msg != msg {
+			continue
+		}
+
+		out := make(map[string]any, len(entry.tags))
+		for _, tg := range entry.tags {
+			out[tg.Key] = tg.Value
+		}
+
+		return out
+	}
+
+	return nil
+}
+
 func (t *TestLogger) Debug(msg string, tags ...tag.Tag) { t.record(LevelDebug, msg, tags) }
 func (t *TestLogger) Error(msg string, tags ...tag.Tag) { t.record(LevelError, msg, tags) }
 func (t *TestLogger) Fatal(msg string, tags ...tag.Tag) { t.record(LevelError, msg, tags) }
