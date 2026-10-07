@@ -43,10 +43,3 @@ func Service(fullMethod string) string {
 	service, _, _ := ServiceMethod(fullMethod)
 	return service
 }
-
-// Method returns the method half of a gRPC full method, or "" when fullMethod
-// carries no method to strip.
-func Method(fullMethod string) string {
-	_, method, _ := ServiceMethod(fullMethod)
-	return method
-}

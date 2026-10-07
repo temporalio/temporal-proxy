@@ -79,6 +79,8 @@ func (p *Pump) requests(in Frame) <-chan error {
 	errs := make(chan error, 1)
 
 	go func() {
+		defer reportPanic(errs)
+
 		for {
 			msg := in()
 			if err := p.ss.RecvMsg(msg); err != nil {
@@ -106,6 +108,8 @@ func (p *Pump) responses(out Frame) <-chan error {
 	errs := make(chan error, 1)
 
 	go func() {
+		defer reportPanic(errs)
+
 		md, err := p.cs.Header()
 		if err != nil {
 			errs <- err
@@ -132,4 +136,20 @@ func (p *Pump) responses(out Frame) <-chan error {
 	}()
 
 	return errs
+}
+
+// reportPanic recovers a panic in a direction's goroutine and reports it on errs
+// as a [PanicError]. Interceptors such as the codec and translations run inside
+// SendMsg and RecvMsg here, off the handler's goroutine, so no server interceptor
+// can recover a panic of theirs; returning it as an error carries it back to one.
+// Every send on errs is followed by a return, so errs is still empty when a panic
+// reaches here.
+//
+// A panic in the request direction after Forward has returned, such as one in a
+// late SendMsg on a stream the upstream already completed, lands in a channel
+// nobody reads: the process survives it, but it is neither logged nor counted.
+func reportPanic(errs chan<- error) {
+	if p := recover(); p != nil {
+		errs <- NewPanicError(p)
+	}
 }

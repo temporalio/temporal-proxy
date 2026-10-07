@@ -26,6 +26,7 @@ var wantSurface = map[string][]string{
 	"tmprl_proxy_router_forwarding_errors_total":        {"reason", "upstream"},
 	"tmprl_proxy_server_requests_total":                 {"code", "method"},
 	"tmprl_proxy_server_request_duration_seconds":       {"method"},
+	"tmprl_proxy_server_panics_total":                   {"method"},
 	"tmprl_proxy_encryption_vault_ops_total":            {"namespace", "operation", "result"},
 	"tmprl_proxy_encryption_vault_ops_duration_seconds": {"namespace", "operation"},
 }
@@ -45,6 +46,7 @@ var wantFixedSurface = map[string][]string{
 	"tmprl_proxy_router_forwarding_errors_total":        {"reason", "region", "upstream"},
 	"tmprl_proxy_server_requests_total":                 {"code", "method", "region"},
 	"tmprl_proxy_server_request_duration_seconds":       {"method", "region"},
+	"tmprl_proxy_server_panics_total":                   {"method", "region"},
 	"tmprl_proxy_encryption_vault_ops_total":            {"namespace", "operation", "region", "result"},
 	"tmprl_proxy_encryption_vault_ops_duration_seconds": {"namespace", "operation", "region"},
 }
@@ -54,6 +56,7 @@ var wantMetadataSurface = map[string][]string{
 	"tmprl_proxy_router_forwarding_errors_total":        {"reason", "tenant", "upstream"},
 	"tmprl_proxy_server_requests_total":                 {"code", "method", "tenant"},
 	"tmprl_proxy_server_request_duration_seconds":       {"method", "tenant"},
+	"tmprl_proxy_server_panics_total":                   {"method", "tenant"},
 	"tmprl_proxy_encryption_vault_ops_total":            {"namespace", "operation", "result", "tenant"},
 	"tmprl_proxy_encryption_vault_ops_duration_seconds": {"namespace", "operation", "tenant"},
 }
@@ -145,6 +148,7 @@ func driveReporters(t *testing.T, reg *prometheus.Registry, m config.Metrics, md
 	reps.Router.Decision(ctx, "cloud", router.OutcomeMatch)
 	reps.Router.ForwardingError(ctx, "cloud", "no_handler")
 	reps.Server.Observe(ctx, "/svc/Method", codes.OK, time.Millisecond)
+	reps.Server.Panic(ctx, "/svc/Method")
 	reps.Encryption.VaultOp(ctx, "encrypt", "success", "ns1", 0.01)
 }
 

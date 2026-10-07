@@ -35,11 +35,12 @@ upstreams:
     credentials:
       static:
         apiKey: $TEMPORAL_API_KEY
-    # Optional: tune the connection to Cloud. The values below are the defaults,
-    # which match the Temporal Go SDK.
+    # Optional: tune the connection to Cloud. The values below are the defaults;
+    # all but maxConnections match the Temporal Go SDK.
     # connection:
     #   maxResponseSize: 128MiB # largest response accepted; MB is 10^6, MiB is 2^20
-    #   maxConnections: 1       # spread calls across this many connections (1 to 64); per backend for srv:/// hosts
+    #   maxConnections: 4       # spread calls across this many connections (1 to 64), per namespace here since
+    #                           # hostPort is templated; static and srv:/// upstreams default to 32, per backend
     #   keepAlive:
     #     time: 30s    # ping an idle connection this often (10s minimum)
     #     timeout: 15s # close it when a ping goes unanswered this long
