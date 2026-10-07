@@ -363,6 +363,132 @@ func TestEncryptionSkipsMetricsForPassThrough(t *testing.T) {
 	require.False(t, hasLabels(ops, map[string]string{"operation": "decrypt", "result": "success", "namespace": "ns1"}))
 }
 
+// TestEncryptionSkipsListedEncodings pins the interceptor's outbound skip and its
+// metric. Not passing SkipEncodings into the chain in NewCodecs fails the Same
+// check; not binding the observer fails the metric check.
+func TestEncryptionSkipsListedEncodings(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	reporter := proxy.NewReporter(
+		metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"),
+		proxy.WithNamespaceLabels(true),
+	)
+
+	v := &fakeVault{}
+	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{
+		Vault:         v,
+		Encrypt:       true,
+		Reporter:      reporter,
+		SkipEncodings: []string{"acme/aes-gcm"},
+	})
+	require.NoError(t, err)
+
+	workerSealed := testPayload("acme/aes-gcm", "ciphertext-from-a-worker")
+	invoker := func(_ context.Context, _ string, gotReq, _ any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
+		sent := gotReq.(*workflowservice.StartWorkflowExecutionRequest).Input.Payloads
+		require.Len(t, sent, 1)
+		require.Same(t, workerSealed, sent[0])
+		return nil
+	}
+
+	ctx := metadata.AppendToOutgoingContext(t.Context(), meta.NamespaceHeader, "ns1")
+	resp := &workflowservice.StartWorkflowExecutionRequest{}
+	require.NoError(t, interceptor(ctx, "/method", startRequest(workerSealed), resp, nil, invoker))
+
+	require.Empty(t, v.namespaces, "a listed encoding must not reach the vault")
+
+	skipped := gatherFamily(t, reg, "proxy_encryption_payloads_skipped_total")
+	require.NotNil(t, skipped)
+	require.True(t, hasLabels(skipped, map[string]string{
+		"operation": "encrypt", "encoding": "acme/aes-gcm", "namespace": "ns1",
+	}))
+}
+
+// TestEncryptionUnknownKey pins both sides of the decode rule at the interceptor,
+// and the unknown_key result label. Removing the ErrUnknownKey case from
+// resultLabel fails both rows' vault_ops check.
+func TestEncryptionUnknownKey(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		skip     []string
+		wantPass bool
+	}{
+		{name: "passes through when binary/encrypted is listed", skip: []string{codec.EncryptionEncoding}, wantPass: true},
+		{name: "fails the call otherwise"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			reg := prometheus.NewRegistry()
+			reporter := proxy.NewReporter(
+				metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"),
+				proxy.WithNamespaceLabels(true),
+			)
+
+			v := &fakeVault{openErr: fmt.Errorf("%w: other-proxy-kek", crypto.ErrUnknownKey)}
+			interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{
+				Vault:         v,
+				Reporter:      reporter,
+				SkipEncodings: tc.skip,
+			})
+			require.NoError(t, err)
+
+			theirs := sealedPayload(t, testPayload("json/plain", `"x"`))
+			ctx := metadata.AppendToOutgoingContext(t.Context(), meta.NamespaceHeader, "ns1")
+			resp := &workflowservice.StartWorkflowExecutionRequest{}
+			err = interceptor(ctx, "/method", startRequest(), resp, nil, respondWith(theirs))
+
+			ops := gatherFamily(t, reg, "proxy_encryption_vault_ops_total")
+			require.NotNil(t, ops)
+			require.True(t, hasLabels(ops, map[string]string{
+				"operation": "decrypt", "result": "unknown_key", "namespace": "ns1",
+			}))
+
+			if !tc.wantPass {
+				// ErrorContains rather than ErrorIs: whether the payload visitor wraps
+				// with %w is go.temporal.io/api's business, not ours.
+				require.ErrorContains(t, err, "unknown key: other-proxy-kek")
+				return
+			}
+
+			require.NoError(t, err)
+			require.True(t, proto.Equal(theirs, resp.Input.Payloads[0]))
+
+			skipped := gatherFamily(t, reg, "proxy_encryption_payloads_skipped_total")
+			require.NotNil(t, skipped)
+			require.True(t, hasLabels(skipped, map[string]string{
+				"operation": "decrypt", "encoding": codec.EncryptionEncoding, "namespace": "ns1",
+			}))
+		})
+	}
+}
+
+// TestCodecsEncodeSkipsListedEncodings covers the codec server's path, which calls
+// Codecs.Encode rather than the interceptor. Building the skip option only inside
+// Interceptor fails it.
+func TestCodecsEncodeSkipsListedEncodings(t *testing.T) {
+	t.Parallel()
+
+	c, err := proxy.NewCodecs(proxy.CodecOptions{
+		Vault:         &fakeVault{},
+		Encrypt:       true,
+		Reporter:      newTestReporter(t),
+		SkipEncodings: []string{"acme/aes-gcm"},
+	})
+	require.NoError(t, err)
+
+	p := testPayload("acme/aes-gcm", "ciphertext-from-a-worker")
+	got, err := c.Encode(t.Context(), "ns1", []*common.Payload{p})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Same(t, p, got[0])
+}
+
 func (f *fakeVault) Seal(_ context.Context, ns string, data []byte) (*crypto.Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

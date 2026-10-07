@@ -114,7 +114,11 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 	// Every upstream applies the same chain: the vault and the encryption switch
 	// are global, so nothing here varies per upstream. Building it once is also
 	// what lets the codec server apply the identical chain.
-	codecOpts := proxy.CodecOptions{Encrypt: cfg.Encryption.Enabled, EncodeFailures: cfg.Encryption.Failures}
+	codecOpts := proxy.CodecOptions{
+		Encrypt:        cfg.Encryption.Enabled,
+		EncodeFailures: cfg.Encryption.Failures,
+		SkipEncodings:  cfg.Encryption.SkipEncodings,
+	}
 
 	// Only assign the vault once it is known to be there. o.vault is a concrete
 	// pointer and the field is an interface, so assigning unconditionally would
@@ -142,6 +146,11 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		o.logger.Warn(
 			"apiTranslations is configured but no upstream is Temporal Cloud, so no method will be translated",
 		)
+	}
+
+	// With no keys there is no encryption codec, so the list has nothing to skip.
+	if len(cfg.Encryption.SkipEncodings) > 0 && o.vault == nil {
+		o.logger.Warn("encryption.skipEncodings is set but no encryption keys are configured, so it has no effect")
 	}
 
 	dp := &Dataplane{

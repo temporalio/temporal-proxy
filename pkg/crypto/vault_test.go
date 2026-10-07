@@ -339,6 +339,24 @@ func TestVaultOpenErrors(t *testing.T) {
 	})
 }
 
+// TestVaultOpenUnknownKey shows the sentinel survives Vault.Open, which is what
+// the codec actually calls. Wrapping the registry error without %w anywhere in
+// Open or open fails it.
+func TestVaultOpenUnknownKey(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	cfg := crypto.WithKeyConfig("ns1", crypto.KeyConfig{Duration: time.Hour})
+	sealer := newVault(t, &countingKEK{id: "sealer"}, cfg)
+	opener := newVault(t, &countingKEK{id: "opener"}, cfg)
+
+	msg, err := sealer.Seal(ctx, "ns1", []byte("data"))
+	require.NoError(t, err)
+
+	_, err = opener.Open(ctx, msg)
+	require.ErrorIs(t, err, crypto.ErrUnknownKey)
+}
+
 func TestNamespacedVault(t *testing.T) {
 	t.Parallel()
 

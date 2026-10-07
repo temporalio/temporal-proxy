@@ -170,6 +170,35 @@ func TestEncryptionValidate(t *testing.T) {
 			},
 			wantErr: "overrides",
 		},
+		{
+			name: "skip encodings",
+			cfg: config.Encryption{
+				Enabled:       true,
+				Default:       &valid,
+				SkipEncodings: []string{"binary/encrypted", "acme/aes-gcm"},
+			},
+		},
+		{
+			// A blank entry would match every payload with no encoding. Dropping the
+			// Children rule fails this row.
+			name: "blank skip encoding",
+			cfg: config.Encryption{
+				Enabled:       true,
+				Default:       &valid,
+				SkipEncodings: []string{"acme/aes-gcm", ""},
+			},
+			wantErr: "skipEncodings[1]",
+		},
+		{
+			// Dropping the Unique check fails this row.
+			name: "duplicate skip encoding",
+			cfg: config.Encryption{
+				Enabled:       true,
+				Default:       &valid,
+				SkipEncodings: []string{"acme/aes-gcm", "acme/aes-gcm"},
+			},
+			wantErr: "skipEncodings",
+		},
 	}
 
 	for _, tt := range tests {

@@ -60,6 +60,10 @@ routing:
 encryption:
   enabled: true
   cacheSize: 200
+  # Encodings already encrypted before they reach the proxy, forwarded unsealed.
+  # List binary/encrypted on a proxy chained behind another one.
+  # skipEncodings:
+  #   - binary/encrypted
 
   default:
     uri: testing://-ynIaZzFbAjp9VPgu0Ohk9YeQSLS9ta0m9mtnOnGZqo=

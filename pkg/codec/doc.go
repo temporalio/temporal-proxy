@@ -4,6 +4,8 @@
 // them again. A sealed payload is self-describing: the ciphertext travels with
 // the ID of the key that wrapped its DEK and the wrapped DEK itself, so opening
 // one needs nothing but the payload and a Cipher that can reach that key.
+// Encodings listed through [WithSkipEncodings] are treated as already encrypted
+// and forwarded unchanged.
 //
 // [NewChain] assembles the codecs its options enable into a single [Chain] in the
 // order they have to be applied, so callers say what they want enabled rather

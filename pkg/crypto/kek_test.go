@@ -296,6 +296,20 @@ func TestKEKRegistryDecrypt(t *testing.T) {
 	}
 }
 
+// TestKEKRegistryDecryptUnknownKey pins the sentinel callers branch on. Returning
+// fmt.Errorf without %w at the unknown-key site fails the ErrorIs check; changing
+// the format string fails the EqualError check.
+func TestKEKRegistryDecryptUnknownKey(t *testing.T) {
+	t.Parallel()
+
+	r, err := crypto.NewKEKRegistry(crypto.WithDefaultKey(&fakeKEK{id: "default"}))
+	require.NoError(t, err)
+
+	_, err = r.Decrypt(t.Context(), &crypto.DEKMaterial{KEKID: "missing"})
+	require.ErrorIs(t, err, crypto.ErrUnknownKey)
+	require.EqualError(t, err, "unknown key: missing")
+}
+
 func TestKEKRegistryRoundtrip(t *testing.T) {
 	t.Parallel()
 
