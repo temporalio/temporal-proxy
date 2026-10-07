@@ -92,7 +92,7 @@ func TestConnection_PoolSize(t *testing.T) {
 	}{
 		{name: "a static upstream defaults to 32", yaml: static, wantPool: 32},
 		{name: "an SRV upstream defaults to 32", yaml: srv, wantPool: 32},
-		{name: "a templated upstream defaults to 4", yaml: templated, wantPool: 4},
+		{name: "a templated upstream defaults to 32", yaml: templated, wantPool: 32},
 		{name: "an explicit count overrides the static default", yaml: static + explicit, wantPool: 8},
 		{name: "an explicit count overrides the templated default", yaml: templated + explicit, wantPool: 8},
 	}
