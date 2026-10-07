@@ -21,10 +21,9 @@ import (
 // reaches the labels of every request-scoped collector.
 //
 // The vault_ops assertion is the one that matters: that collector lives on the
-// per-upstream hop, on the far side of a unix socket that context values do not
-// cross. It passes only because the value is read from the metadata the gateway
-// forwards, and it is what fails if this is ever reworked into a single
-// interceptor stashing values in a context.
+// per-upstream hop, in the forwarder's outbound call rather than the gateway's
+// interceptors, so it is what fails if the caller's metadata is lost in the
+// handoff from gateway to forwarder.
 func TestEndToEndMetadataLabels(t *testing.T) {
 	t.Parallel()
 
@@ -50,7 +49,7 @@ func TestEndToEndMetadataLabels(t *testing.T) {
 	requireLabel(t, f, "test_server_requests_total", "tenant", "acme")
 	requireLabel(t, f, "test_router_decisions_total", "tenant", "acme")
 
-	// Hop 2: across the socket.
+	// Hop 2: the forwarder's outbound call.
 	requireLabel(t, f, "test_encryption_vault_ops_total", "tenant", "acme")
 }
 

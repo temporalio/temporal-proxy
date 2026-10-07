@@ -44,8 +44,8 @@ command changes to the repo root and runs it from source:
 cd ../../ && go run ./cmd/proxy serve -c examples/cloud/config.yaml
 ```
 
-The proxy logs `Running with insecure credentials` for the local gateway and its internal sockets. That is expected:
-those are local hops. The connection to Temporal Cloud is TLS.
+The proxy logs `Running with insecure credentials` for the local gateway. That is expected: it is a local hop. The
+connection to Temporal Cloud is TLS.
 
 Start the Worker:
 

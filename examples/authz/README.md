@@ -124,15 +124,13 @@ go run ./cmd/proxy serve -c examples/authz/config.yaml
 ```
 
 ```text
-{"level":"warn","addr":"/var/folders/6m/x_q_q9nx6ns3ygnf48xzqrn80000gn/T/127-0-0-1-7233-6689a1b6.sock","time":"2026-08-13T14:20:36-04:00","message":"Running with insecure credentials. Configure TLS for production use."}
-{"level":"info","addr":"/var/folders/6m/x_q_q9nx6ns3ygnf48xzqrn80000gn/T/127-0-0-1-7233-6689a1b6.sock","time":"2026-08-13T14:20:36-04:00","message":"Starting the server"}
 {"level":"warn","addr":"127.0.0.1:7234","time":"2026-08-13T14:20:36-04:00","message":"Running with insecure credentials. Configure TLS for production use."}
 {"level":"info","addr":"127.0.0.1:7234","time":"2026-08-13T14:20:36-04:00","message":"Starting the server"}
 {"level":"info","component":"metrics","addr":":9090","time":"2026-08-13T14:20:36-04:00","message":"Starting metrics server"}
 ```
 
-The two `Running with insecure credentials` warnings are expected: they describe the local gateway and an internal
-socket, the plaintext hops on this machine. They say nothing about whether callers are being authorized.
+The `Running with insecure credentials` warning is expected: it describes the local gateway, the plaintext hop on this
+machine. It says nothing about whether callers are being authorized.
 
 Terminal 4, in `examples/authz`, starts the Worker with the Worker token:
 

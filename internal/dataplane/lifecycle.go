@@ -5,33 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"sync"
 
 	"github.com/temporalio/temporal-proxy/internal/transport/connect"
 	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
 
-// Start binds and serves every upstream socket, opens every static upstream
-// connection so an unreachable one fails startup, then binds and serves the
-// gateway, in that order. It returns once the gateway is accepting. ctx bounds
+// Start opens every static upstream connection so an unreachable one fails
+// startup, then binds and serves the gateway. It returns once the gateway is accepting. ctx bounds
 // startup only and should carry a deadline, since it is what limits the wait for
 // an upstream to answer; the serving goroutines get the Context passed to New
 // instead. A failure part-way through stops whatever already started.
 func (d *Dataplane) Start(ctx context.Context) error {
-	for _, up := range d.upstreams {
-		// Bind synchronously so the socket is listening before the gateway routes
-		// anything to it, then serve in the background.
-		lis, err := up.svr.Listen(ctx)
-		if err != nil {
-			return d.rollback(ctx, fmt.Errorf("failed to start proxy for upstream %q: %w", up.name, err))
-		}
-
-		d.track(lis)
-		d.serve(fmt.Sprintf("upstream %q", up.name), func() error {
-			return up.svr.Start(d.ctx, lis)
-		})
-	}
-
 	// A static upstream's connection is created during New, but gRPC does not
 	// open a socket until it is used, so open them here: an unreachable upstream
 	// fails startup instead of surfacing as request errors once the gateway is
@@ -57,11 +41,8 @@ func (d *Dataplane) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop drains the gateway first, so no request is admitted for a tier that is
-// going away, then every upstream proxy. Each tier's drain is bounded, so the
-// upstreams go concurrently: they are independent, and serially their budgets
-// would sum, which is how a shutdown overruns the lifecycle deadline and strands
-// the hooks queued behind this one.
+// Stop drains the gateway within its shutdown budget and closes every listener
+// Start bound.
 func (d *Dataplane) Stop(ctx context.Context) error {
 	d.mu.Lock()
 	d.stopping = true
@@ -73,22 +54,6 @@ func (d *Dataplane) Stop(ctx context.Context) error {
 	if err := d.gateway.Stop(ctx); err != nil {
 		errs = append(errs, err)
 	}
-
-	// Indexed rather than appended, so the slot is written without coordinating
-	// and the report stays in upstream order.
-	upstreamErrs := make([]error, len(d.upstreams))
-
-	var wg sync.WaitGroup
-	for i, up := range d.upstreams {
-		wg.Go(func() {
-			if err := up.svr.Stop(ctx); err != nil {
-				upstreamErrs[i] = fmt.Errorf("upstream %q: %w", up.name, err)
-			}
-		})
-	}
-
-	wg.Wait()
-	errs = append(errs, upstreamErrs...)
 
 	// A graceful stop closes the listeners its server was serving on, but one
 	// bound by a Start that failed before its goroutine reached Serve is not

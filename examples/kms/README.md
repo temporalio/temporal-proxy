@@ -82,18 +82,15 @@ KMS_API_KEY=example-token go run ./cmd/proxy serve -c examples/kms/config.yaml
 ```
 
 ```text
-{"level":"info","namespace":"default","uri":"extension://kms/payloads","time":"2026-09-16T14:20:03-04:00","message":"Registering crypto key"}
-{"level":"warn","addr":"/var/folders/6m/x_q_q9nx6ns3ygnf48xzqrn80000gn/T/127-0-0-1-7233-6689a1b6.sock","time":"2026-09-16T14:20:03-04:00","message":"Running with insecure credentials. Configure TLS for production use."}
-{"level":"info","addr":"/var/folders/6m/x_q_q9nx6ns3ygnf48xzqrn80000gn/T/127-0-0-1-7233-6689a1b6.sock","time":"2026-09-16T14:20:03-04:00","message":"Starting the server"}
-{"level":"info","component":"metrics","addr":":9090","time":"2026-09-16T14:20:03-04:00","message":"Starting metrics server"}
-{"level":"warn","addr":"127.0.0.1:7234","time":"2026-09-16T14:20:03-04:00","message":"Running with insecure credentials. Configure TLS for production use."}
-{"level":"info","addr":"127.0.0.1:7234","time":"2026-09-16T14:20:03-04:00","message":"Starting the server"}
+{"level":"info","namespace":"default","uri":"extension://kms/payloads","time":"2026-10-06T14:34:38-04:00","message":"Registering crypto key"}
+{"level":"info","component":"metrics","addr":":9090","time":"2026-10-06T14:34:38-04:00","message":"Starting metrics server"}
+{"level":"warn","addr":"127.0.0.1:7234","time":"2026-10-06T14:34:38-04:00","message":"Running with insecure credentials. Configure TLS for production use."}
+{"level":"info","addr":"127.0.0.1:7234","time":"2026-10-06T14:34:38-04:00","message":"Starting the server"}
 ```
 
-The two `Running with insecure credentials` warnings are expected, not a sign anything is broken: they describe the
-local gateway and an internal socket, the plaintext hops between the Worker/starter and the proxy on this machine. They
-say nothing about whether payloads get sealed or about the TLS connection to the extension server; both of those are
-unaffected.
+The `Running with insecure credentials` warning is expected, not a sign anything is broken: it describes the local
+gateway, the plaintext hop between the Worker/starter and the proxy on this machine. It says nothing about whether
+payloads get sealed or about the TLS connection to the extension server; both of those are unaffected.
 
 Terminal 4, in `examples/kms`, starts the Worker:
 

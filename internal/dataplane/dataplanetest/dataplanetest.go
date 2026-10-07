@@ -100,18 +100,6 @@ func DeadUpstream(t *testing.T) string {
 	return addr
 }
 
-// DialUnix returns a client connection to the unix socket at path, closed when
-// the test ends.
-func DialUnix(t *testing.T, path string) *grpc.ClientConn {
-	t.Helper()
-
-	conn, err := grpc.NewClient("unix://"+path, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn.Close() })
-
-	return conn
-}
-
 // Start constructs a dataplane directly, the way the production fx module
 // does, and starts it. Every request is admitted unless [WithAuth] says
 // otherwise, and no vault is built, so a cfg configuring inbound auth or
@@ -253,24 +241,6 @@ func (f *Fixture) Context() context.Context {
 	f.t.Cleanup(cancel)
 
 	return ctx
-}
-
-// UpstreamConn is a client connection to the named upstream's own unix socket,
-// the path a local worker bypassing the gateway would dial.
-func (f *Fixture) UpstreamConn(name string) *grpc.ClientConn {
-	f.t.Helper()
-
-	return DialUnix(f.t, f.SocketPath(name))
-}
-
-// SocketPath is the unix socket path the named upstream's proxy binds.
-func (f *Fixture) SocketPath(name string) string {
-	f.t.Helper()
-
-	path, err := f.dp.SocketPath(name)
-	require.NoError(f.t, err)
-
-	return path
 }
 
 // applyDefaults fills in the fields every case would otherwise repeat. Routing

@@ -175,9 +175,7 @@ func (u *Upstream) record(ctx context.Context, req proto.Message) {
 	}
 }
 
-// newUpstream serves a fake frontend on an ephemeral loopback port. The
-// ephemeral port also keeps the socket path the proxy derives from it unique
-// across parallel tests.
+// newUpstream serves a fake frontend on an ephemeral loopback port.
 func newUpstream(t *testing.T, creds credentials.TransportCredentials) *Upstream {
 	t.Helper()
 

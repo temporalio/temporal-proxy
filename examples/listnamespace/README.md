@@ -76,8 +76,8 @@ The first log line confirms the translation is armed:
  "message":"translating methods to the Cloud API"}
 ```
 
-You will also see `Running with insecure credentials` a couple of times. That is expected: it refers to the unix sockets
-the proxy uses internally between its own tiers, which never leave the machine. Both hops to Cloud are TLS.
+You will also see `Running with insecure credentials`. That is expected: it refers to the local gateway, which never
+leaves the machine. Both hops to Cloud are TLS.
 
 ## Test it
 

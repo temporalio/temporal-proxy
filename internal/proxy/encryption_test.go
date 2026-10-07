@@ -230,8 +230,8 @@ func TestEncryptionRecordsVaultOpsWithMetadataLabels(t *testing.T) {
 	require.NoError(t, err)
 
 	// The namespace reaches this hop as outgoing metadata, but a label is read
-	// from the incoming metadata the gateway forwarded over the socket, which is
-	// the only reason labels work on this side at all.
+	// from the incoming metadata, which the forwarder's call inherits from the
+	// gateway's request context.
 	ctx := metadata.AppendToOutgoingContext(t.Context(), meta.NamespaceHeader, "ns1")
 	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs("x-tenant", "acme"))
 

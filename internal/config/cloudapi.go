@@ -43,10 +43,10 @@ type APITranslations struct {
 //
 // See https://docs.temporal.io/ops.
 //
-// It is deliberately not an entry in Upstreams: an upstream is a server - a
-// socket, a proxy.Server, and a routing destination - and the control plane is
-// only ever a client connection. Declaring it there would give it three things
-// it cannot use and one it should not have: routability.
+// It is deliberately not an entry in Upstreams: an upstream is a forwarder and
+// a routing destination, and the control plane is only ever a client
+// connection. Declaring it there would give it a forwarder it cannot use and
+// routability it should not have.
 type CloudAPI struct {
 	Listen      ListenConfig      `yaml:",inline"`
 	Credentials *CredentialConfig `yaml:"credentials"`
