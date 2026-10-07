@@ -13,14 +13,10 @@ import (
 )
 
 // extensionKeyPrefix namespaces extension-server entries in the shared
-// connection pool.
-//
-// A static resolver uses its dial address as the pool key, and Pool.ConnOrCreate
-// returns the existing connection for a key while ignoring the options passed
-// with it. Upstream hostPorts are unique among themselves, but nothing stops an
-// extension server from sitting on the same host:port as an upstream, so without
-// a distinct key the two would collapse onto whichever was dialed first and
-// silently inherit its TLS settings and credentials.
+// connection pool. A static resolver keys the pool by dial address and
+// Pool.ConnOrCreate ignores the options for an existing key, so without the
+// prefix an extension server on an upstream's host:port would share that
+// connection and silently inherit its TLS settings and credentials.
 const extensionKeyPrefix = "extension:"
 
 // Module provides the pooled connection for every configured extension server,
@@ -86,24 +82,17 @@ type (
 
 	// Connections maps an extension server name to a connection to that server.
 	// It carries no lifecycle: closing a connection is the owner's
-	// responsibility, not the caller's.
-	//
-	// Callers get connections rather than finished clients because the two do not
-	// correspond one-to-one: several keys may live on one extension server, so a
-	// caller builds one [KMS] per key over the shared connection.
+	// responsibility, not the caller's. Several keys may live on one extension
+	// server, so a caller builds one [KMS] per key over the shared connection.
 	Connections map[string]grpc.ClientConnInterface
 )
 
 // extensionConn builds the pooled connection for a single extension server.
 // Config rejects a templated hostPort, so the target is always static: the
 // resolver is fixed and [connect.NewConn] creates the connection here, which the
-// module then opens on start.
-//
-// This is deliberately narrower than the equivalent upstream path in
-// internal/proxy. There is no namespace translation, because an extension
-// server is not a Temporal service and has no namespaces to rewrite, and no
-// payload encryption interceptor, because an extension server is the thing that
-// wraps DEKs; sealing its traffic with the vault it backs would be circular.
+// module then opens on start. Unlike an upstream connection it installs no
+// namespace translation or payload encryption interceptor; an extension server
+// wraps DEKs, so sealing its traffic with the vault it backs would be circular.
 func extensionConn(pool *connect.Pool, s *config.ExtensionServer) (*connect.Conn, error) {
 	var opts []grpc.DialOption
 

@@ -148,13 +148,8 @@ func runRotation(ctx context.Context, v vaultRefresher, interval time.Duration, 
 
 // createVault builds a vault from the registry, applying the configured cache
 // size and, when a default key policy is set, its DEK duration and renewal lead
-// time.
-//
-// A disabled cache is logged rather than left to be inferred. It is a legitimate
-// choice, but an expensive one - every Open becomes a KEK round trip - and the
-// cache metrics cannot report it: hits and misses both sit at zero whether the
-// cache is off or merely idle, so this line is the only thing that distinguishes
-// them.
+// time. A disabled cache is logged, since every Open then costs a KEK round
+// trip and the cache metrics read zero whether the cache is off or merely idle.
 func createVault(
 	c *config.Config,
 	r *crypto.KEKRegistry,

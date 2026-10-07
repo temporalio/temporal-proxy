@@ -169,21 +169,14 @@ func WithLogger(l logger.Logger) Option {
 // WithServerAuth guards this server's unary methods with check, which receives
 // the single value of the header metadata. It authenticates the proxy to this
 // server, unlike the [Auth] service, which is how the proxy asks about somebody
-// else. Unary covers both generated services, since every method on them is unary;
-// adding a streaming method to either proto means pairing this with a
-// [grpc.StreamServerInterceptor].
-//
-// The health service is exempt, and deliberately: a probe has no credential to
-// give, and guarding it would withhold nothing anyway, because Watch reports the
-// same status over a stream that no unary interceptor sees.
+// else. Every method on both generated services is unary; the health service is
+// exempt.
 //
 // A call is rejected with Unauthenticated unless the header is present exactly
-// once and check accepts its value. Repeats are refused rather than searched, so
-// a caller cannot spray guesses in one call. Compare in constant time
-// ([crypto/subtle.ConstantTimeCompare]) for a shared secret. A nil check installs
-// nothing and leaves the server open, while a non-nil one with an empty header
-// would reject everything, so [Serve] treats it as a configuration error and
-// declines to start.
+// once and check accepts its value. Compare in constant time
+// ([crypto/subtle.ConstantTimeCompare]) for a shared secret. A nil check
+// installs nothing and leaves the server open; a non-nil one with an empty
+// header makes [Serve] return an error without starting.
 func WithServerAuth(header string, check CredentialCheck) Option {
 	return func(o *options) { o.authHeader, o.authCheck = header, check }
 }
@@ -193,29 +186,25 @@ func WithServerAuth(header string, check CredentialCheck) Option {
 // limit.
 //
 // Options accumulate, and [Serve] starts with insecure credentials, 128 concurrent
-// streams, a 1MiB receive limit sized for key material rather than payloads, and
-// keepalive settings that floor client ping intervals. An option given here is
-// applied after those, so it wins for any setting gRPC resolves to one value:
-// serving TLS is grpc.Creds(credentials.NewTLS(...)), with nothing to clear first.
+// streams, a 1MiB receive limit sized for key material, and keepalive settings
+// that floor client ping intervals. An option given here is applied after those,
+// so it wins for any setting gRPC resolves to one value: serving TLS is
+// grpc.Creds(credentials.NewTLS(...)), with nothing to clear first.
 //
-// Interceptor order is visible. The guard [WithServerAuth] installs is chained
-// ahead of anything added here, so a [grpc.ChainUnaryInterceptor] sees only
-// admitted calls. [grpc.UnaryInterceptor] is gRPC's own exception: prepended ahead
-// of the whole chain, it observes calls about to be rejected.
+// The guard [WithServerAuth] installs is chained ahead of anything added here, so
+// a [grpc.ChainUnaryInterceptor] sees only admitted calls. A
+// [grpc.UnaryInterceptor] runs ahead of the whole chain and also sees calls about
+// to be rejected.
 func WithServerOption(opts ...grpc.ServerOption) Option {
 	return func(o *options) { o.serverOptions = append(o.serverOptions, opts...) }
 }
 
 // WithShutdownTimeout bounds how long shutdown waits for in-flight calls before
 // dropping connections. It defaults to five seconds and is clamped to a 50ms
-// floor, so a zero or negative value still lets an already-answered call flush.
-// Set it below the grace period of whatever supervises the process; overrunning
-// that trades the graceful shutdown for a SIGKILL.
-//
-// A client watching the health service holds the drain open until this expires,
-// because a Watch ends with its stream rather than with the status going
-// NOT_SERVING. Expect the bound to be reached, not merely available, wherever
-// something watches.
+// floor. Set it below the grace period of whatever supervises the process, or
+// shutdown ends in a SIGKILL. A client watching the health service holds the
+// drain open until this expires, so expect the full bound wherever something
+// watches.
 func WithShutdownTimeout(t time.Duration) Option {
 	return func(o *options) { o.shutdownTimeout = max(50*time.Millisecond, t) }
 }

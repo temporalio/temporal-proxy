@@ -21,15 +21,12 @@ const (
 type (
 	// Reporter records router telemetry to Prometheus: routing decisions and the
 	// forwarding failures the router itself originates. It pre-resolves a counter
-	// for every meaningful (upstream, outcome) and (upstream, reason) combination
-	// so the emit path is a lock-free map read; an unexpected label combination
-	// falls back to CounterVec.WithLabelValues. A Reporter is safe for concurrent
-	// use.
+	// for every meaningful (upstream, outcome) and (upstream, reason) combination,
+	// so each series starts at zero. A Reporter is safe for concurrent use.
 	//
-	// Configured metadata labels suppress that pre-resolution, because their
-	// values arrive with a request and cannot be enumerated at startup. Every
-	// emit then takes the fallback, and no series starts at zero, so a query for
-	// a counter that has not been incremented yet finds nothing rather than 0.
+	// Configured metadata labels suppress that pre-resolution, since their values
+	// arrive with a request. No series then starts at zero, so a query for a
+	// counter that has not been incremented yet finds nothing rather than 0.
 	Reporter struct {
 		decisions *prometheus.CounterVec
 		errors    *prometheus.CounterVec
@@ -53,12 +50,7 @@ type (
 // with the factory's registry and pre-resolving the meaningful label
 // combinations so every series starts at zero. upstreams is the configured
 // upstream name list. labels are the configured metadata labels, and may be
-// the zero value.
-//
-// Nothing is pre-resolved when metadata labels are configured: a handle would
-// have to pin their values, which only a request carries. Leaving the maps
-// empty routes every emit through the fallback the maps exist to avoid, rather
-// than adding a second path that could drift from it.
+// the zero value; when any are configured, nothing is pre-resolved.
 func NewReporter(f *metrics.Factory, upstreams []string, labels metrics.MetadataLabels) *Reporter {
 	decisions := f.NewCounter(prometheus.CounterOpts{
 		Name: "decisions_total",

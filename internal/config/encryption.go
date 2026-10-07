@@ -50,13 +50,6 @@ type (
 // DEKCacheSize is the DEK cache size to apply: the configured size when there is
 // one, and [crypto.DefaultCacheSize] when the field is absent. Zero disables the
 // cache, so every Open unwraps its DEK through the KEK.
-//
-// The distinction is why the field is a pointer. Zero is a meaningful value here
-// and a plain int cannot tell an operator who wrote nothing from one who wrote
-// zero - so an absent field would read as "disable the cache" and silently
-// override the vault's own default, turning every payload the proxy opens into a
-// KMS round trip. Absent means "no opinion", and disabling the cache has to be
-// written down.
 func (e *Encryption) DEKCacheSize() int {
 	if e == nil || e.CacheSize == nil {
 		return crypto.DefaultCacheSize
@@ -114,10 +107,8 @@ func (p *KeyPolicy) Validate() error {
 // the referring policy's YAML path so it lands on the right key (e.g.
 // "encryption.default"/"uri" or "encryption.overrides[payments]"/"decryptURIs[1]").
 // Non-extension URIs are skipped; their scheme is already checked by validKeyURI.
-//
-// The rules are appended at the Config level rather than composed under
-// Encryption.Validate because they need the full set of extension server names,
-// which is only known there.
+// The rules are appended at the Config level, where the full set of names is
+// known.
 func (e *Encryption) referentialRules(known map[string]struct{}) []validation.Rule {
 	var rules []validation.Rule
 
@@ -174,11 +165,8 @@ func validKeyURI() validation.Check[url.URL] {
 
 // validKeyURIRef rejects a key URI whose scheme is not one of the supported KMS
 // providers, and an extension URI that names no server. The scheme match is
-// case-insensitive.
-//
-// The empty-host case is checked here rather than in referentialRules because
-// that rule reports a host that matches no configured server, and a missing host
-// gives it no name to report.
+// case-insensitive. The empty-host case is checked here because
+// referentialRules reports unknown server names and a missing host has none.
 func validKeyURIRef() validation.Check[*url.URL] {
 	return func(u *url.URL) error {
 		if !slices.Contains(validKeySchemes, strings.ToLower(u.Scheme)) {

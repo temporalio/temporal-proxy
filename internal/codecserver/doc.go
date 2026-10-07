@@ -5,7 +5,7 @@
 // # Why It Exists
 //
 // A worker or client connecting through the gateway never sees ciphertext: the
-// per-upstream proxy opens inbound payloads whether or not sealing is enabled.
+// upstream's forwarder opens inbound payloads whether or not sealing is enabled.
 // Two callers do not have that path. The Temporal Cloud UI reaches Cloud
 // directly and calls a codec endpoint from the operator's browser, and the
 // Temporal CLI run with --codec-endpoint reaches a Temporal Service directly.
@@ -33,7 +33,7 @@
 //
 // The handler applies a [Codecs], in practice
 // [github.com/temporalio/temporal-proxy/internal/proxy.Codecs], which is the
-// same value the per-upstream proxies install as a gRPC client interceptor. A
+// same value each upstream's forwarder installs as a gRPC client interceptor. A
 // payload therefore transforms identically whichever path it travelled,
 // because the chain has one construction site rather than two free to drift
 // apart.

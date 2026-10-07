@@ -11,11 +11,8 @@ import (
 // VersionDialOptions returns the dial options that stamp the proxy's own build
 // version on every outbound request as meta.VersionHeader. Callers fold them
 // into the dial options for the upstream connection, and only for an upstream
-// that is Temporal Cloud: Cloud reads the header to tell which proxy build a
-// request came from, and no other upstream has asked for it.
-//
-// An empty version installs nothing, so a build with no version to report sends
-// no header rather than an empty one.
+// that is Temporal Cloud. An empty version installs nothing, so no header is
+// sent rather than an empty one.
 func VersionDialOptions(version string) []grpc.DialOption {
 	if version == "" {
 		return nil

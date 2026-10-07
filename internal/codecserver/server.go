@@ -55,11 +55,8 @@ func NewServer(
 	}
 }
 
-// Addr is the address the server is accepting on, or nil before [Server.Start]
-// returns successfully. It is readable at all because the listener is bound
-// explicitly rather than by ListenAndServe, which never reports the port it
-// chose; that is what lets a caller bind port zero and still find the server.
-//
+// Addr is the address the server is accepting on, including the port chosen
+// for a port-zero hostPort, or nil before [Server.Start] returns successfully.
 // Safe for concurrent use.
 func (s *Server) Addr() net.Addr {
 	s.mu.Lock()
@@ -68,13 +65,10 @@ func (s *Server) Addr() net.Addr {
 	return s.addr
 }
 
-// Start binds the listener and serves in a background goroutine, returning as
-// soon as the listener is accepting. Serving continues until [Server.Stop],
-// so Start does not block.
-//
-// Returns an error only if the bind fails, typically an address already in use.
-// A failure after Start returns cannot be reported through it, so an unexpected
-// stop reaches the abort function given to [NewServer] instead.
+// Start binds the listener and serves in a background goroutine until
+// [Server.Stop], returning once the listener is accepting. It returns an error
+// only if the bind fails; a serving failure after that reaches the abort
+// function given to [NewServer] instead.
 //
 // Call it at most once. A Server is not restartable after [Server.Stop].
 func (s *Server) Start(ctx context.Context) error {
@@ -108,11 +102,9 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop closes the listener and waits for in-flight requests to finish. A
-// graceful stop is not an error, so the serving goroutine's abort function is
-// not called.
-//
-// Returns ctx's error if the drain does not finish in time, nil otherwise.
+// Stop closes the listener and waits for in-flight requests to finish, without
+// calling the abort function. Returns ctx's error if the drain does not finish
+// in time, nil otherwise.
 func (s *Server) Stop(ctx context.Context) error {
 	s.logger.Info("Shutting down the codec server")
 

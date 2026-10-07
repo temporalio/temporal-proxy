@@ -50,10 +50,8 @@ func (r *Routing) Validate() error {
 // YAML path so it lands on the right key (e.g. "routing.rules[0]"/"upstream").
 // Empty references are skipped: default and system are optional, and a rule's
 // missing upstream is already reported as required by RoutingRule.Validate.
-//
-// The rules are appended at the Config level rather than composed under
-// Routing.Validate because they need the full set of upstream names, which is
-// only known there.
+// The rules are appended at the Config level, where the full set of names is
+// known.
 func (r *Routing) referentialRules(known map[string]struct{}) []validation.Rule {
 	check := knownUpstream(known)
 	ref := func(subject, field, name string) validation.Rule {

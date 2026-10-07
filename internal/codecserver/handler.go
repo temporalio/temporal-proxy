@@ -47,9 +47,9 @@ const (
 type (
 	// Codecs transforms payloads on their way to and from an upstream. It is the
 	// subset of [github.com/temporalio/temporal-proxy/internal/proxy.Codecs] the
-	// handler needs, and an implementation must be the same value the
-	// per-upstream proxies apply, or a payload will transform differently
-	// depending on which path it travelled.
+	// handler needs, and an implementation must be the same value the upstream
+	// forwarders apply, or a payload will transform differently depending on
+	// which path it travelled.
 	//
 	// Implementations must be safe for concurrent use, must return the same
 	// number of payloads they were given in the same order, and must not mutate
@@ -80,10 +80,7 @@ type (
 	// needs no translation.
 	Namespaces interface {
 		// Local returns the local namespace name for remote, or remote unchanged
-		// when it maps no override. Returning the input is deliberate rather
-		// than a fallback: the vault resolves an unknown namespace to the
-		// default key policy, which is the correct policy for a namespace that
-		// has none of its own.
+		// when it maps no override.
 		Local(remote string) string
 	}
 
@@ -127,19 +124,12 @@ type (
 )
 
 // Handler returns the codec server's routes, each served both bare and under a
-// namespace path segment because a caller may name the namespace either way.
-// Use it when a client reaches a Temporal Service without passing through the
-// gateway; a client that goes through the gateway needs no codec server at all.
+// namespace path segment. Use it when a client reaches a Temporal Service
+// without passing through the gateway. An unknown path answers 404, and a known
+// path used with any method but POST answers 405 with an Allow header, where
+// the SDK's own handler answers 404.
 //
-// Returns an http.Handler wrapping an http.ServeMux. An unknown path answers
-// 404; a known path used with any method but POST answers 405 with an Allow
-// header, which diverges from the SDK's own handler answering 404 there.
-//
-// Panics if r is nil. A missing reporter is a wiring mistake, and failing at
-// construction beats a nil dereference on the first request, which would answer
-// 500 on a surface that otherwise only ever answers 4xx.
-//
-// The returned handler is safe for concurrent use.
+// Panics if r is nil. The returned handler is safe for concurrent use.
 func Handler(c Codecs, n Namespaces, r *Reporter, opts ...Option) http.Handler {
 	if r == nil {
 		panic("codecserver: Handler requires a non-nil reporter")
@@ -172,13 +162,10 @@ func Handler(c Codecs, n Namespaces, r *Reporter, opts ...Option) http.Handler {
 	return cors(o.origins, o.credentials, mux)
 }
 
-// WithAuth requires every request to satisfy a, which answers 401 for any
-// request a denies. Omitting it serves every request unauthenticated, which is
-// only defensible on a loopback bind, and is why configuration rejects an
-// enabled codec server bound beyond loopback with no auth block.
-//
-// A preflight is answered before a reaches it, since a browser sends no
-// credentials on one.
+// WithAuth requires every request to satisfy a, answering 401 for any request
+// a denies. A preflight is answered before a reaches it. Omitting it serves
+// every request unauthenticated, which configuration only permits on a
+// loopback bind.
 func WithAuth(a Authenticator) Option {
 	return func(o *options) { o.auth = a }
 }
@@ -202,11 +189,7 @@ func WithLogger(l logger.Logger) Option {
 }
 
 // WithMaxBodyBytes bounds how much of a request body is read, answering 400
-// once a caller exceeds it. The cap matters more here than on an ordinary
-// endpoint because this surface unwraps a DEK on demand, so an unbounded body
-// is an unbounded amount of work for an unauthenticated-at-the-edge caller.
-//
-// A value of zero or less keeps the default of 4 MiB.
+// once a caller exceeds it. A value of zero or less keeps the default of 4 MiB.
 func WithMaxBodyBytes(n int64) Option {
 	return func(o *options) {
 		if n > 0 {
@@ -216,13 +199,9 @@ func WithMaxBodyBytes(n int64) Option {
 }
 
 // WithNamespaceRequired makes /encode answer 400 when a request names no
-// namespace. Set it when a per-namespace key policy is configured: sealing a
-// payload that cannot be attributed to a namespace would silently take the
-// default policy rather than the one the operator wrote, which is a policy
-// violation that no later error reveals.
-//
-// It never constrains /decode, which does not need a namespace to open a
-// payload.
+// namespace; it never constrains /decode. Set it when a per-namespace key
+// policy is configured, or a payload naming no namespace is silently sealed
+// under the default policy.
 func WithNamespaceRequired(required bool) Option {
 	return func(o *options) { o.namespaceRequired = required }
 }

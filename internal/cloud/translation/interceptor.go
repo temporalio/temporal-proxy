@@ -15,14 +15,9 @@ type options struct {
 }
 
 // Via sends a translated call over cc instead of continuing down the chain to
-// the connection the interceptor is installed on.
-//
-// The upstream method belongs to a different service, which the connection that
-// received the call does not serve: the caller asked a Temporal Service for
-// ListNamespaces, and only Temporal Cloud's control plane can answer it. Where
-// that service lives is as fixed as the conversions themselves, so the
-// translation carries the connection rather than the request being routed to it,
-// and a request reaching any upstream is answered the same way.
+// the connection the interceptor is installed on, for an upstream method that
+// connection does not serve, such as one only Temporal Cloud's control plane
+// answers.
 func Via(cc grpc.ClientConnInterface) Option {
 	return func(o *options) { o.via = cc }
 }
@@ -32,13 +27,6 @@ func Via(cc grpc.ClientConnInterface) Option {
 // connection, last, so translation is the innermost interceptor: every other
 // interceptor on the chain then sees the method and message types the caller
 // asked for rather than the substitute sent upstream.
-//
-// The result is a slice though it holds a single option today. A [Translation]
-// substitutes a unary method, so a unary interceptor is all there is to install;
-// translating a streaming method would add a stream interceptor beside it, the
-// way the namespace and Cloud-namespace helpers in internal/proxy already pair
-// the two. Keeping the slice means that arrives without changing this signature
-// or the call sites, which already spread the result.
 func DialOptions(r *Registry, opts ...Option) []grpc.DialOption {
 	return []grpc.DialOption{grpc.WithChainUnaryInterceptor(unaryClientInterceptor(r, opts...))}
 }

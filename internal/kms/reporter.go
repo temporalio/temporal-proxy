@@ -56,12 +56,10 @@ type (
 
 // NewReporter builds the Prometheus-backed encryption Reporter, pre-resolving
 // the meaningful KEK label combinations so every series starts at zero. f must
-// already be scoped to the "encryption" subsystem by the caller.
-//
-// Prometheus panics rather than erring on a collector it will not accept, so
-// recover and return an error: a configured fixed label can name one of these
-// series' own labels, and config cannot refuse that without knowing every
-// collector's label set.
+// already be scoped to the "encryption" subsystem by the caller. Returns an
+// error rather than panicking when a collector cannot be registered, such as a
+// second reporter on the registry or a configured fixed label colliding with
+// one of a collector's own labels.
 func NewReporter(f *metrics.Factory) (rep *Reporter, err error) {
 	defer func() {
 		rec := recover()
@@ -197,17 +195,12 @@ func (r *Reporter) Observe(e crypto.Event) {
 // envelopeOp records the AES-256-GCM portion of one envelope operation: its
 // duration and, via dek_ops_total, its own result.
 //
-// Total and Namespace are deliberately unused. internal/proxy already records
-// the end-to-end duration and operation counts, labeled by namespace, around
-// its own Seal and Open calls as vault_ops_duration_seconds and vault_ops_total;
-// recording them here would duplicate those series and collide with them on
-// the shared "encryption" subsystem. Err is likewise unused here for a
-// reason, not an oversight: the envelope result already lives on
-// internal/proxy's vault_ops_total. The result label instead comes from
-// CryptoErr, the AES step's own outcome, deliberately not Err: a Seal that
-// encrypts successfully and then fails to wrap its DEK is a KEK failure that
-// kek_ops_total already reports, and counting it here would blame the wrong
-// actor.
+// Total, Namespace, and Err are deliberately unused: internal/proxy records the
+// end-to-end duration and result as vault_ops_duration_seconds and
+// vault_ops_total, and recording them here would duplicate those series on the
+// shared "encryption" subsystem. The result label comes from CryptoErr, so a
+// Seal whose DEK wrap fails is reported by kek_ops_total alone rather than
+// blamed on the AES step.
 func (r *Reporter) envelopeOp(e crypto.EnvelopeEvent) {
 	// No AES step, no DEK operation to record. CryptoAttempted is the only sound
 	// test for that: a zero Crypto cannot distinguish a step that never ran from

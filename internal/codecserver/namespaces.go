@@ -9,34 +9,22 @@ import (
 )
 
 // OverrideMap maps a remote namespace name to the local name a per-namespace
-// codec policy is keyed by. It satisfies [Namespaces].
-//
-// It holds only the namespaces where the answer can differ, which is those
-// carrying a per-namespace policy under an upstream that translates names.
-// Every other name is left alone, so the map is small and usually empty.
+// codec policy is keyed by, holding only namespaces with a policy under an
+// upstream that translates names. It satisfies [Namespaces].
 //
 // A nil OverrideMap is usable and translates nothing. An OverrideMap is
 // read-only after construction and safe for concurrent use.
 type OverrideMap map[string]string
 
-// NewOverrideMap builds the remote-to-local namespace mapping from
-// configuration, once at startup. Call it before serving; it reads cfg and
-// keeps no reference to it.
+// NewOverrideMap builds the remote-to-local namespace mapping from cfg,
+// recording the remote name each translating upstream produces for every
+// namespace carrying a per-namespace codec policy. Identity entries are
+// skipped, so an upstream whose rules do not change a name contributes nothing.
+// It keeps no reference to cfg.
 //
-// For each upstream that translates namespaces, it walks the namespaces
-// carrying a per-namespace codec policy and records the remote name that
-// upstream would have produced. Deriving the mapping forwards, through the
-// upstream's own rules, is what makes it exact: it honours an explicit
-// local-to-remote override, where inverting a translation would be a lossy
-// suffix trim. Identity entries are skipped, so an upstream whose rules do not
-// change a name contributes nothing.
-//
-// Returns a mapping that may be nil when no namespace carries a policy, which
-// callers may use directly.
+// Returns a nil mapping, which is usable, when no namespace carries a policy.
 // Returns an error when a remote name is also a policy key, or when two local
-// namespaces produce the same remote name. Both are ambiguous, and an
-// ambiguous mapping would seal one namespace's payloads under another's key
-// policy, so it fails at startup rather than resolving arbitrarily per request.
+// namespaces produce the same remote name, since either mapping is ambiguous.
 func NewOverrideMap(cfg *config.Config) (OverrideMap, error) {
 	locals := policyNamespaces(cfg)
 	if len(locals) == 0 {
@@ -85,15 +73,8 @@ func NewOverrideMap(cfg *config.Config) (OverrideMap, error) {
 }
 
 // Local returns the local namespace name for remote, or remote unchanged when
-// no override matches. It implements [Namespaces] and has no error path.
-//
-// Passing an unknown name through is the correct answer rather than a
-// fallback. The vault resolves a namespace it holds no key for to the default
-// key policy, which is what a namespace with no override should get, and it
-// also means a caller that already speaks local names reaches its own override
-// directly without the mapping having to recognise it.
-//
-// Safe for concurrent use. Safe on a nil receiver.
+// no override matches. It implements [Namespaces]. Safe for concurrent use and
+// on a nil receiver.
 func (m OverrideMap) Local(remote string) string {
 	if local, ok := m[remote]; ok {
 		return local

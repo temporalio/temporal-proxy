@@ -57,20 +57,9 @@ type JWKSAuthenticator struct {
 }
 
 // NewJWKSAuthenticator builds a JWKSAuthenticator that resolves signing keys
-// from the JWKS at rawURL.
-//
-// keyfunc.NewDefaultOverrideCtx performs its first key fetch synchronously
-// (see github.com/MicahParks/jwkset's NewStorageFromHTTP), so calling it
-// directly here would block construction for up to its HTTP timeout if the
-// IdP is unreachable. To keep construction non-blocking, the fetch is kicked
-// off in a background goroutine (via deferredKeyfunc); until it completes,
-// Authenticate reports codes.Unavailable (fail closed, retryable) instead of
-// blocking startup.
-//
-// rawURL is validated synchronously before the goroutine is started, so a
-// malformed configuration (bad scheme/host, not a transient IdP outage) fails
-// construction immediately instead of surfacing as a permanent
-// codes.Unavailable for every future request.
+// from the JWKS at rawURL. It returns an error if rawURL is malformed but does
+// not block on the IdP: the first key fetch runs in the background, and until
+// it completes Authenticate fails closed with codes.Unavailable.
 func NewJWKSAuthenticator(rawURL string, audiences []string, issuer, header, scheme string) (*JWKSAuthenticator, error) {
 	if err := validateJWKSURL(rawURL); err != nil {
 		return nil, err
@@ -233,14 +222,9 @@ func deferredKeyfunc(load func() (jwt.Keyfunc, error)) (jwt.Keyfunc, *atomic.Poi
 // availability problem (errKeysUnavailable -> codes.Unavailable), not a bad
 // token. Any other resolver error is treated as an availability problem.
 //
-// keysPresent reports whether the keyset currently holds any keys. resolve is
-// the underlying key resolver (in production, keyfunc.Keyfunc's method value).
-//
-// When keysPresent cannot positively confirm keys exist (e.g. its underlying
-// read errors), it should return false; the failure then maps to
-// codes.Unavailable (retryable) rather than masking as a bad token - the
-// conservative fail-closed-toward-retryable choice for an infra-level read
-// error.
+// keysPresent reports whether the keyset currently holds any keys; it must
+// return false when it cannot confirm keys exist (e.g. its read errors), so
+// the failure maps to codes.Unavailable rather than a bad token.
 func wrapKeyfunc(resolve jwt.Keyfunc, keysPresent func() bool) jwt.Keyfunc {
 	return func(t *jwt.Token) (any, error) {
 		key, err := resolve(t)

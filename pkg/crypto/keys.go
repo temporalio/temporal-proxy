@@ -23,12 +23,8 @@ type (
 	// KeyFactory opens [KEK]s from key URIs, choosing an opener by URI scheme.
 	// It handles the cloud KMS schemes out of the box (see [NewKeyFactory]) and
 	// takes additional or replacement schemes through
-	// [WithKeyFactoryFuncForScheme], so a caller can serve keys from its own key
-	// store without the code consuming those KEKs knowing where they come from.
-	//
-	// Schemes are registered during construction only, so a KeyFactory never
-	// changes afterwards and one may be shared by any number of goroutines opening
-	// keys at once.
+	// [WithKeyFactoryFuncForScheme]. Schemes are registered during construction
+	// only, so a KeyFactory is safe for concurrent use.
 	KeyFactory struct {
 		funcs map[string]KeyFactoryFunc
 	}
@@ -45,34 +41,25 @@ type (
 
 	keyFactoryOpt func(*KeyFactory)
 
-	// CloudKey is a [KEK] backed by a cloud KMS key. The embedded
-	// [secrets.Keeper] supplies Decrypt and Close; CloudKey adds the ID and the
-	// namespace-aware Encrypt that KEK requires.
-	//
-	// A Keeper addresses a single fixed key, so one CloudKey wraps DEKs for every
-	// namespace it is handed. Open one CloudKey per KMS key and let a
-	// [KEKRegistry] decide which namespaces map onto which key.
+	// CloudKey is a [KEK] backed by a single cloud KMS key, with Decrypt and
+	// Close supplied by the embedded [secrets.Keeper]. It wraps DEKs for every
+	// namespace it is handed with that one key; use a [KEKRegistry] to map
+	// namespaces onto keys.
 	CloudKey struct {
 		*secrets.Keeper
 		id string
 	}
 )
 
-// NewKeyFactory returns a KeyFactory that opens cloud KMS keys, then applies
-// opts in order. The schemes registered up front are [DefaultSchemes], all
-// served by [NewCloudKey]:
+// NewKeyFactory returns a KeyFactory that serves [DefaultSchemes] with
+// [NewCloudKey], then applies opts in order, so [WithKeyFactoryFuncForScheme]
+// can replace any default as well as add schemes. Importing this package links
+// in the driver for each default scheme:
 //
 //	awskms://         AWS KMS
 //	azurekeyvault://  Azure Key Vault
 //	gcpkms://         Google Cloud KMS
 //	testing://        a local in-process key, for tests and local runs only
-//
-// The driver behind each scheme is linked in by importing this package, so no
-// further imports are needed to use them.
-//
-// opts are applied after those defaults, which means
-// [WithKeyFactoryFuncForScheme] can replace any of them as well as add schemes
-// of its own.
 func NewKeyFactory(opts ...KeyFactoryOption) *KeyFactory {
 	schemes := DefaultSchemes()
 	funcs := make(map[string]KeyFactoryFunc, len(schemes))
@@ -90,19 +77,14 @@ func NewKeyFactory(opts ...KeyFactoryOption) *KeyFactory {
 
 // NewCloudKey opens the cloud KMS key addressed by uri, which must use one of
 // the schemes listed in [NewKeyFactory]. Close the returned key when it is no
-// longer needed; a [KEKRegistry] does that for the keys it holds.
+// longer needed; a [KEKRegistry] does that for the keys it holds. The key's ID
+// is uri, except for the testing scheme.
 //
-// The "testing://" scheme is rewritten to gocloud's "base64key://" local keeper
-// so tests and local runs need no cloud KMS at all. Everything after that scheme
-// is the base64-encoded 32-byte key; pass a bare "testing://" to get a random
-// one. Key material is kept out of the errors this function returns, but it
-// still reaches the key's ID, and therefore every DEK the key wraps, which is
-// one more reason to keep the scheme away from production.
-//
-// For every other scheme the ID is just uri, so it is stable across processes
-// and identifies the key again on the decrypt path. Schemes are matched without
-// regard to case, so the ID of a testing key is the same however its scheme was
-// spelled.
+// "testing://", matched without regard to case, opens gocloud's local
+// "base64key://" keeper with the ID "base64key://" plus everything after the
+// scheme: the base64-encoded 32-byte key, or nothing for a random one. Key
+// material is kept out of returned errors but reaches the ID, and therefore
+// every DEK the key wraps, so keep the scheme away from production.
 func NewCloudKey(ctx context.Context, uri string) (KEK, error) {
 	open, material := uri, ""
 	if after, ok := cutPrefixFold(uri, testingScheme); ok {
@@ -143,13 +125,9 @@ func WithKeyFactoryFuncForScheme(scheme string, fn KeyFactoryFunc) KeyFactoryOpt
 }
 
 // DefaultSchemes lists the URI schemes a [KeyFactory] serves with [NewCloudKey]
-// before any option is applied, lowercased as [KeyFactory.Create] matches them.
-// It is useful for validating a key URI ahead of opening it, so a typo in a
-// scheme can be reported alongside the rest of a config rather than at the point
-// the key is first needed.
-//
-// Each call returns a fresh slice; the caller may sort or filter it freely
-// without disturbing the factory.
+// before any option is applied, lowercased as [KeyFactory.Create] matches them,
+// for validating a key URI ahead of opening it. Each call returns a fresh slice
+// the caller may modify.
 func DefaultSchemes() []string {
 	return []string{
 		"awskms",

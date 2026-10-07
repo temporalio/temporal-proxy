@@ -13,13 +13,11 @@ const endpointSuffix = ".tmprl.cloud"
 // same address the Cloud SDK dials by default.
 const APIHostPort = "saas-api" + endpointSuffix + ":443"
 
-// IsEndpoint reports whether hostPort addresses Temporal Cloud. The port is
-// optional, and a template action in place of the host is tolerated, since a
-// templated address is rendered per request but keeps its domain.
-//
-// This recognizes per-namespace and regional endpoints. Private-link endpoints
-// use per-VPC hostnames that carry no Cloud domain, so those have to be declared
-// rather than detected.
+// IsEndpoint reports whether hostPort addresses Temporal Cloud through a
+// per-namespace or regional endpoint. The port is optional, and a template
+// action in place of the host is tolerated. Private-link endpoints use per-VPC
+// hostnames with no Cloud domain, so those have to be declared rather than
+// detected.
 func IsEndpoint(hostPort string) bool {
 	host := hostPort
 	if h, _, err := net.SplitHostPort(host); err == nil {
