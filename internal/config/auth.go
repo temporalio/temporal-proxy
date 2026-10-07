@@ -133,7 +133,7 @@ func (c *StaticTokenConfig) Validate() error {
 	)
 }
 
-// Validate requires a syntactically valid absolute JWKS URL.
+// Validate requires a syntactically valid absolute https JWKS URL.
 func (c *JWKSConfig) Validate() error {
 	return validation.Validate(
 		"",

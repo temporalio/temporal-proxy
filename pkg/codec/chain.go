@@ -16,8 +16,8 @@ type (
 	}
 
 	// Chain applies a set of codecs as one. Encode runs them in the order the
-	// chain holds them and Decode runs them in reverse, so a payload is
-	// compressed before it is sealed and unsealed before it is decompressed.
+	// chain holds them and Decode runs them in reverse, so the last codec to
+	// encode a payload is the first to decode it.
 	// Note that this is the opposite of the SDK's own convention, where a
 	// multi-codec list encodes last to first; a Chain is handed to the SDK whole,
 	// as a single codec, so its order stays its own concern.

@@ -5,8 +5,9 @@
 // where Subject identifies the thing being validated (e.g. a hostname or
 // certificate CN), Field names the attribute that failed, and Message
 // describes the failure in human-readable form. [Errors] aggregates multiple
-// [Error] values into a single error while remaining compatible with
-// [errors.Is], [errors.As], and [errors.Join] via its Unwrap method.
+// [Error] values into a single error; its Unwrap method lets [errors.Is] and
+// [errors.As] see each entry, and it composes with [errors.Join] like any
+// other error.
 //
 // Higher-level validation is expressed by passing a list of [Rule] values to
 // [Validate], typically constructed via [Field] and the built-in [Check]

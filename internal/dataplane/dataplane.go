@@ -421,8 +421,8 @@ func (r keyedResolver) Resolve(ctx context.Context) (string, string, []grpc.Dial
 
 // translates reports whether any upstream will have method translation
 // installed, which is any upstream being Temporal Cloud. It is the same question
-// perUpstream asks of one upstream, so a configuration this answers false for
-// installs nothing anywhere.
+// newUpstreamForwarder asks of one upstream, so a configuration this answers
+// false for installs nothing anywhere.
 func translates(cfg *config.Config) bool {
 	return slices.ContainsFunc(cfg.Upstreams, func(up config.Upstream) bool {
 		return up.IsCloud()

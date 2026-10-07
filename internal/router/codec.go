@@ -23,9 +23,10 @@ type (
 	}
 )
 
-// Codec returns the hybrid pass-through codec. It must be applied per-call via
-// grpc.ForceServerCodecV2 / grpc.ForceCodecV2; it is deliberately not registered
-// globally so it never shadows the real proto codec process-wide.
+// Codec returns the hybrid pass-through codec. It must be installed on the
+// gateway server via grpc.ForceServerCodecV2 (see server.WithServerCodec); it is
+// deliberately not registered globally so it never shadows the real proto codec
+// process-wide.
 func Codec() encoding.CodecV2 {
 	return defaultCodec
 }

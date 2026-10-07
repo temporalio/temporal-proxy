@@ -31,9 +31,10 @@ type translatingClientStream struct {
 
 // TranslationDialOptions returns the dial options that install namespace
 // translation on the outbound connection: t rewrites message bodies and typed
-// error details, out maps local names to remote on the way out, and in maps
-// remote names to local on the way back. Callers fold them into the dial
-// options for the upstream connection.
+// error details, out maps local names to remote on the way out (including the
+// outgoing temporal-namespace header), and in maps remote names to local on the
+// way back. Callers fold them into the dial options for the upstream
+// connection.
 func TranslationDialOptions(t *protoutil.Translator, out, in func(string) string) []grpc.DialOption {
 	return []grpc.DialOption{
 		grpc.WithChainUnaryInterceptor(unaryClientInterceptor(t, out, in)),

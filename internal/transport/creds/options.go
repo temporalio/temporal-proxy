@@ -25,7 +25,7 @@ func (f optFunc) apply(o *options) { f(o) }
 // Insecure disables transport security. It is the only way to obtain a
 // plaintext credential: security is the default, so an accidentally-empty
 // credential fails toward TLS rather than silently downgrading. Use it
-// deliberately, for example on the local loopback socket.
+// deliberately, for example to reach a local development Temporal Service.
 func Insecure() Option {
 	return optFunc(func(o *options) { o.insecure = true })
 }

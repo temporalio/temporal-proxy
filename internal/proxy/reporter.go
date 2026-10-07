@@ -10,13 +10,14 @@ import (
 
 type (
 	// Reporter records envelope-operation telemetry to Prometheus: each seal
-	// (encrypt) and open (decrypt) the encryption interceptor performs, timed end
-	// to end, including any KEK wrap or unwrap and any DEK cache lookup along the
-	// way. The AES-step duration alone is owned by internal/kms. The namespace
-	// label is always declared but only carries a value when namespace labels are
-	// enabled, since the set of namespaces is unbounded; handles are resolved per
-	// call via WithLabelValues rather than pre-computed. A Reporter is safe for
-	// concurrent use.
+	// (encrypt) and open (decrypt) the encryption codec performs, on both the
+	// gRPC path and the codec server's HTTP path, timed end to end, including
+	// any KEK wrap or unwrap and any DEK cache lookup along the way. The AES-step
+	// duration alone is owned by internal/kms. The namespace label is always
+	// declared but only carries a value when namespace labels are enabled, since
+	// the set of namespaces is unbounded; handles are resolved per call via
+	// WithLabelValues rather than pre-computed. A Reporter is safe for concurrent
+	// use.
 	Reporter struct {
 		ops             *prometheus.CounterVec
 		duration        *prometheus.HistogramVec
@@ -24,6 +25,7 @@ type (
 		labels          metrics.MetadataLabels
 	}
 
+	// ReporterOption configures a Reporter at construction.
 	ReporterOption func(*Reporter)
 )
 
@@ -48,18 +50,21 @@ func NewReporter(f *metrics.Factory, opts ...ReporterOption) *Reporter {
 	return r
 }
 
+// WithNamespaceLabels sets whether the namespace label carries a value. Off by
+// default, since the set of namespaces is unbounded.
 func WithNamespaceLabels(enabled bool) ReporterOption {
 	return func(r *Reporter) { r.namespaceLabels = enabled }
 }
 
+// WithMetadataLabels sets the request-metadata headers reported as extra labels.
 func WithMetadataLabels(labels metrics.MetadataLabels) ReporterOption {
 	return func(r *Reporter) { r.labels = labels }
 }
 
 // VaultOp records a single envelope operation and its duration. ctx is the
 // request's, and supplies the configured metadata label values when there are
-// any: on the per-upstream hop that is what the gateway forwarded rather than
-// what it received, so a header the inbound authenticator consumed is gone,
+// any: on the gRPC path that is the incoming metadata after the inbound
+// authenticator stripped the headers it consumed, so those headers are gone,
 // and on the codec server's HTTP path there is no gRPC metadata at all, so
 // those labels come out blank there.
 func (r *Reporter) VaultOp(ctx context.Context, operation, result, namespace string, seconds float64) {

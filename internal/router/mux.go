@@ -20,7 +20,7 @@ const (
 type (
 	// Mux selects the upstream that serves a request by matching it against an
 	// ordered list of rules. It holds upstream names only, not connections, so
-	// callers map the name Switch returns to a connection. A Mux is read-only
+	// callers map the name Switch returns to a stream handler. A Mux is read-only
 	// after construction and safe for concurrent use.
 	Mux struct {
 		def   string

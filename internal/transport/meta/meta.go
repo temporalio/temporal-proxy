@@ -1,7 +1,7 @@
 // Package meta defines the internal contract for what the gateway learns about a
 // request once and every later stage reads: the [Target] on the context, and the
-// namespace stamped on outgoing metadata for the per-upstream proxy. It depends
-// on no other internal packages.
+// namespace stamped on outgoing metadata for the forwarder's resolver and client
+// interceptors. It depends on no other internal packages.
 package meta
 
 import (
@@ -12,7 +12,8 @@ import (
 
 const (
 	// NamespaceHeader is the outgoing metadata key that carries the local (pre-
-	// translation) namespace from the router to the upstream proxy.
+	// translation) namespace from the router to the forwarder's resolver and
+	// client interceptors.
 	NamespaceHeader = "x-temporal-proxy-namespace"
 
 	// VersionHeader is the outgoing metadata key that carries the proxy's own

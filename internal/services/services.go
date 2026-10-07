@@ -33,7 +33,7 @@ const (
 )
 
 // aliases maps a service name to the additional names allowing it implies.
-// Callers name the service they mean; Expand supplies the compatibility
+// Callers name the service they mean; expand supplies the compatibility
 // spellings so configuration does not have to.
 var aliases = map[string][]string{
 	Reflection: {ReflectionV1Alpha},
@@ -46,9 +46,9 @@ func Default() []string {
 	return []string{WorkflowService, OperatorService}
 }
 
-// Known returns every service the proxy can forward, which is every service
-// whose descriptors this package links in. It is the universe configuration may
-// select from, and the set the namespace completeness guard audits.
+// Known returns every service the proxy can forward, in its canonical spelling;
+// compatibility aliases such as v1alpha reflection are left to All. It is the
+// universe configuration may select from.
 func Known() []string {
 	return []string{WorkflowService, OperatorService, Reflection}
 }

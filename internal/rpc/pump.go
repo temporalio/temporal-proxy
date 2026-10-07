@@ -71,10 +71,10 @@ func (p *Pump) Forward(in, out Frame) error {
 	return status.Error(codes.Internal, "forwarding ended without completion")
 }
 
-// requests forwards request messages the caller sends to the upstream, one in per
-// message, until either side fails, and reports that first failure on the
-// returned channel. io.EOF means the caller half-closed cleanly, which is the caller's cue
-// to close the upstream's send side rather than to fail the call.
+// requests forwards request messages the caller sends to the upstream, one in
+// per message, until either side fails, and reports that first failure on the
+// returned channel. io.EOF means the caller half-closed cleanly, which is the
+// caller's cue to close the upstream's send side rather than to fail the call.
 func (p *Pump) requests(in Frame) <-chan error {
 	errs := make(chan error, 1)
 
@@ -100,10 +100,11 @@ func (p *Pump) requests(in Frame) <-chan error {
 
 // responses relays the upstream's response header and then forwards the
 // upstream's response messages to the caller, one out per message, until either
-// side fails, reporting that first failure on the returned channel. io.EOF means the upstream completed
-// cleanly; any other error is the upstream's status or a failure sending to the
-// caller. The header is relayed before the first message because gRPC flushes it
-// on the first send, and a header sent late is a header the caller never sees.
+// side fails, reporting that first failure on the returned channel. io.EOF
+// means the upstream completed cleanly; any other error is the upstream's
+// status or a failure sending to the caller. The header is relayed before the
+// first message because gRPC flushes it on the first send, and a header sent
+// late is a header the caller never sees.
 func (p *Pump) responses(out Frame) <-chan error {
 	errs := make(chan error, 1)
 

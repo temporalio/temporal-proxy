@@ -48,9 +48,9 @@ func (t *Translator) WarmService(name protoreflect.FullName) error {
 	return nil
 }
 
-// Translate rewrites every namespace name in m using fn. It is a no-op when m is
-// nil, invalid, or carries no namespace field. fn maps a namespace name to its
-// translated form (local to remote, or remote to local).
+// Translate rewrites every namespace name in m using fn. It is a no-op when m or
+// fn is nil, or m is invalid or carries no namespace field. fn maps a namespace
+// name to its translated form (local to remote, or remote to local).
 func (t *Translator) Translate(m proto.Message, fn func(string) string) {
 	if m == nil || fn == nil {
 		return

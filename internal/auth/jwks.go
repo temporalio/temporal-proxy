@@ -225,13 +225,13 @@ func deferredKeyfunc(load func() (jwt.Keyfunc, error)) (jwt.Keyfunc, *atomic.Poi
 	return keyfn, &ready
 }
 
-// wrapKeyfunc adapts a key resolver so the error taxonomy matches the spec's
-// intent: a genuinely unknown key id on a POPULATED keyset is a verification
-// failure (jwkset.ErrKeyNotFound -> codes.Unauthenticated), while an unknown
-// key id on an EMPTY keyset means the keyset was never fetched (IdP unreachable
-// at startup and on-demand refresh still failing), which is an availability
-// problem (errKeysUnavailable -> codes.Unavailable), not a bad token. Any other
-// resolver error is treated as an availability problem.
+// wrapKeyfunc adapts a key resolver so the error taxonomy separates bad tokens
+// from outages: a genuinely unknown key id on a populated keyset is a
+// verification failure (jwkset.ErrKeyNotFound -> codes.Unauthenticated), while
+// an unknown key id on an empty keyset means the keyset was never fetched (IdP
+// unreachable at startup and on-demand refresh still failing), which is an
+// availability problem (errKeysUnavailable -> codes.Unavailable), not a bad
+// token. Any other resolver error is treated as an availability problem.
 //
 // keysPresent reports whether the keyset currently holds any keys. resolve is
 // the underlying key resolver (in production, keyfunc.Keyfunc's method value).

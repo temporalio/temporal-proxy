@@ -80,8 +80,9 @@ func (r *Reporter) Observe(ctx context.Context, method string, code codes.Code, 
 // and records the RPC's duration and final gRPC status code. It covers all
 // forwarded traffic, which grpc-go serves through the unknown-service handler as
 // streams. The local health service's unary Check is not metered, since unary
-// calls do not pass through a stream interceptor; its streaming Watch, if a
-// client uses it, would be metered under its own method name.
+// calls do not pass through a stream interceptor; its streaming Watch is
+// metered under its own method name, which includes the call the loopback
+// health check makes every interval when [WithLoopbackHealthCheck] is set.
 func (r *Reporter) StreamInterceptor() grpc.StreamServerInterceptor {
 	return func(
 		srv any,

@@ -8,9 +8,9 @@ import (
 
 type (
 	// Routing selects which upstream serves a request. DefaultUpstream is the
-	// fallback when no rule matches and SystemUpstream serves system-namespace
-	// traffic; both name an upstream and are optional. Rules are evaluated in
-	// order against the incoming request.
+	// fallback when no rule matches and SystemUpstream serves a request that
+	// carries no namespace and matches no rule; both name an upstream and are
+	// optional. Rules are evaluated in order against the incoming request.
 	Routing struct {
 		DefaultUpstream string        `yaml:"default"`
 		SystemUpstream  string        `yaml:"system"`

@@ -43,7 +43,8 @@ type (
 	}
 )
 
-// Default returns a default [Logger] which writes to os.Stderr at LevelInfo.
+// Default returns the [Logger] last installed by [SetDefault], initially one
+// that writes to os.Stderr at [LevelInfo].
 func Default() Logger {
 	return defaultLogger
 }

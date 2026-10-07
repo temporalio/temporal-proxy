@@ -24,26 +24,34 @@ func NewZeroLogger(w io.Writer, lvl Level) *ZeroLogger {
 	}
 }
 
+// Debug implements [Logger].
 func (l *ZeroLogger) Debug(msg string, tags ...tag.Tag) {
 	logEvent(l.log.Debug(), msg, tags)
 }
 
+// Error implements [Logger].
 func (l *ZeroLogger) Error(msg string, tags ...tag.Tag) {
 	logEvent(l.log.Error(), msg, tags)
 }
 
+// Fatal implements [Logger]. It writes the entry, then exits the process
+// with status 1.
 func (l *ZeroLogger) Fatal(msg string, tags ...tag.Tag) {
 	logEvent(l.log.Fatal(), msg, tags)
 }
 
+// Info implements [Logger].
 func (l *ZeroLogger) Info(msg string, tags ...tag.Tag) {
 	logEvent(l.log.Info(), msg, tags)
 }
 
+// Warn implements [Logger].
 func (l *ZeroLogger) Warn(msg string, tags ...tag.Tag) {
 	logEvent(l.log.Warn(), msg, tags)
 }
 
+// With implements [Logger], returning a child ZeroLogger that includes tags
+// on every entry.
 func (l *ZeroLogger) With(tags ...tag.Tag) Logger {
 	ctx := l.log.With()
 	for _, t := range tags {

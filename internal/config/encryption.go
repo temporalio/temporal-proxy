@@ -67,7 +67,7 @@ func (e *Encryption) DEKCacheSize() int {
 
 // Validate requires a non-negative cache size, a Default policy whenever
 // encryption is Enabled, and (when a Default is present at all) that the policy
-// itself is valid.
+// itself is valid. Every Overrides entry needs a namespace and a valid policy.
 func (e *Encryption) Validate() error {
 	rules := []validation.Rule{
 		// Checked through the accessor rather than the field, so an absent size is

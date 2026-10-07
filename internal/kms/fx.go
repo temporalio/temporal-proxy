@@ -263,7 +263,7 @@ func keyPolicyRegistryOpts(
 		return nil, err
 	}
 
-	// NB: KeyConfig.URI is required and therefore this will never be out of bounds.
+	// NB: KeyPolicy.URI is required and therefore this will never be out of bounds.
 	if asDefault {
 		opts = append(opts, crypto.WithDefaultKey(keys[0]))
 	} else {

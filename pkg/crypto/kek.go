@@ -11,7 +11,7 @@ import (
 )
 
 type (
-	// KEK defines an interface for a Key Encryption Keys.
+	// KEK defines an interface for a Key Encryption Key.
 	// These keys are used to encrypt/decrypt DEKs and are customer-managed (e.g. via AWS/GCP KMS).
 	KEK interface {
 		io.Closer
@@ -30,6 +30,8 @@ type (
 	// KEKRegistry holds the set of KEKs available for encrypting and decrypting DEKs.
 	// It is keyed by namespace (for encryption) and by key ID (for decryption).
 	// Close must be called when the registry is no longer needed to release KEK resources.
+	// It is not modified after construction, so it is safe for concurrent use as
+	// long as its KEKs are.
 	KEKRegistry struct {
 		defaultKey      KEK            // Fallback when no namespace key exists.
 		keks            map[string]KEK // map from NS -> KEK
@@ -50,7 +52,9 @@ type (
 
 // NewKEKRegistry constructs a KEKRegistry, applying opts in order. A default key is
 // required (see [WithDefaultKey]); construction fails if one is not provided. The
-// key-ID index used by Decrypt is built after all options are applied.
+// key-ID index used by Decrypt is built after all options are applied, and
+// construction fails if any key ID appears more than once across the default,
+// namespace, and decrypt-only keys.
 func NewKEKRegistry(opts ...KEKRegistryOption) (*KEKRegistry, error) {
 	r := &KEKRegistry{
 		keks: map[string]KEK{},
@@ -109,7 +113,8 @@ func WithDefaultKey(k KEK) KEKRegistryOption {
 	})
 }
 
-// WithKeyForNamespace registers k for ns, used when encrypting or decrypting DEKs for that namespace.
+// WithKeyForNamespace registers k for ns, used when encrypting DEKs for that namespace.
+// Decryption selects the key by KEK ID, not by namespace.
 func WithKeyForNamespace(ns string, k KEK) KEKRegistryOption {
 	return kekRegOpt(func(r *KEKRegistry) error {
 		if k == nil {
@@ -144,7 +149,8 @@ func WithDecryptOnlyKey(k KEK) KEKRegistryOption {
 	})
 }
 
-// Encrypt encrypts the given DEK using the KEK registered for the specified namespace.
+// Encrypt encrypts the given DEK using the KEK registered for the specified namespace,
+// falling back to the default key when none is registered.
 // It returns DEKMaterial containing the KEK ID and the base64-encoded ciphertext.
 func (r *KEKRegistry) Encrypt(ctx context.Context, ns string, dek *DEK) (*DEKMaterial, error) {
 	if dek == nil {

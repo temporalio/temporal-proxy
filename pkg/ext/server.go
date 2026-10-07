@@ -48,7 +48,8 @@ type (
 
 // Serve runs an extension server until ctx is cancelled or the process is
 // signalled, then shuts down and returns nil. A non-nil return means the server
-// never started, never that a caller was turned away.
+// failed to start or stopped serving with an error, never that a caller was
+// turned away.
 //
 // Both generated services are registered whether or not [WithAuth] and [WithKMS]
 // were given, and one left unset answers Unimplemented. Defaults are :8900 on
@@ -153,10 +154,10 @@ func WithKMS(kms KMS) Option {
 	return func(o *options) { o.kms = kms }
 }
 
-// WithLogger sets the logger for the server's lifecycle, defaulting to
-// [logger.Default]. Handlers are not given it. A nil logger is ignored rather
-// than installed, matching [logger.SetDefault]; the alternative is a panic on the
-// first line the server logs.
+// WithLogger sets the logger for the server's lifecycle, its plaintext warning,
+// and the KMS service handler, defaulting to [logger.Default]. A nil logger is
+// ignored rather than installed, matching [logger.SetDefault]; the alternative
+// is a panic on the first line the server logs.
 func WithLogger(l logger.Logger) Option {
 	return func(o *options) {
 		if l != nil {

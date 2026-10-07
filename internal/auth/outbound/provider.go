@@ -13,8 +13,9 @@ import (
 )
 
 // CredentialProvider supplies per-RPC metadata for outbound calls to an
-// upstream. Header reports the metadata header it sets, so the proxy can strip
-// any forwarded value on that header before the credential adds its own.
+// upstream, an extension server, or the Cloud API. Header reports the metadata
+// header it sets, so the proxy can strip any forwarded value on that header
+// before the credential adds its own.
 type CredentialProvider interface {
 	credentials.PerRPCCredentials
 	Header() string

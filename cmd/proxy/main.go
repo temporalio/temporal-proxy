@@ -1,3 +1,7 @@
+// Command proxy runs the Temporal proxy: a gRPC gateway between Temporal SDK
+// clients, workers, and the Temporal UI and one or more upstream Temporal
+// Services, handling namespace translation, TLS, and payload encryption. The
+// serve subcommand starts it from a YAML config file.
 package main
 
 import (

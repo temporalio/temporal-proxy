@@ -26,15 +26,17 @@ const (
 )
 
 const (
-	// The scope a method acts in, which decides whose roles are consulted: a
-	// namespace-scoped method reads the caller's roles in the namespace it names,
-	// while a cluster-scoped one has no namespace and reads only system roles.
+	// scopeCluster and scopeNamespace are the scope a method acts in, which
+	// decides whose roles are consulted: a namespace-scoped method reads the
+	// caller's roles in the namespace it names, while a cluster-scoped one has no
+	// namespace and reads only system roles.
 	scopeCluster scope = iota + 1
 	scopeNamespace
 )
 
 const (
-	// How much authority a method calls for, which maps to a role in access.role.
+	// accessReadOnly, accessWrite, and accessAdmin are how much authority a
+	// method calls for, which maps to a role in access.role.
 	accessReadOnly access = iota + 1
 	accessWrite
 	accessAdmin
@@ -87,7 +89,8 @@ var (
 		workflowService + "RegisterNamespace": {scopeNamespace, accessAdmin},
 
 		// Cluster scope. Nothing here names a namespace, so only system roles count.
-		// GetSystemInfo would belong here too, but alwaysAllowed answers it first.
+		// GetSystemInfo would belong here too, but Authenticate admits it first, as
+		// a method ext.IsHealthCheckMethod reports.
 		workflowService + "GetClusterInfo": {scopeCluster, accessReadOnly},
 		workflowService + "ListNamespaces": {scopeCluster, accessReadOnly},
 	}

@@ -18,7 +18,8 @@ type (
 	// Cloud declares the upstream to be Temporal Cloud, which turns on
 	// Cloud-specific namespace rules. It is only needed for an address
 	// [cloud.IsEndpoint] does not recognize, such as a private-link hostname; a
-	// .tmprl.cloud address is detected without it.
+	// .tmprl.cloud address, or a TLS server name that is one, is detected
+	// without it.
 	//
 	// The proxy dials an upstream over TLS unless Listen says otherwise, so a
 	// plaintext upstream must set its Insecure field.
@@ -31,6 +32,8 @@ type (
 		Connection  ConnectionConfig  `yaml:"connection"`
 	}
 
+	// UpstreamList is the configured set of upstreams, named so the checks that
+	// span the whole collection live alongside the per-entry checks.
 	UpstreamList []Upstream
 
 	// NamespaceConfig groups the namespace translation rules for an upstream.
@@ -64,8 +67,9 @@ type (
 	}
 )
 
-// Validate checks the upstream name, dial target, namespace, and connection
-// configuration.
+// Validate checks the upstream name, dial target, outbound TLS, namespace, and
+// connection configuration. Credentials require TLS, insecure conflicts with a
+// tls block, and a Cloud upstream must use Cloud namespace names.
 // A templated hostPort (containing a text/template action) is resolved
 // per-request, so it is not checked as a literal host:port here; a static
 // hostPort still is.
@@ -161,6 +165,8 @@ func (u *Upstream) cloudRules() []validation.Rule {
 	}
 }
 
+// Validate checks every upstream and requires names and hostPorts to be unique
+// across the list.
 func (ul UpstreamList) Validate() error {
 	names := make([]string, len(ul))
 	hostPorts := make([]string, len(ul))
@@ -209,6 +215,8 @@ func (r *NamespaceRules) Remote(localNS string) string {
 	return fmt.Sprintf("%s%s%s", r.Prefix, localNS, r.Suffix)
 }
 
+// UnmarshalYAML decodes the rules and builds the override lookup maps, so
+// overrides only take effect on rules decoded from YAML.
 func (r *NamespaceRules) UnmarshalYAML(unmarshal func(any) error) error {
 	type raw NamespaceRules
 

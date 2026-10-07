@@ -104,6 +104,7 @@ func NewKeyWrapper(lookup KeyLookup, opts ...KeyWrapperOption) (KMS, error) {
 
 // WithCipher seals new material with id instead of AES-256-GCM. It has no
 // bearing on opening, which uses whatever cipher the material names.
+// [NewKeyWrapper] fails if no [CipherFunc] is registered for id.
 func WithCipher(id CipherID) KeyWrapperOption {
 	return keyWrapperOpt(func(w *keyWrapper) error {
 		w.cipher = id
@@ -120,7 +121,7 @@ func WithCipher(id CipherID) KeyWrapperOption {
 // one added later; [MustCipherID] builds one. An id below that is accepted,
 // since replacing a built-in with a stricter construction of the same cipher is
 // reasonable, but reusing a built-in id for a different cipher makes material
-// that other servers will misread.
+// that other servers will misread. An id of zero or less is rejected.
 func WithCipherFunc(id CipherID, fn CipherFunc) KeyWrapperOption {
 	return keyWrapperOpt(func(w *keyWrapper) error {
 		if fn == nil {

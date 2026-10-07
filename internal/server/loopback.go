@@ -37,10 +37,10 @@ type (
 	//
 	// Watch rather than Check, and that is the whole point: a server assembled
 	// here carries stream interceptors and no unary ones, so the unary Check a
-	// probe runs
-	// reaches the health handler without traversing the chain every forwarded
-	// request goes through. Watch is a locally registered streaming method, so a
-	// call to it runs that chain, and a wedge in it stops being invisible.
+	// probe runs reaches the health handler without traversing the chain every
+	// forwarded request goes through. Watch is a locally registered streaming
+	// method, so a call to it runs that chain, and a wedge in it stops being
+	// invisible.
 	//
 	// The call never leaves the process. It goes over an in-process listener
 	// served by [newLoopbackServer]'s twin of the real server: the same

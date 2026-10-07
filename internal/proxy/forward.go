@@ -224,8 +224,8 @@ func (f *Forwarder) resolveMethod(fullMethod string) *methodInfo {
 // forwardContext turns the inbound request's metadata into outgoing metadata for
 // the upstream call, minus the transport headers, without displacing a value
 // already set on the outgoing context. Templated upstream resolution reads the
-// router-stamped namespace from there, so this is load-bearing rather than
-// merely polite.
+// caller's headers for its Metadata from there, so this is load-bearing rather
+// than merely polite.
 func forwardContext(ctx context.Context) context.Context {
 	incoming, ok := metadata.FromIncomingContext(ctx)
 	if !ok {

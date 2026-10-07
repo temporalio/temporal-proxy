@@ -27,9 +27,9 @@ type (
 	// use.
 	//
 	// Configured metadata labels suppress that pre-resolution, because their
-	// values arrive with a request and cannot be enumerated at startup. Every emit then
-	// takes the fallback, and no series starts at zero, so a query for a counter
-	// that has not been incremented yet finds nothing rather than 0.
+	// values arrive with a request and cannot be enumerated at startup. Every
+	// emit then takes the fallback, and no series starts at zero, so a query for
+	// a counter that has not been incremented yet finds nothing rather than 0.
 	Reporter struct {
 		decisions *prometheus.CounterVec
 		errors    *prometheus.CounterVec
@@ -56,9 +56,9 @@ type (
 // the zero value.
 //
 // Nothing is pre-resolved when metadata labels are configured: a handle would
-// have to pin their values, which only a request carries. Leaving the maps empty routes
-// every emit through the fallback the maps exist to avoid, rather than adding a
-// second path that could drift from it.
+// have to pin their values, which only a request carries. Leaving the maps
+// empty routes every emit through the fallback the maps exist to avoid, rather
+// than adding a second path that could drift from it.
 func NewReporter(f *metrics.Factory, upstreams []string, labels metrics.MetadataLabels) *Reporter {
 	decisions := f.NewCounter(prometheus.CounterOpts{
 		Name: "decisions_total",

@@ -37,7 +37,7 @@ func (k *KMS) Close() error {
 	return nil
 }
 
-// ID returns a unique ID for this KEK, e.g. a KMS ARN.
+// ID returns a unique ID for this KEK: the extension key URI it was opened from.
 func (k *KMS) ID() string {
 	return k.id
 }

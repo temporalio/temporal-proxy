@@ -16,10 +16,8 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
 
-// Module provides a [Dataplane] from the assembled application and binds
-// Start and Stop to the fx lifecycle. It replaces the router, proxy, and
-// server modules: this is the only place in the graph that owns the
-// gateway/proxy topology.
+// Module provides a [Dataplane] and its [proxy.Codecs] from the assembled
+// application and binds Start and Stop to the fx lifecycle.
 var Module = fx.Options(
 	fx.Provide(newFromParams),
 	fx.Provide(func(d *Dataplane) *proxy.Codecs { return d.Codecs() }),

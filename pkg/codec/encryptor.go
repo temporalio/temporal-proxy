@@ -32,8 +32,8 @@ type (
 		cipher Cipher
 	}
 
-	// Cipher encrypts and decrypts bytes. It is the subset of a key-management
-	// backend, typically a [crypto.Vault], that [Encryptor] depends on.
+	// Cipher encrypts and decrypts bytes. It is what [Encryptor] depends on,
+	// typically a wrapper that binds a [crypto.Vault] to a namespace.
 	Cipher interface {
 		Encrypt([]byte) (*crypto.Message, error)
 		Decrypt(*crypto.Message) ([]byte, error)

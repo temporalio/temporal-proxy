@@ -2,9 +2,9 @@ package validation
 
 import "errors"
 
-// Validate runs each rule, accumulating failures into a single error (which
-// will typically be an [Errors] instance). Any [Error] whose Subject is empty is
-// stamped with subject.
+// Validate runs each rule, accumulating failures into a single error. It
+// returns nil when every rule passes and an [Errors] otherwise. Any [Error]
+// whose Subject is empty is stamped with subject.
 func Validate(subject string, rules ...Rule) error {
 	var errs Errors
 	for _, r := range rules {

@@ -46,7 +46,8 @@ type (
 
 // NewCodecs returns the [Codecs] opts select. Encoding is gated per codec;
 // decoding is not, so a decoder recognizes its own output and passes anything
-// else through.
+// else through. It errors when Encrypt is set without a Vault, or a Vault is
+// set without a Reporter.
 func NewCodecs(opts CodecOptions) (*Codecs, error) {
 	if opts.Encrypt && opts.Vault == nil {
 		return nil, errors.New("proxy: encryption requires a vault")
