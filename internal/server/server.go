@@ -77,9 +77,7 @@ type (
 		healthServices     []string
 		logger             logger.Logger
 		shutdownTimeout    time.Duration
-		unaryInterceptors  []grpc.UnaryServerInterceptor
 		streamInterceptors []grpc.StreamServerInterceptor
-		services           []func(grpc.ServiceRegistrar)
 		unknownHandler     grpc.StreamHandler
 		serverCodec        encoding.CodecV2
 	}
@@ -126,10 +124,6 @@ func New(sopts ...Option) (*Server, error) {
 		hc.SetServingStatus(name, grpc_health_v1.HealthCheckResponse_SERVING)
 	}
 
-	for _, register := range opts.services {
-		register(svr)
-	}
-
 	s := &Server{
 		grpcSvr:         svr,
 		healthSvr:       hc,
@@ -156,23 +150,10 @@ func WithCredentials(creds Credentials) Option {
 	return optFunc(func(o *options) { o.creds = creds })
 }
 
-// WithUnaryInterceptor appends unary server interceptors. They are chained in
-// the order supplied across all calls and run before the handler.
-func WithUnaryInterceptor(in ...grpc.UnaryServerInterceptor) Option {
-	return optFunc(func(o *options) { o.unaryInterceptors = append(o.unaryInterceptors, in...) })
-}
-
 // WithStreamInterceptor appends stream server interceptors. They are chained in
 // the order supplied across all calls and run before the handler.
 func WithStreamInterceptor(in ...grpc.StreamServerInterceptor) Option {
 	return optFunc(func(o *options) { o.streamInterceptors = append(o.streamInterceptors, in...) })
-}
-
-// WithService registers gRPC services on the server. The callback receives the
-// underlying server as a grpc.ServiceRegistrar, so callers register via the
-// generated pb.RegisterXxxServer(reg, impl) functions.
-func WithService(fn func(grpc.ServiceRegistrar)) Option {
-	return optFunc(func(o *options) { o.services = append(o.services, fn) })
 }
 
 // WithUnknownServiceHandler installs a catch-all handler invoked for any method
@@ -373,10 +354,6 @@ func (s *Server) runHealthCheck(ctx context.Context) {
 // credential-free.
 func (o *options) serverOptions(creds grpc.ServerOption) []grpc.ServerOption {
 	opts := []grpc.ServerOption{creds}
-	if len(o.unaryInterceptors) > 0 {
-		opts = append(opts, grpc.ChainUnaryInterceptor(o.unaryInterceptors...))
-	}
-
 	if len(o.streamInterceptors) > 0 {
 		opts = append(opts, grpc.ChainStreamInterceptor(o.streamInterceptors...))
 	}

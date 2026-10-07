@@ -75,10 +75,6 @@ func newLoopbackServer(o *options, hc *health.Server) *grpc.Server {
 	svr := grpc.NewServer(o.serverOptions(grpc.Creds(insecure.NewCredentials()))...)
 	grpc_health_v1.RegisterHealthServer(svr, hc)
 
-	for _, register := range o.services {
-		register(svr)
-	}
-
 	return svr
 }
 
