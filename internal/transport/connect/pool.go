@@ -54,13 +54,14 @@ func (p *Pool) Conn(key string) (*grpc.ClientConn, error) {
 	return cn, nil
 }
 
-// ConnOrCreate returns the connection registered for key, creating and registering
-// one with grpc.NewClient(target, opts...) when none exists yet. key is the
-// logical cache key and target is the dial address; callers that need distinct
-// connections to the same target (e.g. identical host:port with different TLS
-// server names) must pass distinct keys. If callers race to create the same
-// key, each constructs a client but only one connection is kept; the losers are closed and
-// every caller receives the same *grpc.ClientConn.
+// ConnOrCreate returns the connection registered for key, creating and
+// registering one with grpc.NewClient(target, opts...) when none exists yet.
+// key is the logical cache key and target is the dial address; callers that
+// need distinct connections to the same target (e.g. identical host:port with
+// different TLS server names) must pass distinct keys. If callers race to
+// create the same key, each constructs a client but only one connection is
+// kept; the losers are closed and every caller receives the same
+// *grpc.ClientConn.
 func (p *Pool) ConnOrCreate(key, target string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	if conn, _ := p.Conn(key); conn != nil {
 		return conn, nil

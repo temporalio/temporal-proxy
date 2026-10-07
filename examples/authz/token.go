@@ -19,8 +19,8 @@ const (
 	// between them is visible, rather than in the commands that would drift apart.
 	PermissionsClaim = "https://acme.example/temporal"
 
-	// SystemScope names the cluster scope in the permissions claim, the authority a
-	// subject holds regardless of namespace.
+	// SystemScope is the scope name logged for a role in Permissions.System, the
+	// authority a subject holds regardless of namespace.
 	SystemScope = "system"
 )
 

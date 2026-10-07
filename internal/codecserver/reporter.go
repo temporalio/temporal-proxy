@@ -21,11 +21,9 @@ type Reporter struct {
 
 // NewReporter builds the Prometheus-backed request Reporter and registers its
 // collectors. Build one per registry; Prometheus rejects a duplicate
-// registration, and the factory panics rather than erring on one.
-//
-// Parameters:
-//   - f: must already be scoped to the "codec_server" subsystem by the caller,
-//     which is what produces the published tmprl_proxy_codec_server_* names.
+// registration, and the factory panics rather than erring on one. f must
+// already be scoped to the "codec_server" subsystem, which is what produces the
+// published tmprl_proxy_codec_server_* names.
 //
 // Returns a Reporter publishing requests_total, labelled by route and code, and
 // request_duration_seconds, labelled by route.

@@ -31,7 +31,8 @@ type (
 // disabled block is not checked at all, so a half-written one can be left in
 // place. An enabled one reachable beyond loopback requires authentication, and
 // requires TLS once it has any, because a browser will not send a token over
-// plaintext.
+// plaintext. CORS credentials require explicit origins, and a "*" origin is
+// rejected.
 func (c *CodecServer) Validate() error {
 	if !c.Enabled {
 		return nil

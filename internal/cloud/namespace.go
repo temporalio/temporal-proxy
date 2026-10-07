@@ -17,7 +17,8 @@ const (
 	accountIDMaxLen = 20
 )
 
-// start with letter, end with letter/number, contain only a-z0-9-
+// nsNameRegex matches a namespace name label: it starts with a letter, ends
+// with a letter or digit, and contains only a-z, 0-9, and hyphens.
 var nsNameRegex = regexp.MustCompile(`^[a-z][a-z0-9-]*[a-z0-9]$`)
 
 // ValidateAccountID checks that id is shaped like the account-id label of a

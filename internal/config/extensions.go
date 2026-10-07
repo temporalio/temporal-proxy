@@ -8,11 +8,12 @@ import (
 
 type (
 	// ExtensionServer addresses an operator-run gRPC server implementing the
-	// extension APIs under api/, currently api.kms.v1.EncryptionService, the
-	// pluggable Key Encryption Key provider. The proxy has built-in KMS providers
-	// (awskms, azurekeyvault, gcpkms); an extension server is how an operator plugs
-	// in a backend the proxy does not support natively, such as an on-prem HSM or
-	// an internal key service.
+	// extension APIs under api/: api.kms.v1.EncryptionService, the pluggable Key
+	// Encryption Key provider, or api.auth.v1.AuthService, the pluggable inbound
+	// authenticator. The proxy has built-in KMS providers (awskms, azurekeyvault,
+	// gcpkms) and authenticators; an extension server is how an operator plugs in
+	// a backend the proxy does not support natively, such as an on-prem HSM, an
+	// internal key service, or an in-house identity system.
 	//
 	// Name identifies the server within the configuration so other blocks can
 	// reference it, and must be unique across the list. Credentials, when set,

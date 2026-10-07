@@ -21,10 +21,8 @@ import (
 // config names. Any configured fixed labels are stamped onto the Factory's
 // registerer rather than onto each collector, so every collector declared
 // through it carries them and the runtime's own go_* and process_* series,
-// which register directly, do not. Consumers inject the [Factory] to declare their collectors,
-// which auto-register under the configured namespace, and should pre-resolve
-// labeled handles once at setup rather than per request to keep the emit path
-// lock-free and allocation-free.
+// which register directly, do not. Consumers inject the [Factory] to declare
+// their collectors, which auto-register under the configured namespace.
 //
 // The HTTP server is bound to the fx lifecycle: it starts in a background
 // goroutine on OnStart and shuts down gracefully on OnStop. If the server

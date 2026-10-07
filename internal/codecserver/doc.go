@@ -59,7 +59,7 @@
 // This surface holds KMS unwrap permission. A reachable /decode without
 // authentication is a decryption oracle, and /encode is a sealing oracle,
 // which is why configuration refuses an enabled codec server bound beyond
-// loopback with no auth block, and refuses auth without TLS.
+// loopback with no auth block, and refuses auth without TLS on such a bind.
 //
 // The built-in authenticators validate the caller's credential and ignore the
 // target namespace, so a token that passes authorizes every namespace's

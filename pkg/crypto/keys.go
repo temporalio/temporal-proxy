@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"gocloud.dev/secrets"
+	// Register the gocloud keeper URL openers NewCloudKey relies on.
 	_ "gocloud.dev/secrets/awskms"
 	_ "gocloud.dev/secrets/azurekeyvault"
 	_ "gocloud.dev/secrets/gcpkms"
@@ -183,7 +184,8 @@ func (f *KeyFactory) Create(ctx context.Context, uri string) (KEK, error) {
 	return fn(ctx, uri)
 }
 
-// ID returns a unique ID for this KEK, e.g. a KMS ARN.
+// ID returns the key URI passed to [NewCloudKey], with a "testing://" scheme
+// rewritten to "base64key://".
 func (k *CloudKey) ID() string {
 	return k.id
 }

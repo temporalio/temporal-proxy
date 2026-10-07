@@ -48,9 +48,9 @@ func NewUpstream(t *testing.T) *Upstream {
 	return newUpstream(t, nil)
 }
 
-// NewTLSUpstream starts a fake frontend over TLS. Its [Upstream.TLSConfig]
-// carries the CA and client identity needed to dial it, which is the only way
-// to exercise credentials that refuse to travel over an insecure transport.
+// NewTLSUpstream starts a fake frontend over TLS. Its [Upstream.Listen] carries
+// the CA and client identity needed to dial it, which is the only way to
+// exercise credentials that refuse to travel over an insecure transport.
 func NewTLSUpstream(t *testing.T) *Upstream {
 	t.Helper()
 

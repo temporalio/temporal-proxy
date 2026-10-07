@@ -14,10 +14,12 @@
 // It also meters what it opens, so each key's wraps and unwraps are recorded
 // against its provider.
 //
-// The package exposes a single [Module] for Uber fx. When encryption is
-// disabled the module provides a nil *crypto.Vault and starts no background
-// work; when enabled it also runs a goroutine that periodically refreshes the
-// vault so DEKs rotate ahead of expiry.
+// The package exposes a single [Module] for Uber fx. With no default key policy
+// the module provides a nil *crypto.Vault and starts no background work. With
+// one, it builds a vault even when encryption is disabled, so payloads sealed
+// earlier can still be opened; when encryption is enabled it also runs a
+// goroutine that periodically refreshes the vault so DEKs rotate ahead of
+// expiry.
 //
 // The package also reports encryption telemetry to Prometheus under the
 // "encryption" subsystem. A [Reporter] implements [crypto.Observer] to record

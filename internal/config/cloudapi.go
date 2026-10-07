@@ -54,7 +54,7 @@ type CloudAPI struct {
 
 // Upstream renders the control plane as an [Upstream] for the Cloud upstream
 // src, so its connection is dialled by the same resolver, TLS, and credential
-// machinery as any other rather than by a second code path. A nil receiver is
+// machinery as any other rather than by a second code path. The zero value is
 // the unconfigured case and yields the inherited defaults, so callers need not
 // branch on whether the block is present.
 //
@@ -121,8 +121,7 @@ func (c CloudAPI) IsSaasAPI() bool {
 // An address that is not a Cloud endpoint is not rejected. Nothing but a Cloud
 // deployment serves CloudService, but a test double or a private environment
 // legitimately does not carry the Cloud domain, and the proxy has no way to tell
-// that apart from a typo. It is reported at startup instead, which mirrors how a
-// namespace Cloud would reject is handled for a templated upstream.
+// that apart from a typo. It is logged as a warning at startup instead.
 func (c CloudAPI) Validate() error {
 	return c.Upstream(&Upstream{Name: "cloudApi"}).Validate()
 }

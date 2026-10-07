@@ -18,7 +18,8 @@ type Check[V any] func(V) error
 // purely lexical: no DNS lookup, no /etc/services port resolution. Both
 // "host:port" and ":port" (listen-on-all-interfaces) forms are valid, and the
 // port must be a decimal integer in [0, 65535]. Port 0 is accepted because it
-// is a valid listener form meaning "let the OS pick".
+// is a valid listener form meaning "let the OS pick". A host containing "/" is
+// rejected.
 func IsHostPort() Check[string] {
 	return func(s string) error {
 		host, port, err := net.SplitHostPort(s)
@@ -41,8 +42,8 @@ func IsHostPort() Check[string] {
 
 // GT rejects any value not strictly greater than mark; a value equal to mark
 // fails. It works for any cmp.Ordered type (numbers, strings), comparing with
-// the language's < operator, so for floats a NaN bound or input never
-// satisfies the check.
+// the language's comparison operators, so for floats a NaN bound or input
+// always passes the check.
 func GT[V cmp.Ordered](mark V) Check[V] {
 	return func(v V) error {
 		if v <= mark {
@@ -54,7 +55,8 @@ func GT[V cmp.Ordered](mark V) Check[V] {
 }
 
 // GTE rejects any value less than mark; a value equal to mark passes. It is the
-// inclusive counterpart to GT and shares its cmp.Ordered and NaN semantics.
+// inclusive counterpart to GT and shares its cmp.Ordered semantics; a NaN bound
+// or input always passes.
 func GTE[V cmp.Ordered](mark V) Check[V] {
 	return func(v V) error {
 		if v < mark {
@@ -66,7 +68,8 @@ func GTE[V cmp.Ordered](mark V) Check[V] {
 }
 
 // LT rejects any value not strictly less than mark; a value equal to mark
-// fails. It is the mirror of GT and shares its cmp.Ordered and NaN semantics.
+// fails. It is the mirror of GT and shares its cmp.Ordered semantics; a NaN
+// bound or input always passes.
 func LT[V cmp.Ordered](mark V) Check[V] {
 	return func(v V) error {
 		if v >= mark {

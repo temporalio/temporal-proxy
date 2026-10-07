@@ -18,7 +18,8 @@ type (
 	// caller is waiting on. Build one with [Adapt] rather than by hand, so the
 	// conversions are written against concrete message types, or with [Answer]
 	// for a method the proxy replies to itself. A Translation holds no per-call
-	// state and is safe for concurrent use.
+	// state and is safe for concurrent use once passed to [NewRegistry], which,
+	// like [Translation.WithHeader], modifies it.
 	Translation struct {
 		from, to string
 		call     func(ctx context.Context, req, reply proto.Message, send sendFunc) error

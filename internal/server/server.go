@@ -1,3 +1,5 @@
+// Package server provides the gRPC server the gateway listens on, with a
+// built-in health service and a periodic health check.
 package server
 
 import (
@@ -94,8 +96,8 @@ type (
 )
 
 // New constructs a [Server]. When no options are supplied, it uses insecure
-// credentials, a default health check that always reports SERVING, a CLI
-// logger, and a five second drain budget.
+// credentials, a default health check that always reports SERVING,
+// [logger.Default], and a five second drain budget.
 func New(sopts ...Option) (*Server, error) {
 	opts := &options{
 		creds:           creds.NewListener(creds.Insecure()),
@@ -256,9 +258,8 @@ func (s *Server) Start(ctx context.Context, lis net.Listener) error {
 // Stop shuts the server down, halting the health check loop and draining
 // in-flight RPCs. The drain is bounded by whichever expires first: the
 // [WithShutdownTimeout] budget or ctx. Past that, remaining calls are dropped.
-// A forced shutdown is still a shutdown, so it is reported through a warning
-// rather than an error; the only errors here would be a caller's to handle, and
-// there are none.
+// It always returns nil; a forced shutdown is logged as a warning rather than
+// reported as an error.
 func (s *Server) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	log := s.logger

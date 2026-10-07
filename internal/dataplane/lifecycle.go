@@ -11,10 +11,11 @@ import (
 )
 
 // Start opens every static upstream connection so an unreachable one fails
-// startup, then binds and serves the gateway. It returns once the gateway is accepting. ctx bounds
-// startup only and should carry a deadline, since it is what limits the wait for
-// an upstream to answer; the serving goroutines get the Context passed to New
-// instead. A failure part-way through stops whatever already started.
+// startup, then binds and serves the gateway. It returns once the gateway is
+// accepting. ctx bounds startup only and should carry a deadline, since it is
+// what limits the wait for an upstream to answer; the gateway's serving
+// goroutine gets the Context passed to New instead. A failure part-way through
+// stops whatever already started.
 func (d *Dataplane) Start(ctx context.Context) error {
 	// A static upstream's connection is created during New, but gRPC does not
 	// open a socket until it is used, so open them here: an unreachable upstream

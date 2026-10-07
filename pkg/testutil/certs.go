@@ -46,10 +46,10 @@ func ECDSACert(t *testing.T, tmpl *x509.Certificate) []byte {
 }
 
 // GenerateSelfSignedCert writes a self-signed ECDSA P-256 certificate and its
-// matching PKCS#1-style EC private key to a fresh [testing.T.TempDir] and
-// returns the paths. The certificate is valid for one hour, advertises CN
-// "localhost" with DNSNames=["localhost"], and is suitable for loading via
-// [crypto/tls.LoadX509KeyPair] in server-auth scenarios.
+// matching SEC 1 ("EC PRIVATE KEY") private key to a fresh
+// [testing.T.TempDir] and returns the paths. The certificate is valid for one
+// hour, advertises CN "localhost" with DNSNames=["localhost"], and is suitable
+// for loading via [crypto/tls.LoadX509KeyPair] in server-auth scenarios.
 func GenerateSelfSignedCert(t *testing.T) (certFile, keyFile string) {
 	t.Helper()
 
@@ -120,12 +120,10 @@ func GenerateRSACert(t *testing.T) (certFile, keyFile string) {
 
 // GenerateMTLSCerts writes a self-signed ECDSA P-256 CA certificate plus an
 // RSA-2048 leaf certificate signed by that CA (with its matching key) to a
-// fresh [testing.T.TempDir] and returns the three paths. The leaf is RSA
-// because credential validation checks the leaf's key type against an RSA-only
-// cipher suite allowlist; an ECDSA leaf fails that check even though it
-// verifies fine against the CA. The leaf advertises CN "localhost" with
-// DNSNames=["localhost"]; both certificates are valid for one hour. Use this
-// when a test needs the leaf to verify against the CA.
+// fresh [testing.T.TempDir] and returns the three paths. The leaf key is
+// written as PKCS#1 ("RSA PRIVATE KEY"). The leaf advertises CN "localhost"
+// with DNSNames=["localhost"]; both certificates are valid for one hour. Use
+// this when a test needs the leaf to verify against the CA.
 func GenerateMTLSCerts(t *testing.T) (caFile, certFile, keyFile string) {
 	t.Helper()
 

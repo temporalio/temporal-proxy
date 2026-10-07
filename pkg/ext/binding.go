@@ -15,7 +15,9 @@ import (
 // travel beside it in the clear, for a [KeySealer] to hand its key service as
 // an encryption context. Material framed by [NewSealWrapper] names no cipher,
 // so there is none to pass here: a sealer that wants to record which
-// construction it used puts that in Opaque, which this binds.
+// construction it used puts that in Opaque, which this binds. It returns an
+// error when namespace or version is longer than 65535 bytes, or opaque is
+// longer than [math.MaxUint32] bytes.
 func BindingContext(namespace, version string, opaque []byte) ([]byte, error) {
 	return bindingContext(ext.KeyMaterial_CIPHER_UNSPECIFIED, namespace, version, opaque)
 }

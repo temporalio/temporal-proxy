@@ -15,7 +15,8 @@ func Component(c string) Tag {
 	return String("component", c)
 }
 
-// Error returns a Tag with key "error" carrying err's message.
+// Error returns a Tag with key "error" carrying err's message. A nil err
+// yields an empty string value.
 func Error(err error) Tag {
 	msg := ""
 	if err != nil {
@@ -30,7 +31,8 @@ func String(k, v string) Tag {
 	return Tag{Key: k, Value: v}
 }
 
-// Stringer returns a Tag whose value is v.String(), evaluated immediately.
+// Stringer returns a Tag whose value is v.String(), evaluated immediately. A
+// nil v panics.
 func Stringer(k string, v fmt.Stringer) Tag {
 	return String(k, v.String())
 }

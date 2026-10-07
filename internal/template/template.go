@@ -6,6 +6,9 @@ import (
 	texttemplate "text/template"
 )
 
+// probeMeta is the sample metadata a template is rendered against at parse
+// time, so a template that cannot execute fails when parsed rather than per
+// request.
 var probeMeta = map[string]string{
 	"dc":        "probe",
 	"x-cluster": "probe",

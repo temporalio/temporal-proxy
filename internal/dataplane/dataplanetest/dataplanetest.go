@@ -205,10 +205,9 @@ func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 	return newFixture(t, dp, reg, codecSvr)
 }
 
-// Gatherer is the registry every collector in this plane registered with, and
-// the one its /metrics handler serves. A test asserts against it directly
-// because [applyDefaults] binds that handler to an ephemeral port nothing
-// reports.
+// Gatherer is the registry every collector in this plane registered with. A
+// test asserts against it directly: [Start] serves no /metrics endpoint, and
+// the one [StartApp] wires is bound to an ephemeral port nothing reports.
 func (f *Fixture) Gatherer() prometheus.Gatherer { return f.reg }
 
 // Addr is the address the gateway is accepting on.

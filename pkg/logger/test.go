@@ -101,11 +101,21 @@ func (t *TestLogger) TagsOf(l Level, msg string) map[string]any {
 	return nil
 }
 
+// Debug implements [Logger] by recording the entry at [LevelDebug].
 func (t *TestLogger) Debug(msg string, tags ...tag.Tag) { t.record(LevelDebug, msg, tags) }
+
+// Error implements [Logger] by recording the entry at [LevelError].
 func (t *TestLogger) Error(msg string, tags ...tag.Tag) { t.record(LevelError, msg, tags) }
+
+// Fatal implements [Logger] by recording the entry at [LevelError]. It does
+// not exit.
 func (t *TestLogger) Fatal(msg string, tags ...tag.Tag) { t.record(LevelError, msg, tags) }
-func (t *TestLogger) Info(msg string, tags ...tag.Tag)  { t.record(LevelInfo, msg, tags) }
-func (t *TestLogger) Warn(msg string, tags ...tag.Tag)  { t.record(LevelWarn, msg, tags) }
+
+// Info implements [Logger] by recording the entry at [LevelInfo].
+func (t *TestLogger) Info(msg string, tags ...tag.Tag) { t.record(LevelInfo, msg, tags) }
+
+// Warn implements [Logger] by recording the entry at [LevelWarn].
+func (t *TestLogger) Warn(msg string, tags ...tag.Tag) { t.record(LevelWarn, msg, tags) }
 
 // With returns a derived [Logger] that shares the receiver's recording store
 // and prepends the receiver's tags, followed by tags, to every entry it logs.

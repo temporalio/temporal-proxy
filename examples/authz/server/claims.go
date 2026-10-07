@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	// The roles a subject can hold within a scope, as a bitmask so they combine:
-	// an effective role is the OR of every role granted at that scope. These are
+	// roleWorker through roleAdmin are the roles a subject can hold within a
+	// scope, as a bitmask so they combine: an effective role is the OR of every
+	// role granted at that scope. These are
 	// go.temporal.io/server/common/authorization's Role values, with the same
 	// numbering, because Authenticate compares them the way that package does.
 	roleWorker = role(1 << iota)

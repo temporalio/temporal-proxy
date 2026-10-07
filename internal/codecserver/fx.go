@@ -46,10 +46,10 @@ type Params struct {
 }
 
 // newFromParams builds the Server the configuration describes and binds it to
-// the fx lifecycle, or returns nil when the codec server is disabled. It warns rather than fails for the two
-// configurations that are legal but probably unintended: no authentication,
-// which config only permits on a loopback bind, and no encryption keys, which
-// makes both routes identity transforms.
+// the fx lifecycle, or returns nil when the codec server is disabled. It warns
+// rather than fails for the two configurations that are legal but probably
+// unintended: no authentication, which config only permits on a loopback bind,
+// and no encryption keys, which makes both routes identity transforms.
 //
 // Returns an error when the namespace override mapping is ambiguous, when the
 // authenticator cannot be built, or when the TLS material will not load. Each

@@ -33,7 +33,7 @@ type (
 // Load reads and parses the YAML config specified in the Reader.
 // Values of the form ${VAR} are replaced with the corresponding environment
 // variable. A config that names no allowed services gets the default set, and
-// one that leaves a metrics field empty gets that field's default.
+// an empty metrics hostPort or namespace gets its default.
 func Load(r io.Reader) (*Config, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {

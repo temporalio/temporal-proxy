@@ -25,7 +25,7 @@ const extensionKeyPrefix = "extension:"
 
 // Module provides the pooled connection for every configured extension server,
 // built when the provider runs rather than on first use, so a bad dial target
-// surfaces at construction instead of on the first encryption call, and opened on
+// surfaces at construction instead of on the first call, and opened on
 // start so an unreachable server (or one whose certificate this proxy will not
 // accept) fails startup. Per-call credentials are still only exercised by a real
 // request.
@@ -57,8 +57,8 @@ var Module = fx.Options(
 
 		// Config rejects a templated extension server hostPort, so every one of
 		// these is static and reachable now or not at all. An extension server backs
-		// payload encryption, so serving without one means failing encrypted
-		// traffic; fail startup instead.
+		// payload encryption or inbound auth, so serving without one means failing
+		// that traffic; fail startup instead.
 		p.Lifecycle.Append(fx.StartHook(func(ctx context.Context) error {
 			if err := connect.WaitReady(ctx, conns...); err != nil {
 				return fmt.Errorf("extension server connection not ready: %w", err)

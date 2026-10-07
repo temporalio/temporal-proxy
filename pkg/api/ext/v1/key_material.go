@@ -1,3 +1,6 @@
+// Package ext holds [KeyMaterial], an optional framing an extension server can
+// marshal as the ciphertext it returns from Encrypt, along with helpers to
+// validate, marshal, and unmarshal it.
 package ext
 
 import (
@@ -37,9 +40,9 @@ func (km *KeyMaterial) Marshal() ([]byte, error) {
 	return packed, nil
 }
 
-// Validate reports whether km carries a wrapped DEK, treating a nil km as one
-// that does not. Every other field is optional: an extension server may version
-// no keys, key off no namespace, and carry nothing of its own.
+// Validate returns an error unless km carries a wrapped DEK, treating a nil km
+// as one that does not. Every other field is optional: an extension server may
+// version no keys, key off no namespace, and carry nothing of its own.
 func (km *KeyMaterial) Validate() error {
 	return validation.Validate(
 		"",

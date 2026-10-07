@@ -20,7 +20,7 @@ const maxLabelValueLen = 256
 // MetadataLabels is the ordered set of inbound metadata headers reported as
 // extra labels on request-scoped collectors. The zero MetadataLabels carries
 // none, which is what a deployment that configures none runs, so a reporter
-// holding one keeps its label set and its emit path exactly as they were.
+// holding one adds no labels and reads no metadata.
 type MetadataLabels struct {
 	names   []string // Prometheus label names, in configured order.
 	headers []string // Lowercased metadata keys, parallel to names.
@@ -52,7 +52,7 @@ func NewMetadataLabels(cfg []config.MetricLabel) MetadataLabels {
 // through it, so a constant an operator configures once reaches every series the
 // proxy publishes rather than only the ones emitted while serving a request. It
 // returns r unchanged when there are none, so a deployment configuring no fixed
-// labels registers exactly what it did before.
+// labels registers collectors with only their own labels.
 func WithFixedLabels(r prometheus.Registerer, labels map[string]string) prometheus.Registerer {
 	if len(labels) == 0 {
 		return r

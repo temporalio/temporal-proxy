@@ -2,6 +2,8 @@ package config
 
 import "go.uber.org/fx"
 
+// ConfigFileTag annotates a provided string as the named value "configFile",
+// the config file path [Module] loads.
 var ConfigFileTag = fx.ResultTags(`name:"configFile"`)
 
 // Module is an fx module that provides *Config by loading the file path supplied

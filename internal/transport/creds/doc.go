@@ -12,6 +12,7 @@
 // Security is the default: only [Insecure] yields a plaintext credential, and an
 // accidentally-empty client credential verifies the peer against the system root
 // pool rather than silently downgrading. Construction performs no file I/O;
-// certificate material is read and parsed lazily (and once) when a credential is
-// validated or used.
+// certificate material is read and parsed lazily when a credential is validated
+// or used. A Dialer parses it once and reuses it across [Dialer.DialOption]
+// calls, while [Listener.TLSConfig] re-reads it on every call.
 package creds

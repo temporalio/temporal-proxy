@@ -36,7 +36,8 @@ type (
 		ns    string
 	}
 
-	// KeyConfig controls the lifetime of a namespace's DEK.
+	// KeyConfig controls the lifetime of a namespace's DEK. [NewVault] rejects
+	// a config unless Duration > 0 and 0 <= RenewBefore < Duration.
 	KeyConfig struct {
 		// Duration is how long a DEK is valid before it must be rotated.
 		Duration time.Duration
@@ -168,7 +169,8 @@ func WithDefaultKeyConfig(cfg KeyConfig) VaultOption {
 }
 
 // WithKeyConfig sets the KeyConfig for a specific namespace. Registering the
-// same namespace more than once is an error surfaced by [NewVault].
+// same namespace more than once, or passing a cfg that breaks the [KeyConfig]
+// constraints, is an error surfaced by [NewVault].
 func WithKeyConfig(ns string, cfg KeyConfig) VaultOption {
 	return func(e *vaultOptions) {
 		if _, ok := e.config[ns]; ok {
@@ -522,7 +524,8 @@ func (v *NamespacedVault) Seal(ctx context.Context, data []byte) (*Message, erro
 	return v.inner.Seal(ctx, v.ns, data)
 }
 
-// Open decrypts msg within the bound namespace. See [Vault.Open].
+// Open decrypts msg by delegating to the inner vault. The bound namespace is
+// unused; the key is selected from msg's key material. See [Vault.Open].
 func (v *NamespacedVault) Open(ctx context.Context, msg *Message) ([]byte, error) {
 	return v.inner.Open(ctx, msg)
 }

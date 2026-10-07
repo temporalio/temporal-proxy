@@ -11,10 +11,10 @@ const (
 	defaultScheme = "Bearer"
 )
 
-// StaticCredentialProvider attaches a fixed bearer header to every outbound
-// request to an upstream. It implements google.golang.org/grpc/credentials
-// PerRPCCredentials and requires transport security, so gRPC refuses to send
-// the credential over an insecure connection.
+// StaticCredentialProvider attaches a fixed "<scheme> <apiKey>" header to every
+// outbound request on the connection it is dialed with. It implements
+// google.golang.org/grpc/credentials PerRPCCredentials and requires transport
+// security, so gRPC refuses to send the credential over an insecure connection.
 type StaticCredentialProvider struct {
 	header string
 	value  string

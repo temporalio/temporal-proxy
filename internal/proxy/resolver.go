@@ -92,7 +92,8 @@ func WithRemoteNamespacer(f func(string) string) ResolverOption {
 }
 
 // WithOptionsFactory sets the function that produces the dial options for a
-// resolved request. It receives the rendered host and server name via RouteData.
+// resolved request. It receives the template context and the rendered server
+// name via RouteData.
 func WithOptionsFactory(f func(RouteData) ([]grpc.DialOption, error)) ResolverOption {
 	return func(r *DynamicResolver) { r.opts = f }
 }
@@ -103,15 +104,15 @@ func WithResolverLogger(l logger.Logger) ResolverOption {
 	return func(r *DynamicResolver) { r.logger = l }
 }
 
-// ResolverFor builds the [connect.Resolver] for an upstream. When neither
-// the hostPort nor the TLS server name is templated it returns a static
-// resolver, whose connection is constructed while the graph is built, opened on
-// start, and reused for every request; otherwise it returns a DynamicResolver
-// that renders the target and server name, and rebuilds credentials, per request.
+// ResolverFor builds the [connect.Resolver] for an upstream. When neither the
+// hostPort nor the TLS server name is templated it returns a static resolver,
+// whose connection is constructed while the graph is built, opened on start,
+// and reused for every request; otherwise it returns a DynamicResolver that
+// renders the target and server name, and rebuilds credentials, per request.
 // opts holds the request-independent dial options (namespace translation and
-// outbound credentials); the upstream's connection settings and the srv:/// resolver are appended here.
-// log, when non-nil, is threaded into the DynamicResolver for per-request debug
-// entries.
+// outbound credentials); the upstream's connection settings and the srv:///
+// resolver are appended here. log, when non-nil, is threaded into the
+// DynamicResolver for per-request debug entries.
 func ResolverFor(upstream *config.Upstream, opts []grpc.DialOption, log logger.Logger) (connect.Resolver, error) {
 	// One Dialer per upstream owns the TLS-mode decision and parses its
 	// certificate material once, so a templated upstream reuses it across every

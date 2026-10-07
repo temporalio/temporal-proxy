@@ -28,7 +28,7 @@ type (
 	// DEKMaterial defines the material needed in order to decrypt a payload.
 	DEKMaterial struct {
 		Version      byte
-		KEKID        string // The ID/URI of the KEK the encrypted the DEK.
+		KEKID        string // The ID/URI of the KEK that encrypted the DEK.
 		EncryptedDEK string // The base64-encoded encrypted DEK.
 	}
 )
@@ -55,7 +55,9 @@ func (d *DEK) Encrypt(ctx context.Context, pt []byte) ([]byte, error) {
 }
 
 // Decrypt decrypts the ciphertext ct using AES-256-GCM. The ciphertext must be
-// prefixed with the nonce, as produced by [DEK.Encrypt].
+// prefixed with the nonce, as produced by [DEK.Encrypt]. It returns an error
+// matching [ErrMalformedCipherText] when ct is shorter than the nonce or fails
+// authentication.
 func (d *DEK) Decrypt(ctx context.Context, ct []byte) ([]byte, error) {
 	ns := d.gcm.NonceSize()
 	if len(ct) < ns {
