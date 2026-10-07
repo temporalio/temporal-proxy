@@ -38,16 +38,12 @@ type (
 		Version string
 	}
 
-	// KeyLookup supplies the wrapping keys [NewKeyWrapper] seals with. It is the
-	// only thing NewKeyWrapper cannot supply for itself.
-	//
-	// A lookup must answer for every version it ever reported, not only the
-	// current one: forgetting a version destroys every payload sealed under it.
-	// Returning a [google.golang.org/grpc/status] error passes its code through to
-	// the proxy, which is how an unreachable key store is distinguished from a
-	// version that will never resolve.
-	//
-	// A lookup must be safe for concurrent use.
+	// KeyLookup supplies the wrapping keys [NewKeyWrapper] seals with. A lookup
+	// must be safe for concurrent use and must answer for every version it ever
+	// reported, not only the current one: forgetting a version destroys every
+	// payload sealed under it. A [google.golang.org/grpc/status] error passes its
+	// code through to the proxy, which is how an unreachable key store is
+	// distinguished from a version that will never resolve.
 	KeyLookup func(context.Context, KeyRequest) (Key, error)
 
 	// KeyWrapperOption configures a key wrapper during construction.
@@ -67,17 +63,11 @@ type (
 )
 
 // NewKeyWrapper returns a [KMS] that seals DEKs with an AEAD over keys from
-// lookup and frames them as [ext.KeyMaterial], so an extension server supplies
-// key material and nothing else.
-//
-// New material is sealed with AES-256-GCM unless [WithCipher] says otherwise,
-// and carries both the cipher that sealed it and the key version lookup reported
-// at the time. Opening reads those from the material rather than from the
-// configuration, so changing cipher, or a key store rotating underneath, leaves
-// everything already sealed readable.
-//
-// Ciphers are registered during construction only, so the returned KMS never
-// changes afterwards and may be shared by any number of goroutines.
+// lookup and frames them as [ext.KeyMaterial]. New material is sealed with
+// AES-256-GCM unless [WithCipher] says otherwise, and records the cipher and key
+// version used; opening reads both from the material, so changing cipher or
+// rotating keys leaves everything already sealed readable. The returned KMS is
+// safe for concurrent use.
 func NewKeyWrapper(lookup KeyLookup, opts ...KeyWrapperOption) (KMS, error) {
 	if lookup == nil {
 		return nil, errors.New("a key lookup is required")
@@ -114,14 +104,11 @@ func WithCipher(id CipherID) KeyWrapperOption {
 }
 
 // WithCipherFunc registers fn as the constructor for id, replacing whatever was
-// registered before, including a built-in.
-//
-// Ids from 128 up are reserved for exactly this and will never be assigned by
-// [ext.KeyMaterial_Cipher], so a cipher registered there cannot collide with
-// one added later; [MustCipherID] builds one. An id below that is accepted,
-// since replacing a built-in with a stricter construction of the same cipher is
-// reasonable, but reusing a built-in id for a different cipher makes material
-// that other servers will misread. An id of zero or less is rejected.
+// registered before, including a built-in. Ids from 128 up are reserved for
+// this and will never be assigned by [ext.KeyMaterial_Cipher]; [MustCipherID]
+// builds one. A lower id is accepted, but reusing a built-in id for a different
+// cipher makes material that other servers will misread. An id of zero or less
+// is rejected.
 func WithCipherFunc(id CipherID, fn CipherFunc) KeyWrapperOption {
 	return keyWrapperOpt(func(w *keyWrapper) error {
 		if fn == nil {

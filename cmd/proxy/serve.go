@@ -33,8 +33,6 @@ const shutdownTimeout = 30 * time.Second
 // fxLogger swallows fx's event stream except for Started/Stopped failures,
 // which it forwards to the app logger. Configuration errors are caught
 // separately via app.Err() so they are visible at startup.
-//
-// The net effect is fx.NopLogger plus visible lifecycle hook failures.
 type fxLogger struct {
 	log logger.Logger
 }

@@ -50,13 +50,11 @@ type (
 	// KeySealer seals and opens DEKs through a key service that will not hand over
 	// its keys. Hand one to [NewSealWrapper].
 	//
-	// The wrapper authenticates nothing, and cannot: it holds no key, and the
-	// version and opaque bytes it would bind are chosen by Seal, so they do not
-	// exist until the call it would bind them to has already happened. An
-	// implementation that ignores [BindingContext] produces material whose
-	// namespace, version, and opaque can be swapped by anyone able to write a
-	// payload's metadata. Passing those bytes to the key service as an encryption
-	// context is what makes relabelled material fail to open instead.
+	// The wrapper authenticates nothing. An implementation that ignores
+	// [BindingContext] produces material whose namespace, version, and opaque can
+	// be swapped by anyone able to write a payload's metadata; pass those bytes to
+	// the key service as an encryption context so relabelled material fails to
+	// open.
 	//
 	// A [google.golang.org/grpc/status] error is passed through with its code
 	// intact. Implementations must be safe for concurrent use.

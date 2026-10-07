@@ -23,15 +23,11 @@ var (
 	// spelled out, so it cannot drift from what was registered.
 	healthPrefix = "/" + grpc_health_v1.Health_ServiceDesc.ServiceName + "/"
 
-	// healthCheckMethods is the set [IsHealthCheckMethod] reports on, and concerns
-	// the other end from healthPrefix above: these are methods callers of the proxy
-	// invoke, not methods of this server.
-	//
-	// GetSystemInfo is not a health check. It is here because it is the first call an
-	// SDK client makes on connect, and Temporal's own authorizer groups it with the
-	// health checks for that reason. Health_Watch is here because the proxy serves
-	// it: it registers gRPC's standard health server, so a caller that watches rather
-	// than polls would otherwise be refused.
+	// healthCheckMethods is the set [IsHealthCheckMethod] reports on: methods
+	// callers of the proxy invoke, not methods of this server. GetSystemInfo is
+	// not a health check but is an SDK client's first call on connect, and
+	// Health_Watch is included because the proxy serves gRPC's standard health
+	// server.
 	healthCheckMethods = map[string]struct{}{
 		grpc_health_v1.Health_Check_FullMethodName:                       {},
 		grpc_health_v1.Health_Watch_FullMethodName:                       {},
@@ -50,23 +46,20 @@ type (
 	// Auth decides whether an inbound caller of the proxy may proceed. Register an
 	// implementation with [WithAuth].
 	//
-	// The request carries what the proxy knows about the call. Its credentials are
-	// what the proxy lifted from the caller's stream, one entry per configured
-	// credential header the caller actually sent, so an empty slice means it
-	// presented none; its target is what the call is addressing. The proxy's own
-	// credential to this server is not among the credentials and stays in the
-	// request metadata, alongside the caller's other metadata.
+	// The request's credentials hold one entry per configured credential header
+	// the caller sent, so an empty slice means it presented none; its target is
+	// what the call is addressing. The proxy's own credential to this server is
+	// not among the credentials and stays in the request metadata.
 	//
-	// Answer with a response whose Decision is set: only DECISION_ALLOW admits, so
-	// an unset decision denies rather than admits by accident. Reason is for
-	// whoever operates this server, and the proxy keeps it out of what the rejected
-	// caller is told. Return an error only when no verdict was reached, such as an
+	// Only a Decision of DECISION_ALLOW admits; an unset decision denies. Reason
+	// is for whoever operates this server and is withheld from the rejected
+	// caller. Return an error only when no verdict was reached, such as an
 	// unreachable backend; the proxy denies either way, but an error keeps its
 	// status code, so [google.golang.org/grpc/codes.Unavailable] tells a worker to
 	// retry where a denial does not.
 	//
 	// Implementations must be safe for concurrent use and must not block
-	// indefinitely, since a caller is waiting and the proxy denies on timeout.
+	// indefinitely; the proxy denies on timeout.
 	Auth interface {
 		Authenticate(context.Context, *auth.AuthRequest) (*auth.AuthResponse, error)
 	}
@@ -84,12 +77,9 @@ func Allow() *auth.AuthResponse {
 }
 
 // Deny returns the response that refuses a caller. The reason is recorded by the
-// proxy and withheld from the caller, so write it for whoever operates this
-// server: it may name subjects and internal systems.
-//
-// Use this for a caller judged and found wanting, and an error for a verdict never
-// reached, such as an unreachable backend. Both deny, but an error keeps its
-// status code, which is what tells a worker whether retrying could help.
+// proxy and withheld from the caller, so it may name subjects and internal
+// systems. Return an error instead when no verdict was reached; both deny, but
+// an error keeps its status code, which tells a worker whether to retry.
 func Deny(reason string) *auth.AuthResponse {
 	return &auth.AuthResponse{Decision: auth.AuthResponse_DECISION_DENY, Reason: reason}
 }
@@ -99,11 +89,8 @@ func Deny(reason string) *auth.AuthResponse {
 //
 // Every failure is an [google.golang.org/grpc/codes.Unauthenticated] status error,
 // ready to return from [Auth.Authenticate]: no credential on that header, more
-// than one value, or a value carrying some other scheme. A repeated value is
-// refused rather than resolved by taking the first, since choosing among
-// credentials a caller sent is how a check gets bypassed.
-//
-// An implementation that would rather answer [Deny], or that accepts a credential
+// than one value, or a value carrying some other scheme or no token. An
+// implementation that would rather answer [Deny], or that accepts a credential
 // with no scheme at all, should read req.GetCredentials() directly.
 func BearerToken(req *auth.AuthRequest, header string) (string, error) {
 	hdr := strings.ToLower(header)
@@ -139,13 +126,10 @@ func BearerToken(req *auth.AuthRequest, header string) (string, error) {
 
 // IsHealthCheckMethod reports whether full, a gRPC full method name as it arrives
 // in [api.auth.v1.Target], is one an implementation will usually admit without a
-// credential: the gRPC health methods, and GetSystemInfo, which is the first call
-// an SDK client makes on connect and so decides whether it can connect at all.
-//
-// Whether to admit them is policy and stays with the implementation, which is why
-// this reports rather than decides. Refusing them is a defensible choice; it makes
-// the proxy look unhealthy to anything probing it, and makes an unauthenticated
-// client fail at dial instead of on its first real call.
+// credential: the gRPC health methods, and GetSystemInfo, the first call an SDK
+// client makes on connect. Whether to admit them is the implementation's call;
+// refusing them makes the proxy look unhealthy to probes and makes an
+// unauthenticated client fail at dial instead of on its first real call.
 func IsHealthCheckMethod(full string) bool {
 	_, ok := healthCheckMethods[full]
 
@@ -178,13 +162,8 @@ func (a *authService) Auth(ctx context.Context, req *auth.AuthRequest) (*auth.Au
 // unaryGuard returns the interceptor [WithServerAuth] installs, which documents
 // the contract. [Serve] installs it only for a non-nil check. Rejections are
 // Unauthenticated, and the message separates an absent credential from a rejected
-// one: both ends here are operator-run, so telling "wrong header" from "wrong
-// value" is worth more than withholding it.
-//
-// The health service is exempt. Guarding it would break every probe, which has no
-// credential to present and in Kubernetes' native gRPC prober cannot send
-// metadata at all, and would withhold nothing in exchange: Watch reports the same
-// status over a stream, which this interceptor does not see.
+// one. The health service is exempt, since probes have no credential to present
+// and Watch, a stream, is not seen by this interceptor anyway.
 func unaryGuard(hdr string, check CredentialCheck) grpc.UnaryServerInterceptor {
 	return func(
 		ctx context.Context,

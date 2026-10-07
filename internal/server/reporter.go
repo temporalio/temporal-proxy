@@ -18,19 +18,15 @@ import (
 var durationBuckets = []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120}
 
 // Reporter records server-layer telemetry to Prometheus: per-RPC latency and
-// completed-request counts by gRPC status code, both labeled by method. The
-// method label set is not known at startup, so handles are resolved per call
-// via WithLabelValues rather than pre-resolved. A Reporter is safe for
-// concurrent use.
+// completed-request counts by gRPC status code, both labeled by method. A
+// Reporter is safe for concurrent use.
 //
-// Cardinality assumption: method comes from the request line, and the proxy
-// serves every request through a catch-all handler, so any distinct method
-// string a client sends becomes a new series. This is bounded only for trusted
-// callers (real Temporal SDK clients use a fixed method set); a client sending
-// arbitrary method paths can grow the series set without bound. The proxy
-// therefore assumes trusted callers and must not be exposed directly to
-// untrusted clients without first bounding this label. namespace is never a
-// label for the same reason.
+// The method label comes from the request line, and every request goes through
+// a catch-all handler, so each distinct method a client sends becomes a new
+// series. Temporal SDK clients use a fixed set, but arbitrary method paths grow
+// the series set without bound: the proxy must not be exposed to untrusted
+// clients without first bounding this label. Namespace is never a label, for
+// the same reason.
 type Reporter struct {
 	duration *prometheus.HistogramVec
 	requests *prometheus.CounterVec

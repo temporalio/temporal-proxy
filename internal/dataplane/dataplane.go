@@ -432,12 +432,9 @@ func translates(cfg *config.Config) bool {
 // cloudAPIConn builds the connection translated methods for up are answered
 // over, along with the translations that use it. The connection is dialled by
 // the same resolver and credential machinery as an upstream but is not
-// registered with the router: nothing routes to it, and it is reached only by a
-// translation.
-//
-// It is not opened eagerly. Translation is incidental to an upstream's normal
-// traffic, so a control plane that is unreachable must not stop the proxy
-// serving everything else.
+// registered with the router; only a translation reaches it. It is not opened
+// eagerly, so an unreachable control plane does not stop the proxy serving
+// everything else.
 func cloudAPIConn(cfg *config.Config, o *options, up *config.Upstream) (*translation.Registry, *connect.Conn, error) {
 	reg, err := translation.Default()
 	if err != nil {

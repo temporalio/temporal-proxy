@@ -114,16 +114,11 @@ func Answer[Req, Resp proto.Message](from string, answer func(Req, Resp) error) 
 	}
 }
 
-// WithHeader stamps key: value on the substituted call and returns t, so a
-// mapping can declare the dialect the upstream method needs alongside the
-// conversions themselves. It replaces any value the caller sent rather than
-// adding to it: the caller did not ask for this upstream method and cannot know
-// what its API expects, so its own header is not intent worth preserving. A
-// caller invoking that API directly is forwarded untranslated and keeps its
-// header.
-//
-// Headers travel only on a call this translation substituted; a method the
-// registry does not translate is untouched.
+// WithHeader stamps key: value on the substituted call and returns t. It
+// replaces any value the caller sent rather than adding to it. Headers travel
+// only on a call this translation substituted: a method the registry does not
+// translate is untouched, and a caller invoking the upstream API directly is
+// forwarded untranslated and keeps its header.
 func (t *Translation) WithHeader(key, value string) *Translation {
 	if t.headers == nil {
 		t.headers = make(map[string]string, 1)

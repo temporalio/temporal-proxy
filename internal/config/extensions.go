@@ -15,14 +15,11 @@ type (
 	// a backend the proxy does not support natively, such as an on-prem HSM, an
 	// internal key service, or an in-house identity system.
 	//
-	// Name identifies the server within the configuration so other blocks can
-	// reference it, and must be unique across the list. Credentials, when set,
-	// attach per-request credentials to the outbound calls and require TLS,
-	// since sending them over a plaintext connection would expose them on the wire.
-	//
-	// Unlike Upstream, an extension server is dialed at a fixed address rather
-	// than resolved per request, so a templated hostPort is rejected outright
-	// instead of being deferred to request time.
+	// Name identifies the server so other blocks can reference it, and must be
+	// unique across the list. Credentials, when set, attach per-request
+	// credentials to the outbound calls and require TLS. Unlike an Upstream, an
+	// extension server is dialed at a fixed address, so a templated hostPort is
+	// rejected.
 	ExtensionServer struct {
 		Name        string            `yaml:"name"`
 		Listen      ListenConfig      `yaml:",inline"`

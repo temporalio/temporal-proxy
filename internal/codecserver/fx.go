@@ -13,26 +13,16 @@ import (
 )
 
 // Module provides the codec server and forces its construction, since nothing
-// else depends on it and fx would otherwise never build it. Include it
-// unconditionally: a disabled codecServer block yields a nil [Server] and no
-// lifecycle hook, so the module is inert rather than something the call site
-// has to gate.
-//
-// It depends on the dataplane's payload codec chain rather than building its
-// own, which is both what makes a payload transform identically on either path
-// and a necessity, since the encryption collectors register once per registry.
+// else depends on it. Include it unconditionally: a disabled codecServer block
+// yields a nil [Server] and no lifecycle hook, so the module is inert.
 var Module = fx.Options(
 	fx.Provide(newFromParams),
 	fx.Invoke(func(*Server) {}),
 )
 
 // Params collects the fx-provided dependencies the codec server needs. Every
-// field is required; the codec server has no optional dependency, because a
-// missing one would leave it either unauthenticated or unreported.
-//
-// Codecs comes from the dataplane rather than being built here, so the chain
-// has one construction site. Conns is needed only to resolve an
-// extension-server authenticator, and is harmlessly empty otherwise.
+// field is required. Conns is used only to resolve an extension-server
+// authenticator and may be empty otherwise.
 type Params struct {
 	fx.In
 	Shutdowner fx.Shutdowner
@@ -49,11 +39,9 @@ type Params struct {
 // the fx lifecycle, or returns nil when the codec server is disabled. It warns
 // rather than fails for the two configurations that are legal but probably
 // unintended: no authentication, which config only permits on a loopback bind,
-// and no encryption keys, which makes both routes identity transforms.
-//
-// Returns an error when the namespace override mapping is ambiguous, when the
-// authenticator cannot be built, or when the TLS material will not load. Each
-// is a startup failure rather than a runtime one.
+// and no encryption keys, which makes both routes identity transforms. Returns
+// an error when the namespace override mapping is ambiguous, when the
+// authenticator cannot be built, or when the TLS material will not load.
 func newFromParams(p Params) (*Server, error) {
 	cfg := &p.Config.CodecServer
 	if !cfg.Enabled {

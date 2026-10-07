@@ -24,9 +24,8 @@ type (
 	// status error to reject it. SecureHeaders reports the metadata headers the
 	// authenticator consumes, so the proxy can strip the caller's credentials
 	// before forwarding upstream; it returns nil when the authenticator consumes
-	// no header. An authenticator may name more than one because it need not own
-	// the header it reads: an external one is told which headers its server
-	// consumes.
+	// no header and may name more than one (an external authenticator reports
+	// the headers its server consumes).
 	//
 	// The target is what the gateway resolved for this stream. Its Namespace is
 	// empty for a request that named none, so an implementation weighing it must

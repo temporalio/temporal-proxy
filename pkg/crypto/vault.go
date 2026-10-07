@@ -75,12 +75,8 @@ type (
 
 	// cryptoStep records whether the AES-256-GCM step ran, what it cost, and
 	// whether it failed. Its zero value means the step was never reached, which
-	// is what an early failure returns.
-	//
-	// ran is tracked explicitly rather than inferred from dur being nonzero,
-	// because a small payload can complete inside the clock's resolution: a step
-	// that did run can measure as zero, so dur cannot distinguish "never ran"
-	// from "ran very fast".
+	// is what an early failure returns. ran is tracked explicitly because a step
+	// that did run can measure a zero dur within the clock's resolution.
 	cryptoStep struct {
 		ran bool
 		dur time.Duration
@@ -252,9 +248,8 @@ func (v *Vault) Seal(ctx context.Context, ns string, data []byte) (*Message, err
 // using the KEK identified by the material carried in msg, served from the
 // decrypted-DEK cache when it is enabled.
 //
-// Exactly one [EnvelopeEvent] is reported to the Observer, on every path
-// including failures. It carries no namespace: the KEK is selected by ID from
-// the material, so Open never learns one.
+// Exactly one [EnvelopeEvent], with no namespace, is reported to the Observer
+// on every path including failures.
 func (v *Vault) Open(ctx context.Context, msg *Message) ([]byte, error) {
 	start := time.Now()
 	pt, step, err := v.open(ctx, msg)
@@ -272,11 +267,9 @@ func (v *Vault) Open(ctx context.Context, msg *Message) ([]byte, error) {
 }
 
 // Refresh rotates every namespace DEK that has reached its renewal threshold.
-// It is meant to be called periodically. Seal also rotates an expired DEK on
-// demand, so Refresh is an optimization that keeps rotation off the request
-// path rather than a correctness requirement.
-//
-// One [RotationEvent] with [RotationScheduled] is reported per key rotated.
+// It is meant to be called periodically to keep rotation off the request path;
+// Seal rotates an expired DEK on demand, so calling it is optional. One
+// [RotationEvent] with [RotationScheduled] is reported per key rotated.
 func (v *Vault) Refresh() error {
 	// Find expired keys without acquiring a write lock.
 	v.mu.RLock()

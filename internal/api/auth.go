@@ -18,16 +18,10 @@ import (
 )
 
 // Auth authenticates an inbound stream by delegating the decision to an
-// extension server implementing api.auth.v1.AuthService. It is the escape hatch
-// for identity systems the built-in authenticators do not cover: the proxy
-// asks, the operator's server decides.
-//
-// The headers name the metadata carrying the caller's credentials. They are
-// declared rather than discovered because a verdict reports only admit-or-deny
-// and says nothing about which headers mattered, and the proxy needs to know two
-// things: which values to lift into the request, and which to report as
-// [Auth.SecureHeaders] so they are stripped from the stream before it reaches an
-// upstream, where a caller credential would collide with the proxy's own.
+// extension server implementing api.auth.v1.AuthService. Its headers name the
+// metadata carrying the caller's credentials: their values are lifted into the
+// request, and they are reported as [Auth.SecureHeaders] so they are stripped
+// from the stream before it reaches an upstream.
 type Auth struct {
 	client  auth.AuthServiceClient
 	headers []string
@@ -50,31 +44,16 @@ func NewAuth(cc grpc.ClientConnInterface, secureHeaders []string) *Auth {
 }
 
 // Authenticate asks the extension server whether the caller may proceed. Only an
-// explicit DECISION_ALLOW admits the stream: an error, a denial, and an answer
-// carrying no verdict all deny it, so a server that is down, misconfigured, or
-// newer than this build fails the request closed rather than opening the gateway
-// to everyone for as long as it is that way.
-//
-// A denial reaches the caller as an [rpc.Reject], whose message is generic while
-// the provider's reason becomes the server-side detail: a provider writes that
-// reason for whoever operates it, not for the caller it just turned away. An
-// error keeps the provider's status code, since it tells a worker whether to fix
-// its credential or retry; a decision carries no code, so the proxy supplies one.
+// explicit DECISION_ALLOW admits the stream; an error, a denial, or an answer
+// carrying no verdict denies it, so the request fails closed. Every rejection is
+// an [rpc.Reject] with a generic message and the provider's reason as the
+// server-side detail. An error keeps the provider's status code; a denial is
+// PermissionDenied and a missing verdict is Internal.
 //
 // The declared credential headers are lifted into the request and withheld from
-// the forwarded metadata, so each credential reaches the server in exactly one
-// place. That separation is what lets the proxy hold a credential of its own to
-// this server: metadata carries the proxy's, the request carries the caller's,
-// and neither has to be told apart from the other on a shared header. It also
-// puts the caller's credential out of reach of the interceptor [outbound.DialOptions]
-// installs, which deletes the proxy's credential header from forwarded metadata
-// and cannot tell that on this one call that header is the subject of the request
-// rather than incidental cargo.
-//
-// The caller's remaining metadata is forwarded so the server can weigh context
-// such as the method being invoked. gRPC drops reserved keys (":authority",
-// "user-agent", "content-type", "grpc-*") when writing the request, so a caller
-// cannot reach the extension server's transport this way.
+// the forwarded metadata. The caller's remaining metadata is forwarded, except
+// the reserved keys gRPC drops (":authority", "user-agent", "content-type",
+// "grpc-*"), so a caller cannot reach the extension server's transport this way.
 func (a *Auth) Authenticate(ctx context.Context, target meta.Target, md metadata.MD) error {
 	req := &auth.AuthRequest{
 		Target: &auth.Target{FullName: target.FullName, Namespace: target.Namespace},

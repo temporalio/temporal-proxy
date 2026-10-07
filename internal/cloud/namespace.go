@@ -31,7 +31,7 @@ func ValidateAccountID(id string) error {
 
 // ValidateNamespace checks that ns is a well-formed Temporal Cloud namespace
 // identifier, meaning "<name>.<account-id>". Every broken rule is reported, not
-// just the first, so a caller can show the whole story at once.
+// just the first.
 //
 // See: https://docs.temporal.io/cloud/namespaces for details
 func ValidateNamespace(ns string) error {

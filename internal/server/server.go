@@ -181,12 +181,9 @@ func WithHealthCheck(hc HealthCheck) Option {
 // WithLoopbackHealthCheck drives the serving status from a call the server makes
 // to its own Health/Watch, so the status reports whether a request can still
 // travel the stream interceptor chain rather than only whether the process
-// accepts connections. See [loopbackCheck] for why it is Watch and why the call
-// does not leave the process.
-//
-// interval is how often the check runs and timeout bounds one run; neither is
-// defaulted here. It takes precedence over [WithHealthCheck] regardless of the
-// order the two are supplied in.
+// accepts connections. interval is how often the check runs and timeout bounds
+// one run; neither is defaulted here. It takes precedence over
+// [WithHealthCheck] regardless of the order the two are supplied in.
 func WithLoopbackHealthCheck(interval, timeout time.Duration) Option {
 	return optFunc(func(o *options) {
 		o.loopback = &loopbackTimings{interval: interval, timeout: timeout}

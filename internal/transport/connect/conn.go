@@ -115,16 +115,11 @@ func WithConnections(n int) ConnOption {
 }
 
 // WaitReady opens conns and blocks until each is ready or ctx is done,
-// whichever comes first. They are waited on concurrently, so they share ctx's
-// deadline rather than consuming it in turn, and every target that never came up
-// is reported rather than only the first, so one unreachable address cannot mask
-// another.
-//
-// When ctx has a deadline this stops just short of it. Callers are fx start
-// hooks, and fx prefers its start context's error over what a hook returns
-// (app.go, withTimeout), so a wait that runs to the deadline is reported as a
-// bare "context deadline exceeded" and the target names are lost. Returning
-// early is what keeps them.
+// whichever comes first. They are waited on concurrently and share ctx's
+// deadline, and every target that never came up is reported, not only the
+// first. When ctx has a deadline this returns just short of it, so an fx start
+// hook reports the target names rather than fx's bare "context deadline
+// exceeded".
 func WaitReady(ctx context.Context, conns ...*Conn) error {
 	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) > 2*readyMargin {
 		var cancel context.CancelFunc
@@ -173,19 +168,16 @@ func (c *Conn) NewStream(
 }
 
 // WaitReady opens the underlying connections and blocks until each is ready or
-// ctx is done, whichever comes first. [NewConn] creates a static Conn's connection
-// but grpc.NewClient only dials on demand, so nothing is open until this runs (or
-// the first request arrives); this is what makes the connection real ahead of
-// serving traffic.
+// ctx is done, whichever comes first. A static Conn dials on demand, so nothing
+// is open until this runs or the first request arrives.
 //
 // A refused connection is not on its own fatal: gRPC retries with backoff, so a
 // target still coming up passes as long as it answers before ctx expires. gRPC
 // keeps the underlying dial error private, so one that never answers is reported
 // by the state it was stuck in, wrapping ctx's error.
 //
-// A dynamic Conn holds no connection until a request resolves one, so there is
-// nothing to open and this does nothing. Callers can pass a mixed set of conns
-// without sorting them first.
+// A dynamic Conn holds no connection until a request resolves one, so this does
+// nothing for it and callers can pass a mixed set of conns.
 func (c *Conn) WaitReady(ctx context.Context) error {
 	if !c.resolver.IsStatic() {
 		return nil

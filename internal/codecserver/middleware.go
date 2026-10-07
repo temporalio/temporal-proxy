@@ -11,18 +11,11 @@ import (
 const allowedHeaders = "Content-Type, X-Namespace, Authorization, Authorization-Extras"
 
 // cors answers preflight requests and stamps the cross-origin headers onto
-// every other response.
-//
-// It wraps the router rather than sitting inside a route, for two reasons. A
-// preflight arrives as OPTIONS, which matches no route and would otherwise
-// answer 405, and it has to be answered before authentication because a
-// browser sends no credentials on one.
-//
-// The request's own origin is echoed back, and only when it is on the allowed
-// list. A wildcard is never emitted, since a browser rejects one whenever
-// credentials are included.
-//
-// Returns next unchanged when origins is empty, otherwise a handler wrapping it.
+// every other response. It must wrap the router: a preflight arrives as
+// OPTIONS, matches no route, and carries no credentials, so it is answered
+// before routing and authentication. An allowed origin is echoed back; a
+// wildcard is never emitted, since a browser rejects one whenever credentials
+// are included. Returns next unchanged when origins is empty.
 func cors(origins []string, credentials bool, next http.Handler) http.Handler {
 	if len(origins) == 0 {
 		return next

@@ -40,13 +40,10 @@ const (
 )
 
 // listNamespaces translates WorkflowService.ListNamespaces onto
-// CloudService.GetNamespaces.
-//
-// The Cloud API version header is required - without it GetNamespaces fails with
-// InvalidArgument - and is pinned to the version the SDK this package compiles
-// against defaults to, since that is the same module the message types and their
-// versioned fields come from. Bumping go.temporal.io/cloud-sdk moves the
-// conversions and the version they were written against together.
+// CloudService.GetNamespaces. GetNamespaces fails with InvalidArgument without
+// the Cloud API version header, so it is pinned to the default of the
+// go.temporal.io/cloud-sdk the message types come from; bumping that module
+// moves the conversions and the version together.
 func listNamespaces() *Translation {
 	return Adapt(listNamespacesMethod, getNamespacesMethod, listNamespacesRequest, listNamespacesResponse).
 		WithHeader(cloudclient.TemporalCloudAPIVersionHeader(), cloudclient.DefaultAPIVersion())
@@ -97,23 +94,14 @@ func listNamespacesResponse(
 // response ListNamespaces returns per namespace, with state already mapped by
 // the caller so the deleted filter and this conversion agree on it.
 //
-// Only fields Cloud actually reports carry a value. Cloud has no namespace UUID,
-// description, or owner email to give, and it describes replication as regional
-// replicas rather than as the clusters ReplicationConfig names, so
-// IsGlobalNamespace is derived from how many replicas there are while
-// ReplicationConfig is left empty rather than filled with region ids a client
-// would read as cluster names. FailoverVersion and FailoverHistory have no
-// Cloud equivalent at all.
+// Only fields Cloud reports carry a value. Cloud has no namespace UUID,
+// description, owner email, or failover data, and its regional replicas are not
+// the clusters ReplicationConfig names, so IsGlobalNamespace is derived from the
+// replica count and ReplicationConfig is left empty.
 //
-// Empty is not the same as absent, though, and the difference is load-bearing:
-// every sub-message a Temporal Service would populate is allocated here even
-// when there is nothing to put in it. A frontend builds NamespaceInfo, Config
-// and ReplicationConfig unconditionally on every path (the server funnels them
-// all through namespaceHandler.createResponse), so clients are written against a
-// reply where they are always present - the temporal CLI reads
-// resp.ReplicationConfig.ActiveClusterName with no nil check and dies on a nil
-// one. An empty message says "Cloud did not report this" just as well as an
-// absent one, without breaking a client that has never had to handle absence.
+// Every sub-message a Temporal Service populates is allocated even when empty:
+// clients assume they are present, and the temporal CLI reads
+// resp.ReplicationConfig.ActiveClusterName with no nil check.
 func describeNamespace(
 	ns *cloudnamespace.Namespace,
 	state enumspb.NamespaceState,

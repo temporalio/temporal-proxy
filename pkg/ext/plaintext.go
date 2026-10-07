@@ -17,13 +17,9 @@ import (
 const plaintextMessage = "Serving in plaintext. Supply credentials via WithServerOption for production use."
 
 // plaintextWarning returns interceptors that log [plaintextMessage] once if calls
-// are arriving over an unencrypted connection.
-//
-// It reads the connection rather than the configuration because a
-// [grpc.ServerOption] is opaque: what [WithServerOption] was handed cannot be read
-// back, so whether this server ended up serving TLS is only knowable from a call
-// that actually arrived. The cost is that a server nobody ever calls stays quiet,
-// which the health service makes unlikely.
+// are arriving over an unencrypted connection. It inspects arriving calls
+// because what [WithServerOption] was handed cannot be read back, so a server
+// nobody calls stays quiet.
 func plaintextWarning(log logger.Logger) (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
 	var once sync.Once
 
