@@ -126,6 +126,15 @@ func TestEncryptionValidate(t *testing.T) {
 			wantErr: "default",
 		},
 		{
+			name: "enabled with failures",
+			cfg:  config.Encryption{Enabled: true, Failures: true, Default: &valid},
+		},
+		{
+			name:    "failures without enabled",
+			cfg:     config.Encryption{Failures: true},
+			wantErr: "failures: requires encryption to be enabled",
+		},
+		{
 			name: "default present but invalid, even when disabled",
 			cfg: config.Encryption{
 				Enabled: false,

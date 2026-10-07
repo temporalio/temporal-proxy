@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"net/url"
@@ -26,9 +27,12 @@ type (
 	// for what an absent one means. Overrides maps a namespace to a key policy
 	// that supersedes Default for that namespace; the keys are pre-translation
 	// (local) namespace names, matching the namespace the vault seals under at
-	// request time.
+	// request time. Failures also seals the message and stack trace of outbound
+	// failures, the way the Temporal SDK's EncodeCommonAttributes does; it requires
+	// Enabled.
 	Encryption struct {
 		Enabled   bool                 `yaml:"enabled"`
+		Failures  bool                 `yaml:"failures"`
 		CacheSize *int                 `yaml:"cacheSize"`
 		Default   *KeyPolicy           `yaml:"default"`
 		Overrides map[string]KeyPolicy `yaml:"overrides"`
@@ -78,6 +82,13 @@ func (e *Encryption) Validate() error {
 			func() bool { return e.Enabled },
 			validation.Field("default", e.Default, validation.Required[*KeyPolicy]()),
 		),
+		validation.Field("failures", e.Failures, func(on bool) error {
+			if on && !e.Enabled {
+				return errors.New("requires encryption to be enabled")
+			}
+
+			return nil
+		}),
 		validation.WhenNested(func() bool { return e.Default != nil }, "default", e.Default),
 	}
 

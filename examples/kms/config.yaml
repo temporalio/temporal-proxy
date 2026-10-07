@@ -59,6 +59,12 @@ encryption:
   # cache off, which makes every payload opened cost a round trip.
   # cacheSize: 100
 
+  # failures also seals the message and stack trace of every outbound failure,
+  # leaving "Encoded failure" in their place upstream. Clients reading through
+  # the proxy get the text back; the Web UI reading the upstream directly needs
+  # the codec server to show it.
+  # failures: true
+
   default:
     uri: extension://kms/payloads
     duration: 1h
