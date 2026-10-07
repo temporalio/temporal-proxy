@@ -23,15 +23,15 @@ import (
 var transportHeaders = []string{"user-agent", ":authority", "content-type"}
 
 type (
-	// Forwarder forwards any allowlisted method to a single upstream, typing each
-	// request and response from the proto registry rather than being generated per
-	// service. The typing is load-bearing: namespace translation and payload
+	// Forwarder forwards any method to a single upstream, typing each request and
+	// response from the proto registry rather than being generated per service.
+	// Deciding which services may be forwarded is the caller's job: the gateway
+	// rejects the rest before routing. The typing is load-bearing: namespace translation and payload
 	// encryption are client interceptors on cc that operate on proto messages, so
 	// an opaque byte passthrough (as the router uses) would silently skip both.
 	// Resolved methods are cached, and a Forwarder is safe for concurrent use.
 	Forwarder struct {
 		cc      grpc.ClientConnInterface
-		allowed services.Allowlist
 		methods sync.Map // fullName -> *methodInfo
 		types   protoutil.Types
 	}
@@ -47,22 +47,17 @@ type (
 	}
 )
 
-// NewForwarder builds a Forwarder that forwards over cc every method belonging
-// to a service a admits. It fails when cc or a is nil. By default methods are
-// typed against the global proto registry; use [WithProtoTypes] to override it.
-func NewForwarder(cc grpc.ClientConnInterface, a services.Allowlist, opts ...ForwarderOption) (*Forwarder, error) {
+// NewForwarder builds a Forwarder that forwards over cc. It fails when cc is nil.
+// By default methods are typed against the global proto registry; use
+// [WithProtoTypes] to override it.
+func NewForwarder(cc grpc.ClientConnInterface, opts ...ForwarderOption) (*Forwarder, error) {
 	if cc == nil {
 		return nil, fmt.Errorf("proxy: nil client connection passed to forwarder")
 	}
 
-	if a == nil {
-		return nil, fmt.Errorf("proxy: nil allowlist passed to forwarder")
-	}
-
 	f := &Forwarder{
-		cc:      cc,
-		allowed: a,
-		types:   protoregistry.GlobalTypes,
+		cc:    cc,
+		types: protoregistry.GlobalTypes,
 	}
 
 	for _, opt := range opts {
@@ -82,21 +77,14 @@ func WithProtoTypes(t protoutil.Types) ForwarderOption {
 	}
 }
 
-// Handle forwards one stream to the upstream, and suits
-// [google.golang.org/grpc.UnknownServiceHandler]. A method whose service the
-// [services.Allowlist] does not admit is rejected with Unimplemented before any
-// upstream work, so the proxy answers as a server that does not implement it
-// rather than revealing that an upstream might. Only methods present in the
-// compiled descriptors can be forwarded; anything else is Unimplemented too.
+// Handle forwards one stream to the upstream. Only methods present in the
+// compiled descriptors can be forwarded; anything else is rejected with
+// Unimplemented before any upstream work.
 func (f *Forwarder) Handle(_ any, ss grpc.ServerStream) error {
 	ctx := ss.Context()
 	method, err := rpc.FullMethod(ctx)
 	if err != nil {
 		return err
-	}
-
-	if service := rpc.Service(method); !f.allowed.Allows(service) {
-		return status.Errorf(codes.Unimplemented, "unknown service %s", service)
 	}
 
 	info := f.lookup(method)

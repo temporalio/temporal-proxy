@@ -19,7 +19,6 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
-	"github.com/temporalio/temporal-proxy/internal/services"
 )
 
 type (
@@ -148,7 +147,7 @@ func TestOutboundNamespaceTranslation(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cc.Close() })
 
-	fw, err := NewForwarder(cc, services.NewAllowlist(services.Default()))
+	fw, err := NewForwarder(cc)
 	require.NoError(t, err)
 
 	proxyLis, err := net.Listen("tcp", "127.0.0.1:0")
