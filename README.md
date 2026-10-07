@@ -67,8 +67,8 @@ reaches a different upstream with no change to the Worker.
 - **SRV discovery.** Set an upstream's `hostPort` to `srv:///<record>` (for example
   `srv:///_grpc._tcp.temporal-frontend.temporal.svc.cluster.local`) and the proxy balances round-robin across every
   backend the record lists. It re-reads the record every 30 seconds, and within 5 seconds of a backend failing.
-  `maxConnections` applies per backend, so 4 connections across 10 backends opens 40. Over TLS, every backend's
-  certificate is verified against the record name minus its leading `_service._proto` labels
+  `maxConnections` (default 32) applies per backend, so 4 connections across 10 backends opens 40. Over TLS, every
+  backend's certificate is verified against the record name minus its leading `_service._proto` labels
   (`temporal-frontend.temporal.svc.cluster.local` above), not the host each record points at; set `tls.serverName` when
   the certificates carry a different name.
 - **Payload encryption.** Optionally seal payloads with envelope encryption on the hop to an upstream and open them on

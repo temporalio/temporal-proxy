@@ -392,7 +392,7 @@ func newUpstreamForwarder(
 		return nil, nil, err
 	}
 
-	conn, err := connect.NewConn(o.pool.ConnOrCreate, res, connect.WithConnections(up.Connection.PoolSize()))
+	conn, err := connect.NewConn(o.pool.ConnOrCreate, res, connect.WithConnections(up.Connection.PoolSize(up.IsTemplated())))
 	if err != nil {
 		return nil, nil, err
 	}
