@@ -26,7 +26,7 @@ const (
 	// maxConnections applies per target, and a templated upstream resolves a
 	// separate target for every namespace, so its total is this times the number
 	// of namespaces it serves.
-	defaultTemplatedMaxConnections = 4
+	defaultTemplatedMaxConnections = 32
 
 	// maxResponseSizeLimit is one past the largest size gRPC can represent, since
 	// it takes the limit as an int32-sized int.
