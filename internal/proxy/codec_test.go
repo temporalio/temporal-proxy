@@ -34,6 +34,11 @@ func TestCodecInterceptorRejectsIncompleteOptions(t *testing.T) {
 			opts: proxy.CodecOptions{Vault: &fakeVault{}},
 			want: "a vault requires a reporter",
 		},
+		{
+			name: "encoding failures without encryption",
+			opts: proxy.CodecOptions{Vault: &fakeVault{}, EncodeFailures: true, Reporter: newTestReporter(t)},
+			want: "failure encoding requires encryption",
+		},
 	}
 
 	for _, tc := range tests {

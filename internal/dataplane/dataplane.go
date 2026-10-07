@@ -114,7 +114,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 	// Every upstream applies the same chain: the vault and the encryption switch
 	// are global, so nothing here varies per upstream. Building it once is also
 	// what lets the codec server apply the identical chain.
-	codecOpts := proxy.CodecOptions{Encrypt: cfg.Encryption.Enabled}
+	codecOpts := proxy.CodecOptions{Encrypt: cfg.Encryption.Enabled, EncodeFailures: cfg.Encryption.Failures}
 
 	// Only assign the vault once it is known to be there. o.vault is a concrete
 	// pointer and the field is an interface, so assigning unconditionally would

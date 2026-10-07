@@ -74,6 +74,7 @@ reaches a different upstream with no change to the Worker.
 - **Payload encryption.** Optionally seal payloads with envelope encryption on the hop to an upstream and open them on
   responses, so the upstream only ever sees ciphertext while local Workers keep exchanging cleartext. DEKs are wrapped
   by a KMS key (AWS KMS, Azure Key Vault, or GCP KMS), rotate automatically, and can be overridden per Namespace.
+  Set `encryption.failures` to seal failure messages and stack traces too, as the SDK's `EncodeCommonAttributes` does.
 - **Pluggable key management.** For a backend the proxy has no built-in support for, such as an on-prem HSM or an
   internal key service, point it at an extension server you run and it wraps DEKs through that instead. Only key
   material is exchanged; payloads never reach it.

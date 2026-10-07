@@ -6,6 +6,7 @@ import (
 	"runtime"
 
 	"go.temporal.io/api/common/v1"
+	"go.temporal.io/api/failure/v1"
 	"go.temporal.io/api/proxy"
 	"google.golang.org/grpc"
 
@@ -26,6 +27,11 @@ type (
 		// after sealing is turned off for new traffic.
 		Encrypt bool
 
+		// EncodeFailures moves the message and stack trace of outbound failures into
+		// a payload, as the Temporal SDK does with EncodeCommonAttributes, so they
+		// are sealed with every other payload. It requires Encrypt.
+		EncodeFailures bool
+
 		// Reporter records the duration and result of each vault operation. It is
 		// required whenever a Vault is set.
 		Reporter *Reporter
@@ -34,8 +40,10 @@ type (
 	// Codecs is the chain payloads travel through in both directions. It is the
 	// only place a chain is assembled, so every caller applies the same one.
 	Codecs struct {
-		inbound  []codecOpt
-		outbound []codecOpt
+		inbound         []codecOpt
+		outbound        []codecOpt
+		encodeFailures  bool
+		restoreFailures bool
 	}
 
 	// codecOpt builds the [codec.Option] for one codec, given the request the
@@ -53,13 +61,19 @@ func NewCodecs(opts CodecOptions) (*Codecs, error) {
 		return nil, errors.New("proxy: encryption requires a vault")
 	}
 
+	// Without sealing, moving the text into a payload hides nothing; it would only
+	// cost anyone reading the failure without an SDK or codec server its message.
+	if opts.EncodeFailures && !opts.Encrypt {
+		return nil, errors.New("proxy: failure encoding requires encryption")
+	}
+
 	// Every vault call is timed and counted, so a vault without somewhere to
 	// record is a wiring mistake. Catch it here rather than on the first payload.
 	if opts.Vault != nil && opts.Reporter == nil {
 		return nil, errors.New("proxy: a vault requires a reporter")
 	}
 
-	c := &Codecs{}
+	c := &Codecs{encodeFailures: opts.EncodeFailures, restoreFailures: opts.Vault != nil}
 	if opts.Vault != nil {
 		enc := func(ctx context.Context, ns string) codec.Option {
 			return codec.WithCipher(&cipher{ctx: ctx, ns: ns, v: opts.Vault, r: opts.Reporter})
@@ -92,11 +106,30 @@ func CodecInterceptor(opts CodecOptions) (grpc.UnaryClientInterceptor, error) {
 // Search attributes are never encoded, so they stay queryable upstream. The
 // namespace a codec is given is the one the request carries, read via
 // [meta.NamespaceFrom].
+//
+// Failures are handled outside the payload codecs. With failure encoding on, they
+// are encoded first, so the payload holding their attributes is sealed like any
+// other. With a vault, their text is restored last, from attributes already
+// opened, whether or not encoding is on, so failures encoded earlier stay
+// readable after it is turned off.
 func (c *Codecs) Interceptor() (grpc.UnaryClientInterceptor, error) {
-	return proxy.NewPayloadVisitorInterceptor(proxy.PayloadVisitorInterceptorOptions{
+	payloads, err := proxy.NewPayloadVisitorInterceptor(proxy.PayloadVisitorInterceptorOptions{
 		Inbound:  visitPayloads(c.inbound, codec.Chain.Decode),
 		Outbound: visitPayloads(c.outbound, codec.Chain.Encode),
 	})
+	if err != nil || (!c.encodeFailures && !c.restoreFailures) {
+		return payloads, err
+	}
+
+	failures, err := proxy.NewFailureVisitorInterceptor(proxy.FailureVisitorInterceptorOptions{
+		Inbound:  visitFailures(c.restoreFailures, restoreFailure),
+		Outbound: visitFailures(c.encodeFailures, encodeFailure),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return chainUnary(failures, payloads), nil
 }
 
 // Decode runs payloads through the inbound chain for ns, the same chain
@@ -137,6 +170,25 @@ func apply(
 	return fn(codec.NewChain(chain...), payloads)
 }
 
+// chainUnary returns an interceptor that runs outer around inner, so outer sees
+// the request first and the response last.
+func chainUnary(outer, inner grpc.UnaryClientInterceptor) grpc.UnaryClientInterceptor {
+	return func(
+		ctx context.Context,
+		method string,
+		req, reply any,
+		cc *grpc.ClientConn,
+		invoker grpc.UnaryInvoker,
+		opts ...grpc.CallOption,
+	) error {
+		next := func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, opts ...grpc.CallOption) error {
+			return inner(ctx, method, req, reply, cc, invoker, opts...)
+		}
+
+		return outer(ctx, method, req, reply, cc, next, opts...)
+	}
+}
+
 // visitPayloads returns the options that apply opts with fn per request, or nil
 // when opts is empty so that direction is left alone.
 func visitPayloads(
@@ -154,4 +206,17 @@ func visitPayloads(
 			return apply(ctx, meta.NamespaceFrom(ctx), opts, fn, payloads)
 		},
 	}
+}
+
+// visitFailures returns the options that apply visitor to every failure, or nil
+// when on is false so that direction is left alone.
+func visitFailures(
+	on bool,
+	visitor func(*proxy.VisitFailuresContext, *failure.Failure) error,
+) *proxy.VisitFailuresOptions {
+	if !on {
+		return nil
+	}
+
+	return &proxy.VisitFailuresOptions{Visitor: visitor}
 }
