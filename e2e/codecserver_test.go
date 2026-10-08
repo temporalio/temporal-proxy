@@ -39,9 +39,9 @@ func TestCodecServerDecodesWhatTheGatewaySealed(t *testing.T) {
 		Enabled: true,
 		Default: &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
 	}
-	cfg.CodecServer = config.CodecServer{
-		Enabled: true,
-		Listen:  config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
+	cfg.HTTP = config.HTTP{
+		Listen:      config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
+		CodecServer: config.CodecServer{Enabled: true},
 	}
 
 	f := dataplanetest.StartApp(t, cfg)
@@ -94,9 +94,9 @@ func TestCodecServerEncodeOpensThroughTheGateway(t *testing.T) {
 		Enabled: true,
 		Default: &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
 	}
-	cfg.CodecServer = config.CodecServer{
-		Enabled: true,
-		Listen:  config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
+	cfg.HTTP = config.HTTP{
+		Listen:      config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
+		CodecServer: config.CodecServer{Enabled: true},
 	}
 
 	f := dataplanetest.StartApp(t, cfg)
@@ -149,9 +149,9 @@ func TestCodecServerDecodesTheRemoteNamespaceCloudSendsAfterTranslation(t *testi
 			"ns1": {URI: secondaryKeyURI(t), Duration: time.Hour},
 		},
 	}
-	cfg.CodecServer = config.CodecServer{
-		Enabled: true,
-		Listen:  config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
+	cfg.HTTP = config.HTTP{
+		Listen:      config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
+		CodecServer: config.CodecServer{Enabled: true},
 	}
 
 	f := dataplanetest.StartApp(t, cfg)
@@ -208,10 +208,12 @@ func TestCodecServerRequiresConfiguredAuth(t *testing.T) {
 
 	up := dataplanetest.NewUpstream(t)
 	cfg := dataplanetest.Config(up)
-	cfg.CodecServer = config.CodecServer{
-		Enabled: true,
-		Listen:  config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
-		Auth:    &config.AuthConfig{StaticToken: &config.StaticTokenConfig{Token: token}},
+	cfg.HTTP = config.HTTP{
+		Listen: config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
+		CodecServer: config.CodecServer{
+			Enabled: true,
+			Auth:    &config.AuthConfig{StaticToken: &config.StaticTokenConfig{Token: token}},
+		},
 	}
 
 	f := dataplanetest.StartApp(t, cfg)
@@ -249,9 +251,9 @@ func TestCodecServerEncodeRequiresNamespaceWhenOverridesConfigured(t *testing.T)
 			"ns1": {URI: testingKeyURI(t), Duration: time.Hour},
 		},
 	}
-	cfg.CodecServer = config.CodecServer{
-		Enabled: true,
-		Listen:  config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
+	cfg.HTTP = config.HTTP{
+		Listen:      config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
+		CodecServer: config.CodecServer{Enabled: true},
 	}
 
 	f := dataplanetest.StartApp(t, cfg)
@@ -272,7 +274,7 @@ func postCodecServer(
 ) *http.Response {
 	t.Helper()
 
-	addr := f.CodecServerAddr()
+	addr := f.HTTPAddr()
 	require.NotEmpty(t, addr, "the fixture must have started a codec server")
 
 	req, err := http.NewRequestWithContext(f.Context(), http.MethodPost, "http://"+addr+route, bytes.NewReader([]byte(body)))
@@ -319,7 +321,7 @@ func callCodecServerRoute(
 	body, err := protojson.Marshal(&common.Payloads{Payloads: payloads})
 	require.NoError(t, err)
 
-	addr := f.CodecServerAddr()
+	addr := f.HTTPAddr()
 	require.NotEmpty(t, addr, "the fixture must have started a codec server")
 
 	req, err := http.NewRequestWithContext(f.Context(), http.MethodPost, "http://"+addr+route, bytes.NewReader(body))

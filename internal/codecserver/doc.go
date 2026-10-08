@@ -75,6 +75,5 @@
 // # Thread Safety
 //
 // [Handler] and the http.Handler it returns are safe for concurrent use, as
-// are [Reporter] and [OverrideMap]. A [Server] is single-use and is not
-// restartable after [Server.Stop].
+// are [Reporter] and [OverrideMap].
 package codecserver

@@ -20,13 +20,18 @@ type (
 		APITranslations  APITranslations     `yaml:"apiTranslations"`
 		AllowedServices  Services            `yaml:"allowedServices"`
 		Auth             *AuthConfig         `yaml:"auth"`
-		CodecServer      CodecServer         `yaml:"codecServer"`
 		Encryption       Encryption          `yaml:"encryption"`
 		ExtensionServers ExtensionServerList `yaml:"extensionServers"`
 		Health           Health              `yaml:"health"`
+		HTTP             HTTP                `yaml:"http"`
 		Metrics          Metrics             `yaml:"metrics"`
 		Routing          Routing             `yaml:"routing"`
 		Upstreams        UpstreamList        `yaml:"upstreams"`
+
+		// RetiredCodecServer catches the top-level codecServer block, which moved
+		// under http. Without it the old key would be silently ignored, leaving
+		// the codec server off for a config that says it is on.
+		RetiredCodecServer any `yaml:"codecServer"`
 	}
 )
 
@@ -95,10 +100,19 @@ func (c *Config) Validate() error {
 		}),
 		validation.Nested("", &c.Listen),
 		validation.Nested("", &c.AllowedServices),
-		validation.Nested("codecServer", &c.CodecServer),
+		validation.WhenRules(
+			func() bool { return c.RetiredCodecServer != nil },
+			func() validation.Errors {
+				return validation.Errors{{
+					Field:   "codecServer",
+					Message: "moved to http.codecServer, with hostPort, insecure, and tls set on http itself",
+				}}
+			},
+		),
 		validation.Nested("encryption", &c.Encryption),
 		validation.Nested("extensionServers", &c.ExtensionServers),
 		validation.Nested("health", &c.Health),
+		validation.Nested("http", &c.HTTP),
 		validation.Nested("metrics", &c.Metrics),
 		validation.Nested("routing", &c.Routing),
 		validation.WhenRules(func() bool { return c.Auth != nil }, validation.Nested("auth", c.Auth)),

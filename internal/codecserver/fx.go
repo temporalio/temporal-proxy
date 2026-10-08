@@ -6,44 +6,40 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/api"
 	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/httpserver"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/proxy"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
 
-// Module provides the codec server and forces its construction, since nothing
-// else depends on it. Include it unconditionally: a disabled codecServer block
-// yields a nil [Server] and no lifecycle hook, so the module is inert.
-var Module = fx.Options(
-	fx.Provide(newFromParams),
-	fx.Invoke(func(*Server) {}),
-)
+// Module contributes the codec server routes to the shared HTTP server in
+// [httpserver.Module]. Include it unconditionally: a disabled codecServer
+// block contributes no routes, so the module is inert.
+var Module = fx.Provide(httpserver.AsRoutes(newFromParams))
 
 // Params collects the fx-provided dependencies the codec server needs. Every
 // field is required. Conns is used only to resolve an extension-server
 // authenticator and may be empty otherwise.
 type Params struct {
 	fx.In
-	Shutdowner fx.Shutdowner
 
-	Config    *config.Config
-	Codecs    *proxy.Codecs
-	Metrics   *metrics.Factory
-	Conns     api.Connections
-	Logger    logger.Logger
-	Lifecycle fx.Lifecycle
+	Config  *config.Config
+	Codecs  *proxy.Codecs
+	Metrics *metrics.Factory
+	Conns   api.Connections
+	Logger  logger.Logger
 }
 
-// newFromParams builds the Server the configuration describes and binds it to
-// the fx lifecycle, or returns nil when the codec server is disabled. It warns
-// rather than fails for the two configurations that are legal but probably
-// unintended: no authentication, which config only permits on a loopback bind,
-// and no encryption keys, which makes both routes identity transforms. Returns
-// an error when the namespace override mapping is ambiguous, when the
-// authenticator cannot be built, or when the TLS material will not load.
-func newFromParams(p Params) (*Server, error) {
-	cfg := &p.Config.CodecServer
+// newFromParams builds the routes the configuration describes, mounted at the
+// root, or returns none when the codec server is disabled. It warns rather than
+// fails for the two configurations that are legal but probably unintended: no
+// authentication, which config only permits on a loopback bind, and no
+// encryption keys, which makes both routes identity transforms. Returns an
+// error when the namespace override mapping is ambiguous or when the
+// authenticator cannot be built.
+func newFromParams(p Params) ([]httpserver.Route, error) {
+	cfg := &p.Config.HTTP.CodecServer
 	if !cfg.Enabled {
 		return nil, nil
 	}
@@ -82,11 +78,6 @@ func newFromParams(p Params) (*Server, error) {
 		log.Warn("Codec server is enabled but no encryption keys are configured, so payloads pass through unchanged")
 	}
 
-	tlsCfg, err := cfg.Listen.Listener().TLSConfig()
-	if err != nil {
-		return nil, err
-	}
-
 	handler := Handler(
 		p.Codecs,
 		overrides,
@@ -94,11 +85,5 @@ func newFromParams(p Params) (*Server, error) {
 		opts...,
 	)
 
-	svr := NewServer(cfg.Listen.HostPort, handler, tlsCfg, log, func(error) {
-		_ = p.Shutdowner.Shutdown(fx.ExitCode(1))
-	})
-
-	p.Lifecycle.Append(fx.Hook{OnStart: svr.Start, OnStop: svr.Stop})
-
-	return svr, nil
+	return []httpserver.Route{{Pattern: "/", Handler: handler}}, nil
 }

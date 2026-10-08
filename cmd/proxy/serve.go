@@ -17,6 +17,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/codecserver"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/dataplane"
+	"github.com/temporalio/temporal-proxy/internal/httpserver"
 	"github.com/temporalio/temporal-proxy/internal/kms"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
@@ -81,6 +82,7 @@ func serve() *cli.Command {
 				config.Module,
 				connect.Module,
 				dataplane.Module,
+				httpserver.Module,
 				kms.Module,
 				metrics.Module,
 				protoutil.Module,

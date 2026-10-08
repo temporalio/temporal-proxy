@@ -75,7 +75,8 @@ encryption:
 # A loopback bind needs neither auth nor tls, which is why this is safe to
 # leave on for local development; see the README's "Codec server" section
 # before pointing one anywhere else.
-codecServer:
-  enabled: true
+http:
   hostPort: 127.0.0.1:8445
   insecure: true
+  codecServer:
+    enabled: true
