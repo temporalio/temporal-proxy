@@ -97,11 +97,10 @@ func (a *AuthConfig) Validate() error {
 
 // referentialRules checks that external authentication names a configured
 // extension server, given the set of known names. A failure is stamped with the
-// referring field's YAML path so it lands on "auth.external"/"name". It is
-// appended at the Config level, where the full set of names is known. A nil
-// receiver or a blank name yields nothing; a blank name is already reported as
-// required by [ExternalAuthConfig.Validate].
-func (a *AuthConfig) referentialRules(known map[string]struct{}) []validation.Rule {
+// subject and lands on "name". It is appended at the Config level, where the
+// full set of names is known. A nil receiver or a blank name yields nothing; a
+// blank name is already reported as required by [ExternalAuthConfig.Validate].
+func (a *AuthConfig) referentialRules(subject string, known map[string]struct{}) []validation.Rule {
 	if a == nil || a.External == nil || a.External.Name == "" {
 		return nil
 	}
@@ -112,7 +111,7 @@ func (a *AuthConfig) referentialRules(known map[string]struct{}) []validation.Ru
 		}
 
 		return validation.Errors{{
-			Subject: "auth.external",
+			Subject: subject,
 			Field:   "name",
 			Message: "unknown extension server: " + a.External.Name,
 		}}

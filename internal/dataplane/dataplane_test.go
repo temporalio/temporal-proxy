@@ -113,7 +113,7 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 // leave keys unusable. internal/kms builds a vault from key presence rather
 // than from Enabled, so turning encryption off for new traffic still needs one
 // to open payloads sealed while it was on. Enabled is the only difference
-// between the cases: Config.Validate already requires a Default whenever
+// between the cases: Config.Prepare already requires a Default whenever
 // Enabled, so keys are what the guard actually turns on.
 func TestNewRejectsConfiguredKeysWithoutVault(t *testing.T) {
 	t.Parallel()
@@ -282,8 +282,8 @@ func (d testDeps) opts(omit ...string) []dataplane.Option {
 }
 
 // testConfig is a minimal valid configuration: one gateway listener and one
-// static upstream. Metrics is populated because Config.Validate requires it;
-// nothing in these tests serves it.
+// static upstream. Metrics is set explicitly rather than left to the defaults
+// Config.Prepare fills; nothing in these tests serves it.
 func testConfig() *config.Config {
 	return &config.Config{
 		Listen:  config.ListenConfig{HostPort: "127.0.0.1:0"},

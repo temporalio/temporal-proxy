@@ -59,3 +59,9 @@ func (c *CodecServer) Validate() error {
 		validation.WhenNested(func() bool { return c.Auth != nil }, "auth", c.Auth),
 	)
 }
+
+// enabled reports whether the codec server routes are served.
+func (c *CodecServer) enabled() bool { return c.Enabled }
+
+// authConfig returns the codec server's caller authentication, or nil.
+func (c *CodecServer) authConfig() *AuthConfig { return c.Auth }

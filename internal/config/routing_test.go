@@ -165,3 +165,61 @@ func assertTuples(t *testing.T, err error, want [][2]string) {
 
 	require.ElementsMatch(t, want, got)
 }
+
+func TestConfigPrepareRoutingCompileErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		match      config.RoutingMatch
+		wantTuples [][2]string
+	}{
+		{
+			name:       "bad namespace glob",
+			match:      config.RoutingMatch{Namespace: "a*b"},
+			wantTuples: [][2]string{{"routing.rules[0]", "namespace"}},
+		},
+		{
+			name:       "bad metadata glob",
+			match:      config.RoutingMatch{Metadata: map[string]string{"dc": "a*b"}},
+			wantTuples: [][2]string{{"routing.rules[0]", "metadata[dc]"}},
+		},
+		{
+			name:       "metadata keys collide when lowercased",
+			match:      config.RoutingMatch{Metadata: map[string]string{"DC": "a", "dc": "b"}},
+			wantTuples: [][2]string{{"routing.rules[0]", "metadata"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &config.Config{
+				Listen:    config.ListenConfig{HostPort: ":8080"},
+				Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
+				Routing:   config.Routing{Rules: []config.RoutingRule{{Upstream: "primary", Match: tt.match}}},
+			}
+
+			assertTuples(t, cfg.Prepare(), tt.wantTuples)
+		})
+	}
+}
+
+func TestRoutingRuleMatchers(t *testing.T) {
+	t.Parallel()
+
+	rule := config.RoutingRule{Upstream: "primary", Match: config.RoutingMatch{Metadata: map[string]string{"DC": "us-*"}}}
+	require.Panics(t, func() { rule.Matchers() })
+
+	cfg := &config.Config{
+		Listen:    config.ListenConfig{HostPort: ":8080"},
+		Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
+		Routing:   config.Routing{Rules: []config.RoutingRule{rule}},
+	}
+	require.NoError(t, cfg.Prepare())
+
+	ns, meta := cfg.Routing.Rules[0].Matchers()
+	require.True(t, ns.Match("anything"), "an empty namespace pattern matches every namespace")
+	require.True(t, meta["dc"].Match("us-east"), "metadata keys are lowercased")
+}

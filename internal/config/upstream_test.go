@@ -17,7 +17,7 @@ import (
 // under a single named upstream) so Load produces one upstream carrying those
 // translation rules.
 func namespaceConfigYAML(namespacesBody string) string {
-	return "upstreams:\n  - name: primary\n    namespaces:\n" + namespacesBody
+	return "hostPort: :8080\nupstreams:\n  - name: primary\n    hostPort: 127.0.0.1:7233\n    namespaces:\n" + namespacesBody
 }
 
 func TestNamespaceRules_Local(t *testing.T) {
@@ -890,7 +890,7 @@ func TestUpstreamCloudErrorPath(t *testing.T) {
 
 	// The flag round-trips through YAML, and a cloud failure reports the whole
 	// dotted path so an operator can find the offending key.
-	cfg, err := config.Load(strings.NewReader(`
+	_, err := config.Load(strings.NewReader(`
 hostPort: 127.0.0.1:7233
 upstreams:
   - name: private-link
@@ -900,12 +900,9 @@ upstreams:
       rules:
         suffix: .
 `))
-	require.NoError(t, err)
-	require.True(t, cfg.Upstreams[0].Cloud)
-
 	require.EqualError(
 		t,
-		cfg.Validate(),
+		err,
 		`upstreams[0].namespaces.rules: suffix: must be ".<account-id>" for a Temporal Cloud upstream`,
 	)
 }

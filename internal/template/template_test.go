@@ -159,3 +159,27 @@ func TestMust(t *testing.T) {
 	require.Panics(t, func() { template.Must(template.ParseRouting("{{ .RemoteNamespace }}")) })
 	require.Panics(t, func() { template.Must(template.ParseUpstream("{{ .Foo }}")) })
 }
+
+func TestTemplateIsLiteral(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		tmpl string
+		want bool
+	}{
+		{tmpl: "", want: true},
+		{tmpl: "127.0.0.1:7233", want: true},
+		{tmpl: "srv:///_grpc._tcp.temporal.svc", want: true},
+		{tmpl: "{{ .RemoteNamespace }}.acme.cloud:7233", want: false},
+		{tmpl: "static{{/* x */}}.acme", want: false},
+		{tmpl: `a {{- "" -}} b`, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.tmpl, func(t *testing.T) {
+			t.Parallel()
+
+			require.Equal(t, tt.want, template.Must(template.ParseUpstream(tt.tmpl)).IsLiteral())
+		})
+	}
+}

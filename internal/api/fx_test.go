@@ -148,61 +148,6 @@ func TestModuleGivesEachServerADistinctConn(t *testing.T) {
 	require.NotSame(t, got["audit"], got["quota"])
 }
 
-func TestModuleRejectsInvalidExtensionServers(t *testing.T) {
-	t.Parallel()
-
-	// api.Module is wired ahead of dataplane.Module, so it cannot assume the
-	// config has been validated; a bad entry must fail here rather than be
-	// dialed as-is.
-	tests := []struct {
-		name    string
-		server  config.ExtensionServer
-		wantErr string
-	}{
-		{
-			name:    "templated hostPort",
-			server:  config.ExtensionServer{Name: "audit", Listen: config.ListenConfig{HostPort: "{{ .Ns }}.acme.cloud:9090"}},
-			wantErr: "templates are not resolved for extension servers",
-		},
-		{
-			name:    "missing name",
-			server:  config.ExtensionServer{Listen: config.ListenConfig{HostPort: "127.0.0.1:9090"}},
-			wantErr: "name",
-		},
-		{
-			name:    "invalid hostPort",
-			server:  config.ExtensionServer{Name: "audit", Listen: config.ListenConfig{HostPort: "nope"}},
-			wantErr: "is not a valid host:port",
-		},
-		{
-			name: "credentials on an insecure connection",
-			server: config.ExtensionServer{
-				Name:        "audit",
-				Listen:      config.ListenConfig{HostPort: "127.0.0.1:9090", Insecure: true},
-				Credentials: &config.CredentialConfig{Static: &config.StaticCredentialConfig{APIKey: "k"}},
-			},
-			wantErr: "requires TLS",
-		},
-		{
-			name: "insecure together with tls",
-			server: config.ExtensionServer{
-				Name:   "audit",
-				Listen: config.ListenConfig{HostPort: "127.0.0.1:9090", Insecure: true, TLS: &config.TLSConfig{}},
-			},
-			wantErr: "cannot be set together with tls",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			_, err := buildModule(t, extensionServers(tt.server), connect.NewPool())
-			require.ErrorContains(t, err, tt.wantErr)
-		})
-	}
-}
-
 func TestModulePoolsConnectionsUnderANamespacedKey(t *testing.T) {
 	t.Parallel()
 
@@ -251,42 +196,4 @@ func TestModuleDoesNotCollideWithAnUpstreamOnTheSameHostPort(t *testing.T) {
 	got, err := pool.Conn(hostPort)
 	require.NoError(t, err)
 	require.Same(t, upstreamConn, got, "the upstream entry must be left untouched")
-}
-
-func TestModuleRejectsCollectionLevelConfigErrors(t *testing.T) {
-	t.Parallel()
-
-	// The whole list is validated, not just each entry. Duplicates would
-	// otherwise collapse into one map key and silently drop a server.
-	tests := []struct {
-		name    string
-		servers []config.ExtensionServer
-		wantErr string
-	}{
-		{
-			name: "duplicate names",
-			servers: []config.ExtensionServer{
-				{Name: "audit", Listen: config.ListenConfig{HostPort: "127.0.0.1:9090"}},
-				{Name: "audit", Listen: config.ListenConfig{HostPort: "127.0.0.1:9091"}},
-			},
-			wantErr: "contains duplicate value: audit",
-		},
-		{
-			name: "duplicate hostPorts",
-			servers: []config.ExtensionServer{
-				{Name: "audit", Listen: config.ListenConfig{HostPort: "127.0.0.1:9090"}},
-				{Name: "quota", Listen: config.ListenConfig{HostPort: "127.0.0.1:9090"}},
-			},
-			wantErr: "contains duplicate value: 127.0.0.1:9090",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			_, err := buildModule(t, extensionServers(tt.servers...), connect.NewPool())
-			require.ErrorContains(t, err, tt.wantErr)
-		})
-	}
 }

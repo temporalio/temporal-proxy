@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/temporalio/temporal-proxy/internal/cloud"
+	"github.com/temporalio/temporal-proxy/internal/template"
 	"github.com/temporalio/temporal-proxy/internal/transport/resolve"
 	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
@@ -30,6 +31,9 @@ type (
 		Namespaces  NamespaceConfig   `yaml:"namespaces"`
 		Credentials *CredentialConfig `yaml:"credentials"`
 		Connection  ConnectionConfig  `yaml:"connection"`
+
+		hostTmpl       *template.Template[template.UpstreamContext]
+		serverNameTmpl *template.Template[template.UpstreamContext]
 	}
 
 	// UpstreamList is the configured set of upstreams, named so the checks that
@@ -70,15 +74,18 @@ type (
 // Validate checks the upstream name, dial target, outbound TLS, namespace, and
 // connection configuration. Credentials require TLS, insecure conflicts with a
 // tls block, and a Cloud upstream must use Cloud namespace names.
-// A templated hostPort (containing a text/template action) is resolved
-// per-request, so it is not checked as a literal host:port here; a static
-// hostPort still is.
+// A templated hostPort is parsed as a template and not checked as a literal
+// host:port; a static hostPort still is.
 func (u *Upstream) Validate() error {
 	return validation.Validate(
 		"",
 		validation.Field("name", u.Name, validation.Required[string]()),
+		func() validation.Errors {
+			_, _, errs := u.parseTemplates()
+			return errs
+		},
 		validation.WhenRules(
-			func() bool { return !isTemplated(u.Listen.HostPort) },
+			u.hasLiteralHostPort,
 			validation.Field("hostPort", u.Listen.HostPort, upstreamHostPort()),
 		),
 		validation.WhenRules(
@@ -115,14 +122,22 @@ func (u *Upstream) IsCloud() bool {
 }
 
 // IsTemplated reports whether the upstream must be resolved per request because
-// its hostPort, or its TLS server name when one is configured, contains a
-// text/template action.
+// its hostPort or TLS server name contains a template action. Panics if the
+// upstream was never prepared by [Config.Prepare].
 func (u *Upstream) IsTemplated() bool {
-	if isTemplated(u.Listen.HostPort) {
-		return true
+	host, serverName := u.Templates()
+	return !host.IsLiteral() || !serverName.IsLiteral()
+}
+
+// Templates returns the parsed hostPort and TLS server name templates; a
+// missing server name is the empty literal. Panics if the upstream was never
+// prepared by [Config.Prepare].
+func (u *Upstream) Templates() (hostPort, serverName *template.Template[template.UpstreamContext]) {
+	if u.hostTmpl == nil {
+		panic("config: Upstream used before Config.Prepare")
 	}
 
-	return u.Listen.TLS != nil && isTemplated(u.Listen.TLS.ServerName)
+	return u.hostTmpl, u.serverNameTmpl
 }
 
 // cloudRules builds the namespace rules that only hold for a Temporal Cloud
@@ -165,6 +180,53 @@ func (u *Upstream) cloudRules() []validation.Rule {
 	}
 }
 
+// compile builds the upstream's derived state. Validation has already passed.
+func (u *Upstream) compile() error {
+	host, serverName, errs := u.parseTemplates()
+	if len(errs) > 0 {
+		return errs
+	}
+
+	u.hostTmpl, u.serverNameTmpl = host, serverName
+	u.Namespaces.Rules.compile()
+
+	return nil
+}
+
+// reset drops the upstream's derived state.
+func (u *Upstream) reset() {
+	u.hostTmpl, u.serverNameTmpl = nil, nil
+	u.Namespaces.Rules.reset()
+}
+
+// parseTemplates parses the hostPort and TLS server name as upstream templates,
+// reporting each failure on the field it came from.
+func (u *Upstream) parseTemplates() (host, serverName *template.Template[template.UpstreamContext], errs validation.Errors) {
+	host, err := template.ParseUpstream(u.Listen.HostPort)
+	if err != nil {
+		errs = append(errs, validation.Error{Field: "hostPort", Message: err.Error()})
+	}
+
+	sn := ""
+	if u.Listen.TLS != nil {
+		sn = u.Listen.TLS.ServerName
+	}
+
+	serverName, err = template.ParseUpstream(sn)
+	if err != nil {
+		errs = append(errs, validation.Error{Subject: "tls", Field: "serverName", Message: err.Error()})
+	}
+
+	return host, serverName, errs
+}
+
+// hasLiteralHostPort reports whether the hostPort parses and has no template
+// actions, so it can be checked as a literal host:port.
+func (u *Upstream) hasLiteralHostPort() bool {
+	host, err := template.ParseUpstream(u.Listen.HostPort)
+	return err == nil && host.IsLiteral()
+}
+
 // Validate checks every upstream and requires names and hostPorts to be unique
 // across the list.
 func (ul UpstreamList) Validate() error {
@@ -195,8 +257,11 @@ func (c *NamespaceConfig) Validate() error {
 
 // Local returns the local namespace name that corresponds to remoteNS. If an
 // override matches it wins; otherwise the configured Prefix and Suffix are
-// stripped from remoteNS.
+// stripped from remoteNS. Panics if the rules were never prepared by
+// [Config.Prepare].
 func (r *NamespaceRules) Local(remoteNS string) string {
+	r.mustBeCompiled()
+
 	if v, ok := r.remoteToLocal[remoteNS]; ok {
 		return v
 	}
@@ -206,34 +271,16 @@ func (r *NamespaceRules) Local(remoteNS string) string {
 
 // Remote returns the remote namespace name that corresponds to localNS. If an
 // override matches it wins; otherwise localNS is wrapped with the configured
-// Prefix and Suffix.
+// Prefix and Suffix. Panics if the rules were never prepared by
+// [Config.Prepare].
 func (r *NamespaceRules) Remote(localNS string) string {
+	r.mustBeCompiled()
+
 	if v, ok := r.localToRemote[localNS]; ok {
 		return v
 	}
 
 	return fmt.Sprintf("%s%s%s", r.Prefix, localNS, r.Suffix)
-}
-
-// UnmarshalYAML decodes the rules and builds the override lookup maps, so
-// overrides only take effect on rules decoded from YAML.
-func (r *NamespaceRules) UnmarshalYAML(unmarshal func(any) error) error {
-	type raw NamespaceRules
-
-	var decoded raw
-	if err := unmarshal(&decoded); err != nil {
-		return err
-	}
-
-	*r = NamespaceRules(decoded)
-	r.localToRemote = make(map[string]string)
-	r.remoteToLocal = make(map[string]string)
-	for _, mapping := range r.Overrides {
-		r.localToRemote[mapping.Local] = mapping.Remote
-		r.remoteToLocal[mapping.Remote] = mapping.Local
-	}
-
-	return nil
 }
 
 // Validate checks that override entries are complete and that no local or
@@ -265,6 +312,29 @@ func (r *NamespaceRules) Configured() bool {
 	return r.Prefix != "" || r.Suffix != "" || len(r.Overrides) > 0
 }
 
+// compile builds the override lookup maps from Overrides.
+func (r *NamespaceRules) compile() {
+	r.localToRemote = make(map[string]string, len(r.Overrides))
+	r.remoteToLocal = make(map[string]string, len(r.Overrides))
+	for _, m := range r.Overrides {
+		r.localToRemote[m.Local] = m.Remote
+		r.remoteToLocal[m.Remote] = m.Local
+	}
+}
+
+// reset drops the compiled lookup maps.
+func (r *NamespaceRules) reset() {
+	r.localToRemote, r.remoteToLocal = nil, nil
+}
+
+// mustBeCompiled panics unless compile has run, so an unprepared config fails
+// loudly instead of silently ignoring its overrides.
+func (r *NamespaceRules) mustBeCompiled() {
+	if r.localToRemote == nil {
+		panic("config: NamespaceRules used before Config.Prepare")
+	}
+}
+
 // Validate requires both the local and remote namespace names.
 func (m *NamespaceMapping) Validate() error {
 	return validation.Validate(
@@ -275,9 +345,8 @@ func (m *NamespaceMapping) Validate() error {
 }
 
 // isTemplated reports whether s contains a text/template action ("{{ ... }}").
-// Templated upstream targets (e.g. "{{ .RemoteNamespace }}.acme.cloud:7233")
-// are rendered per-request, so they cannot be validated as a literal host:port
-// at config-load time.
+// Extension servers use it to reject templated hostPorts, which only upstreams
+// may carry.
 func isTemplated(s string) bool {
 	return strings.Contains(s, "{{") && strings.Contains(s, "}}")
 }

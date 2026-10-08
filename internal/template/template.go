@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	texttemplate "text/template"
+	texttemplateparse "text/template/parse"
 )
 
 // probeMeta is the sample metadata a template is rendered against at parse
@@ -74,6 +75,27 @@ func (t *Template[T]) Render(ctx T) (string, error) {
 	}
 
 	return sb.String(), nil
+}
+
+// IsLiteral reports whether the template contains no actions, so it renders to
+// its source text for every context. Comments and trim markers count as
+// actions.
+func (t *Template[T]) IsLiteral() bool {
+	if strings.Contains(t.raw, "{{") {
+		return false
+	}
+
+	if t.tmpl.Tree == nil || t.tmpl.Root == nil {
+		return true
+	}
+
+	for _, n := range t.tmpl.Root.Nodes {
+		if n.Type() != texttemplateparse.NodeText {
+			return false
+		}
+	}
+
+	return true
 }
 
 // String returns the raw template source.

@@ -27,15 +27,6 @@ const extensionKeyPrefix = "extension:"
 // request.
 var Module = fx.Options(
 	fx.Provide(func(p APIParams) (Connections, error) {
-		// api.Module is wired ahead of dataplane.Module, which is what validates
-		// the config as a whole, so re-check here rather than dial whatever
-		// happened to parse. Validating the list rather than each entry also
-		// covers its collection invariants: duplicate names would otherwise
-		// collapse into a single map entry, silently dropping a server.
-		if err := p.Config.ExtensionServers.Validate(); err != nil {
-			return nil, fmt.Errorf("invalid extension server configuration: %w", err)
-		}
-
 		out := make(Connections, len(p.Config.ExtensionServers))
 		conns := make([]*connect.Conn, 0, len(p.Config.ExtensionServers))
 

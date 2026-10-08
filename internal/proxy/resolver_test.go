@@ -21,21 +21,8 @@ import (
 func TestDynamicResolverIsStatic(t *testing.T) {
 	t.Parallel()
 
-	res, err := proxy.NewDynamicResolver(upstreamWith("u", "host:7233", ""))
-	require.NoError(t, err)
+	res := proxy.NewDynamicResolver(prepared(t, upstreamWith("u", "host:7233", "")))
 	require.False(t, res.IsStatic())
-}
-
-func TestNewDynamicResolverRejectsBadTemplates(t *testing.T) {
-	t.Parallel()
-
-	_, err := proxy.NewDynamicResolver(upstreamWith("u", "{{ .Nope }}:7233", ""))
-	require.Error(t, err)
-	require.ErrorContains(t, err, "host template")
-
-	_, err = proxy.NewDynamicResolver(upstreamWith("u", "host:7233", "{{ .Nope }}"))
-	require.Error(t, err)
-	require.ErrorContains(t, err, "server name template")
 }
 
 func TestDynamicResolverResolve(t *testing.T) {
@@ -44,15 +31,14 @@ func TestDynamicResolverResolve(t *testing.T) {
 	up := upstreamWith("cloud", "{{ .RemoteNamespace }}.acme.example:7233", "{{ .RemoteNamespace }}.sni.example")
 
 	var got proxy.RouteData
-	res, err := proxy.NewDynamicResolver(
-		up,
+	res := proxy.NewDynamicResolver(
+		prepared(t, up),
 		proxy.WithRemoteNamespacer(func(s string) string { return s + "-remote" }),
 		proxy.WithOptionsFactory(func(d proxy.RouteData) ([]grpc.DialOption, error) {
 			got = d
 			return []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}, nil
 		}),
 	)
-	require.NoError(t, err)
 
 	key, target, opts, err := res.Resolve(meta.WithNamespace(t.Context(), "orders"))
 	require.NoError(t, err)
@@ -71,8 +57,7 @@ func TestDynamicResolverResolve(t *testing.T) {
 func TestDynamicResolverUsesLastMetadataValue(t *testing.T) {
 	t.Parallel()
 
-	res, err := proxy.NewDynamicResolver(upstreamWith("m", `{{ index .Metadata "dc" }}.acme:7233`, ""))
-	require.NoError(t, err)
+	res := proxy.NewDynamicResolver(prepared(t, upstreamWith("m", `{{ index .Metadata "dc" }}.acme:7233`, "")))
 
 	md := metadata.MD{}
 	md.Append("dc", "old", "new")
@@ -86,15 +71,14 @@ func TestDynamicResolverUsesLastMetadataValue(t *testing.T) {
 func TestDynamicResolverFailsLoudOnOptionsError(t *testing.T) {
 	t.Parallel()
 
-	res, err := proxy.NewDynamicResolver(
-		upstreamWith("u", "host:7233", ""),
+	res := proxy.NewDynamicResolver(
+		prepared(t, upstreamWith("u", "host:7233", "")),
 		proxy.WithOptionsFactory(func(proxy.RouteData) ([]grpc.DialOption, error) {
 			return nil, errors.New("boom")
 		}),
 	)
-	require.NoError(t, err)
 
-	_, _, _, err = res.Resolve(meta.WithNamespace(t.Context(), "orders"))
+	_, _, _, err := res.Resolve(meta.WithNamespace(t.Context(), "orders"))
 	require.Error(t, err)
 	require.Equal(t, codes.Internal, status.Code(err))
 	require.ErrorContains(t, err, "failed to build dial options")
@@ -115,17 +99,16 @@ func TestDynamicResolverRejectsInvalidAddresses(t *testing.T) {
 		{"normal host", "orders.acme.example:7233", false},
 		{"trailing-dot fqdn", "acme.example.:7233", false},
 		{"ipv6 literal", "[::1]:7233", false},
-		{"scheme prefixed", "dns:///host:7233", false},
+		{"scheme prefixed", `dns:///{{ "host" }}:7233`, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			res, err := proxy.NewDynamicResolver(upstreamWith("u", tt.host, ""))
-			require.NoError(t, err)
+			res := proxy.NewDynamicResolver(prepared(t, upstreamWith("u", tt.host, "")))
 
-			_, _, _, err = res.Resolve(meta.WithNamespace(t.Context(), "orders"))
+			_, _, _, err := res.Resolve(meta.WithNamespace(t.Context(), "orders"))
 			if tt.wantErr {
 				require.Error(t, err)
 				require.Equal(t, codes.Internal, status.Code(err))
@@ -142,14 +125,13 @@ func TestDynamicResolverLogsDebugEntry(t *testing.T) {
 
 	up := upstreamWith("cloud", "{{ .RemoteNamespace }}.acme.example:7233", "{{ .RemoteNamespace }}.sni.example")
 	log := logger.NewTestLogger()
-	res, err := proxy.NewDynamicResolver(
-		up,
+	res := proxy.NewDynamicResolver(
+		prepared(t, up),
 		proxy.WithRemoteNamespacer(func(s string) string { return s + "-remote" }),
 		proxy.WithResolverLogger(log),
 	)
-	require.NoError(t, err)
 
-	_, _, _, err = res.Resolve(meta.WithNamespace(t.Context(), "orders"))
+	_, _, _, err := res.Resolve(meta.WithNamespace(t.Context(), "orders"))
 	require.NoError(t, err)
 
 	require.True(t, log.ContainsEntry(
@@ -166,14 +148,13 @@ func TestDynamicResolverLogsDebugEntry(t *testing.T) {
 func TestDynamicResolverNoLoggerNoPanic(t *testing.T) {
 	t.Parallel()
 
-	res, err := proxy.NewDynamicResolver(upstreamWith("u", "host:7233", ""))
-	require.NoError(t, err)
-	_, _, _, err = res.Resolve(meta.WithNamespace(t.Context(), "orders"))
+	res := proxy.NewDynamicResolver(prepared(t, upstreamWith("u", "host:7233", "")))
+	_, _, _, err := res.Resolve(meta.WithNamespace(t.Context(), "orders"))
 	require.NoError(t, err)
 }
 
-func upstreamWith(name, hostPort, serverName string) *config.Upstream {
-	up := &config.Upstream{
+func upstreamWith(name, hostPort, serverName string) config.Upstream {
+	up := config.Upstream{
 		Name:   name,
 		Listen: config.ListenConfig{HostPort: hostPort},
 	}
@@ -183,4 +164,14 @@ func upstreamWith(name, hostPort, serverName string) *config.Upstream {
 	}
 
 	return up
+}
+
+// prepared returns u after preparing it inside a minimal config.
+func prepared(t *testing.T, u config.Upstream) *config.Upstream {
+	t.Helper()
+
+	cfg := &config.Config{Listen: config.ListenConfig{HostPort: ":8080"}, Upstreams: []config.Upstream{u}}
+	require.NoError(t, cfg.Prepare())
+
+	return &cfg.Upstreams[0]
 }

@@ -150,7 +150,7 @@ func TestLoad_AllowedServicesDefaults(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg, err := config.Load(strings.NewReader(tt.yaml))
+			cfg, err := config.Load(strings.NewReader(upstreamYAML + tt.yaml))
 			require.NoError(t, err)
 			require.Equal(t, tt.want, cfg.AllowedServices)
 		})
@@ -198,7 +198,7 @@ func TestConfig_Validate_AllowedServices(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assertTuples(t, base(tt.svcs).Validate(), tt.wantTuples)
+			assertTuples(t, base(tt.svcs).Prepare(), tt.wantTuples)
 		})
 	}
 }

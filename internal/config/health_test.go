@@ -23,7 +23,7 @@ func TestHealth_Defaults(t *testing.T) {
 	}{
 		{
 			name:         "absent health block takes both defaults",
-			yaml:         "hostPort: :8080\n",
+			yaml:         "",
 			wantInterval: 30 * time.Second,
 			wantTimeout:  5 * time.Second,
 		},
@@ -45,7 +45,7 @@ func TestHealth_Defaults(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg, err := config.Load(strings.NewReader(tt.yaml))
+			cfg, err := config.Load(strings.NewReader("hostPort: :8080\n" + upstreamYAML + tt.yaml))
 			require.NoError(t, err)
 			require.Equal(t, tt.wantInterval, cfg.Health.CheckInterval())
 			require.Equal(t, tt.wantTimeout, cfg.Health.CheckTimeout())

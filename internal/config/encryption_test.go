@@ -66,22 +66,22 @@ func TestLoad_DEKCacheSizeDefault(t *testing.T) {
 	}{
 		{
 			name: "an absent encryption block",
-			yaml: "hostPort: :8080\n",
+			yaml: "",
 			want: crypto.DefaultCacheSize,
 		},
 		{
 			name: "an encryption block that omits cacheSize",
-			yaml: "hostPort: :8080\nencryption:\n  enabled: true\n",
+			yaml: "encryption:\n  enabled: true\n  default:\n    uri: testing://a2V5\n    duration: 1h\n    renewBefore: 10m\n",
 			want: crypto.DefaultCacheSize,
 		},
 		{
 			name: "cacheSize written as zero",
-			yaml: "hostPort: :8080\nencryption:\n  cacheSize: 0\n",
+			yaml: "encryption:\n  cacheSize: 0\n",
 			want: 0,
 		},
 		{
 			name: "cacheSize written as a size",
-			yaml: "hostPort: :8080\nencryption:\n  cacheSize: 25\n",
+			yaml: "encryption:\n  cacheSize: 25\n",
 			want: 25,
 		},
 	}
@@ -90,7 +90,7 @@ func TestLoad_DEKCacheSizeDefault(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg, err := config.Load(strings.NewReader(tt.yaml))
+			cfg, err := config.Load(strings.NewReader("hostPort: :8080\n" + upstreamYAML + tt.yaml))
 			require.NoError(t, err)
 			require.Equal(t, tt.want, cfg.Encryption.DEKCacheSize())
 		})
@@ -404,7 +404,7 @@ func TestConfig_ValidateExtensionKeyReferences(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assertTuples(t, base(tt.encryption).Validate(), tt.wantTuples)
+			assertTuples(t, base(tt.encryption).Prepare(), tt.wantTuples)
 		})
 	}
 }

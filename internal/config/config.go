@@ -35,10 +35,9 @@ type (
 	}
 )
 
-// Load reads and parses the YAML config specified in the Reader.
-// Values of the form ${VAR} are replaced with the corresponding environment
-// variable. A config that names no allowed services gets the default set, and
-// an empty metrics hostPort or namespace gets its default.
+// Load reads and parses the YAML config specified in the Reader, then prepares
+// it (see [Config.Prepare]). Values of the form ${VAR} are replaced with the
+// corresponding environment variable.
 func Load(r io.Reader) (*Config, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -52,22 +51,14 @@ func Load(r io.Reader) (*Config, error) {
 		return nil, err
 	}
 
-	// The allowlist defaults here rather than in a Services unmarshaler because
-	// an absent key never reaches one, and an absent allowedServices is how most
-	// configs are written.
-	cfg.AllowedServices = cfg.AllowedServices.Allowed()
-
-	// Defaulted here for the same reason as the allowlist: an absent metrics
-	// block never reaches an unmarshaler, and most configs omit it entirely.
-	// The config is the only way to set these, so defaulting is what keeps
-	// /metrics served for a config that says nothing about it.
-	cfg.Metrics.HostPort = cmp.Or(cfg.Metrics.HostPort, ":9090")
-	cfg.Metrics.Namespace = cmp.Or(cfg.Metrics.Namespace, "tmprl_proxy")
+	if err := cfg.Prepare(); err != nil {
+		return nil, err
+	}
 
 	return &cfg, nil
 }
 
-// LoadFile reads and parses the YAML config file at path.
+// LoadFile reads, parses, and prepares the YAML config file at path.
 // Values of the form ${VAR} are replaced with the corresponding environment variable.
 func LoadFile(path string) (*Config, error) {
 	f, err := os.Open(path)
@@ -79,17 +70,40 @@ func LoadFile(path string) (*Config, error) {
 	return Load(f)
 }
 
-// Validate requires at least one upstream, checks the listen configuration and
+// Prepare fills defaults into zero fields, validates the result, and compiles
+// derived state such as namespace override maps. It recomputes on every call,
+// so a config mutated after Prepare can be prepared again; on error no compiled
+// state is left behind. It modifies the config in place, including slice
+// elements, and is not safe for concurrent use.
+func (c *Config) Prepare() error {
+	c.reset()
+	c.applyDefaults()
+
+	if err := c.validate(); err != nil {
+		return err
+	}
+
+	if err := c.compile(); err != nil {
+		c.reset()
+		return err
+	}
+
+	return nil
+}
+
+// validate requires at least one upstream, checks the listen configuration and
 // every upstream, requires upstream names to be unique, and checks that every
 // cross-reference names something configured: routing references an upstream,
 // while encryption key URIs and external authentication reference an extension
-// server. A missing upstream surfaces on the "upstreams" field. Failures are
-// stamped with the failing node's YAML path as the subject (e.g.
+// server. The codec server's auth, if enabled, is also checked against known
+// extension servers. A missing upstream surfaces on the "upstreams" field.
+// Failures are stamped with the failing node's YAML path as the subject (e.g.
 // "upstreams[0].namespaces.rules.overrides[1]"). A duplicate name surfaces on the
 // "upstreams[name]" field, an unknown routing reference on the
 // "routing"/"routing.rules[i]" subject, and an unknown extension server on the
-// referring "encryption.*" or "auth.external" subject.
-func (c *Config) Validate() error {
+// referring "encryption.*", "auth.external", or "http.codecServer.auth.external"
+// subject.
+func (c *Config) validate() error {
 	rules := []validation.Rule{
 		validation.Field("upstreams", c.Upstreams, func(us UpstreamList) error {
 			if len(us) == 0 {
@@ -130,10 +144,45 @@ func (c *Config) Validate() error {
 		knownExtensions[c.ExtensionServers[i].Name] = struct{}{}
 	}
 
-	rules = append(rules, c.Auth.referentialRules(knownExtensions)...)
+	rules = append(rules, c.Auth.referentialRules("auth.external", knownExtensions)...)
+	rules = append(rules, c.HTTP.referentialRules(knownExtensions)...)
 	rules = append(rules, c.Routing.referentialRules(known)...)
 	rules = append(rules, c.Encryption.referentialRules(knownExtensions)...)
 	return validation.Validate("", rules...)
+}
+
+// compile builds every node's derived state. It runs only after validate
+// passes, and uses the same helpers validate does.
+func (c *Config) compile() error {
+	for i := range c.Upstreams {
+		if err := c.Upstreams[i].compile(); err != nil {
+			return fmt.Errorf("upstreams[%d]: %w", i, err)
+		}
+	}
+
+	if err := c.Routing.compile(); err != nil {
+		return fmt.Errorf("routing: %w", err)
+	}
+
+	return nil
+}
+
+// reset drops every node's derived state.
+func (c *Config) reset() {
+	for i := range c.Upstreams {
+		c.Upstreams[i].reset()
+	}
+
+	c.Routing.reset()
+}
+
+// applyDefaults fills the fields that most configs omit. An absent block never
+// reaches an unmarshaler, so defaults live here rather than in UnmarshalYAML,
+// and a Config built in code gets them too.
+func (c *Config) applyDefaults() {
+	c.AllowedServices = c.AllowedServices.Allowed()
+	c.Metrics.HostPort = cmp.Or(c.Metrics.HostPort, ":9090")
+	c.Metrics.Namespace = cmp.Or(c.Metrics.Namespace, "tmprl_proxy")
 }
 
 // unmarshalURL decodes a YAML scalar into a url.URL by parsing its string form.

@@ -46,7 +46,45 @@ type CloudAPI struct {
 // absent tls verifies against the system roots, and Validate rejects
 // credentials on an insecure hop. The name is derived from src, so Cloud
 // upstreams with different credentials get distinct connections.
-func (c CloudAPI) Upstream(src *Upstream) *Upstream {
+func (c CloudAPI) Upstream(src *Upstream) (*Upstream, error) {
+	up := c.upstream(src)
+	if err := up.compile(); err != nil {
+		return nil, err
+	}
+
+	return up, nil
+}
+
+// IsSaasAPI reports whether the configured control plane addresses Temporal
+// Cloud's own API rather than somewhere else. It is false only when an operator
+// pointed the block elsewhere, which is legitimate for a test double or a
+// private environment, so callers report it rather than reject it.
+func (c CloudAPI) IsSaasAPI() bool {
+	if c.Listen.HostPort == "" {
+		return true
+	}
+
+	return cloud.IsEndpoint(c.Listen.HostPort)
+}
+
+// Validate checks the control plane as it will actually be dialled, defaulted
+// address included, by validating the [Upstream] it renders to. An address
+// that is not a Cloud endpoint is not rejected, since a test double or private
+// environment may legitimately use one; it is logged as a warning at startup
+// instead.
+func (c CloudAPI) Validate() error {
+	return c.upstream(&Upstream{Name: "cloudApi"}).Validate()
+}
+
+// IsZero reports whether the override says nothing at all, which is what an
+// absent block leaves behind. Callers use it to tell a configuration that asked
+// for something from one that never mentioned it.
+func (c CloudAPI) IsZero() bool {
+	return c == CloudAPI{}
+}
+
+// upstream builds the control plane's [Upstream] for src without compiling it.
+func (c CloudAPI) upstream(src *Upstream) *Upstream {
 	up := &Upstream{
 		Name:        src.Name + "/cloud-api",
 		Cloud:       true,
@@ -69,36 +107,8 @@ func (c CloudAPI) Upstream(src *Upstream) *Upstream {
 	return up
 }
 
-// IsSaasAPI reports whether the configured control plane addresses Temporal
-// Cloud's own API rather than somewhere else. It is false only when an operator
-// pointed the block elsewhere, which is legitimate for a test double or a
-// private environment, so callers report it rather than reject it.
-func (c CloudAPI) IsSaasAPI() bool {
-	if c.Listen.HostPort == "" {
-		return true
-	}
-
-	return cloud.IsEndpoint(c.Listen.HostPort)
-}
-
-// Validate checks the control plane as it will actually be dialled, defaulted
-// address included, by validating the [Upstream] it renders to. An address
-// that is not a Cloud endpoint is not rejected, since a test double or private
-// environment may legitimately use one; it is logged as a warning at startup
-// instead.
-func (c CloudAPI) Validate() error {
-	return c.Upstream(&Upstream{Name: "cloudApi"}).Validate()
-}
-
 // Validate checks the Cloud API override as it will be dialled. An override
 // nobody wrote is the zero one, which describes the defaults and passes.
 func (t APITranslations) Validate() error {
 	return validation.Validate("", validation.Nested("cloudApi", t.CloudAPI))
-}
-
-// IsZero reports whether the override says nothing at all, which is what an
-// absent block leaves behind. Callers use it to tell a configuration that asked
-// for something from one that never mentioned it.
-func (c CloudAPI) IsZero() bool {
-	return c == CloudAPI{}
 }
