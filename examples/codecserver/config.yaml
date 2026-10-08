@@ -26,14 +26,15 @@ encryption:
     duration: 1h
     renewBefore: 15m
 
-codecServer:
-  enabled: true
+http:
   # Plaintext with no auth block is only accepted on a loopback bind; anything
   # else requires both tls and auth.
   hostPort: 127.0.0.1:8081
   insecure: true
-  cors:
-    # The browser's origin is whichever host was typed, so list both.
-    origins:
-      - http://localhost:8233
-      - http://127.0.0.1:8233
+  codecServer:
+    enabled: true
+    cors:
+      # The browser's origin is whichever host was typed, so list both.
+      origins:
+        - http://localhost:8233
+        - http://127.0.0.1:8233

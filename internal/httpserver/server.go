@@ -1,4 +1,4 @@
-package codecserver
+package httpserver
 
 import (
 	"context"
@@ -15,13 +15,13 @@ import (
 
 const (
 	// readHeaderTimeout and readTimeout bound a slow client. Unlike the gateway
-	// there are no long-poll methods here, so a short budget is safe.
+	// no route served here long-polls, so a short budget is safe.
 	readHeaderTimeout = 5 * time.Second
 	readTimeout       = 10 * time.Second
 )
 
-// Server serves the codec server routes over HTTP on its own port, separate
-// from the gateway's.
+// Server serves the HTTP route groups on one port, separate from the
+// gateway's.
 type Server struct {
 	svr      *http.Server
 	hostPort string
@@ -33,9 +33,9 @@ type Server struct {
 	addr net.Addr
 }
 
-// NewServer returns a Server that serves h on hostPort. It binds nothing,
+// New returns a Server that serves h on hostPort. It binds nothing,
 // [Server.Start] does that.
-func NewServer(
+func New(
 	hostPort string,
 	h http.Handler,
 	tlsCfg *tls.Config,
@@ -68,7 +68,7 @@ func (s *Server) Addr() net.Addr {
 // Start binds the listener and serves in a background goroutine until
 // [Server.Stop], returning once the listener is accepting. It returns an error
 // only if the bind fails; a serving failure after that reaches the abort
-// function given to [NewServer] instead.
+// function given to [New] instead.
 //
 // Call it at most once. A Server is not restartable after [Server.Stop].
 func (s *Server) Start(ctx context.Context) error {
@@ -82,7 +82,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.mu.Unlock()
 
 	log := s.logger.With(tag.Stringer("addr", lis.Addr()))
-	log.Info("Starting the codec server")
+	log.Info("Starting the HTTP server")
 
 	go func() {
 		// ServeTLS with empty paths uses the certificates already on TLSConfig.
@@ -92,7 +92,7 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 
 		if err := serve(lis); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("Codec server stopped serving", tag.Error(err))
+			log.Error("HTTP server stopped serving", tag.Error(err))
 			if s.abort != nil {
 				s.abort(err)
 			}
@@ -106,7 +106,7 @@ func (s *Server) Start(ctx context.Context) error {
 // calling the abort function. Returns ctx's error if the drain does not finish
 // in time, nil otherwise.
 func (s *Server) Stop(ctx context.Context) error {
-	s.logger.Info("Shutting down the codec server")
+	s.logger.Info("Shutting down the HTTP server")
 
 	if err := s.svr.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err

@@ -20,6 +20,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/codecserver"
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/dataplane"
+	"github.com/temporalio/temporal-proxy/internal/httpserver"
 	"github.com/temporalio/temporal-proxy/internal/kms"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/protoutil"
@@ -46,11 +47,11 @@ const (
 // Fixture is a running dataplane and the connections needed to drive it. It
 // stops when the test ends.
 type Fixture struct {
-	t           *testing.T
-	dp          *dataplane.Dataplane
-	conn        *grpc.ClientConn
-	reg         prometheus.Gatherer
-	codecServer *codecserver.Server
+	t          *testing.T
+	dp         *dataplane.Dataplane
+	conn       *grpc.ClientConn
+	reg        prometheus.Gatherer
+	httpServer *httpserver.Server
 }
 
 type (
@@ -145,8 +146,8 @@ func Start(t *testing.T, cfg *config.Config, opts ...Option) *Fixture {
 	// cleanups run, and a shutdown must not inherit that.
 	t.Cleanup(func() { requireCleanStop(t, dp.Stop(stopContext(t))) })
 
-	// Start builds no codec server: it is a fx-only module, so CodecServerAddr
-	// reads nil here rather than dereferencing one that was never built.
+	// Start builds no HTTP server: it is a fx-only module, so HTTPAddr reads
+	// nil here rather than dereferencing one that was never built.
 	return newFixture(t, dp, reg, nil)
 }
 
@@ -165,7 +166,7 @@ func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 	reg := prometheus.NewRegistry()
 
 	var dp *dataplane.Dataplane
-	var codecSvr *codecserver.Server
+	var httpSvr *httpserver.Server
 	app := fx.New(
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
 		fx.Supply(cfg),
@@ -179,6 +180,7 @@ func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 		codecserver.Module,
 		connect.Module,
 		dataplane.Module,
+		httpserver.Module,
 		kms.Module,
 		metrics.Module,
 		protoutil.Module,
@@ -186,7 +188,7 @@ func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 		// favour of supplying a Config; this is the allowlist provider it would
 		// otherwise contribute.
 		fx.Provide(config.NewAllowlist),
-		fx.Populate(&dp, &codecSvr),
+		fx.Populate(&dp, &httpSvr),
 		fx.NopLogger,
 	)
 	require.NoError(t, app.Err())
@@ -202,7 +204,7 @@ func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 		requireCleanStop(t, app.Stop(stopCtx))
 	})
 
-	return newFixture(t, dp, reg, codecSvr)
+	return newFixture(t, dp, reg, httpSvr)
 }
 
 // Gatherer is the registry every collector in this plane registered with. A
@@ -217,15 +219,15 @@ func (f *Fixture) Addr() string { return f.dp.Addr().String() }
 // does not cover.
 func (f *Fixture) Conn() *grpc.ClientConn { return f.conn }
 
-// CodecServerAddr is the address the codec server is accepting on, empty when
-// the configuration did not enable one, or when the fixture was built through
-// [Start], which never wires the codec server module at all.
-func (f *Fixture) CodecServerAddr() string {
-	if f.codecServer == nil {
+// HTTPAddr is the address the HTTP server is accepting on, empty when the
+// configuration enabled no route group, or when the fixture was built through
+// [Start], which never wires the HTTP server module at all.
+func (f *Fixture) HTTPAddr() string {
+	if f.httpServer == nil {
 		return ""
 	}
 
-	return f.codecServer.Addr().String()
+	return f.httpServer.Addr().String()
 }
 
 // Client is a WorkflowService client on the gateway connection.
@@ -272,11 +274,11 @@ func applyDefaults(cfg *config.Config) {
 }
 
 // newFixture dials the running gateway. gRPC connects lazily, so this opens
-// nothing until the first request. codecSvr is nil whenever the caller built
-// no codec server, either because [Start] never wires the module or because
-// the configuration left it disabled.
+// nothing until the first request. httpSvr is nil whenever the caller built
+// no HTTP server, either because [Start] never wires the module or because
+// the configuration enabled no route group.
 func newFixture(
-	t *testing.T, dp *dataplane.Dataplane, reg prometheus.Gatherer, codecSvr *codecserver.Server,
+	t *testing.T, dp *dataplane.Dataplane, reg prometheus.Gatherer, httpSvr *httpserver.Server,
 ) *Fixture {
 	t.Helper()
 
@@ -286,7 +288,7 @@ func newFixture(
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 
-	return &Fixture{t: t, dp: dp, conn: conn, reg: reg, codecServer: codecSvr}
+	return &Fixture{t: t, dp: dp, conn: conn, reg: reg, httpServer: httpSvr}
 }
 
 // stopContext returns a context for shutdown that does not inherit the test's

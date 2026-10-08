@@ -55,12 +55,12 @@ go run ./cmd/proxy serve -c examples/codecserver/config.yaml
 ```
 
 ```text
-{"level":"info","namespace":"default","uri":"testing://<redacted>","time":"2026-10-06T14:34:19-04:00","message":"Registering crypto key"}
-{"level":"warn","component":"codecserver","time":"2026-10-06T14:34:19-04:00","message":"Codec server is running without authentication, which is only allowed on a loopback bind"}
-{"level":"info","component":"codecserver","addr":"127.0.0.1:8081","time":"2026-10-06T14:34:19-04:00","message":"Starting the codec server"}
-{"level":"info","component":"metrics","addr":":9090","time":"2026-10-06T14:34:19-04:00","message":"Starting metrics server"}
-{"level":"warn","addr":"127.0.0.1:7234","time":"2026-10-06T14:34:19-04:00","message":"Running with insecure credentials. Configure TLS for production use."}
-{"level":"info","addr":"127.0.0.1:7234","time":"2026-10-06T14:34:19-04:00","message":"Starting the server"}
+{"level":"info","namespace":"default","uri":"testing://<redacted>","time":"2026-10-08T06:49:18-04:00","message":"Registering crypto key"}
+{"level":"warn","component":"codecserver","time":"2026-10-08T06:49:18-04:00","message":"Codec server is running without authentication, which is only allowed on a loopback bind"}
+{"level":"warn","addr":"127.0.0.1:7234","time":"2026-10-08T06:49:18-04:00","message":"Running with insecure credentials. Configure TLS for production use."}
+{"level":"info","addr":"127.0.0.1:7234","time":"2026-10-08T06:49:18-04:00","message":"Starting the server"}
+{"level":"info","component":"httpserver","addr":"127.0.0.1:8081","time":"2026-10-08T06:49:18-04:00","message":"Starting the HTTP server"}
+{"level":"info","component":"metrics","addr":":9090","time":"2026-10-08T06:49:18-04:00","message":"Starting metrics server"}
 ```
 
 These warnings are expected here. The codec server runs without authentication because it is bound to loopback, and the
@@ -160,14 +160,14 @@ Both paths share one set of keys, so a payload sealed on either one opens on the
 ## Beyond localhost
 
 This configuration is only accepted because the codec server is bound to loopback. Anywhere else, the proxy requires
-both `tls` and `auth` under `codecServer`, and the Web UI will not send an access token over plain HTTP. See the
+both `http.tls` and `http.codecServer.auth`, and the Web UI will not send an access token over plain HTTP. See the
 [codec server section](../../README.md#codec-server) of the main README for the configuration keys and what a reachable
 codec server exposes, and [the Cloud UI guide](../../docs/ui/cloud.md) for a browser-facing setup.
 
 ## Troubleshooting
 
 When the UI cannot decode a payload it shows the sealed one instead of an error. If the input still reads as a base64
-blob, check the browser console. The usual cause is an origin missing from `codecServer.cors.origins`, such as opening
+blob, check the browser console. The usual cause is an origin missing from `http.codecServer.cors.origins`, such as opening
 the UI on a host or port the config does not list: the codec server answers the preflight without an
 `Access-Control-Allow-Origin` header, so the browser never sends the request itself.
 

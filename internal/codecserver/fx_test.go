@@ -1,8 +1,8 @@
 package codecserver_test
 
 import (
-	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -14,72 +14,64 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/api"
 	"github.com/temporalio/temporal-proxy/internal/codecserver"
 	"github.com/temporalio/temporal-proxy/internal/config"
+	"github.com/temporalio/temporal-proxy/internal/httpserver"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/proxy"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
 
-// Real time and a real listener rather than testing/synctest: the bubble's
-// clock only advances once every goroutine in it is durably blocked, and a
-// served connection sits on real network reads, which never qualify. The
-// server's timeouts are not asserted here for the same reason.
-func TestServerStartsAndReportsItsAddress(t *testing.T) {
-	t.Parallel()
-
-	svr := codecserver.NewServer(
-		"127.0.0.1:0",
-		codecserver.Handler(&fakeCodecs{}, fakeNamespaces{}, testReporter(t)),
-		nil,
-		logger.NewNoopLogger(),
-		nil,
-	)
-
-	require.Nil(t, svr.Addr())
-	require.NoError(t, svr.Start(t.Context()))
-	require.NotNil(t, svr.Addr())
-
-	// t.Context() is already cancelled by the time cleanups run, so the drain
-	// needs its own context.
-	t.Cleanup(func() { require.NoError(t, svr.Stop(context.Background())) })
-
-	res, err := http.Post(
-		"http://"+svr.Addr().String()+"/decode",
-		"application/json",
-		strings.NewReader(`{"payloads":[]}`),
-	)
-	require.NoError(t, err)
-	defer func() { _ = res.Body.Close() }()
-
-	require.Equal(t, http.StatusOK, res.StatusCode)
+type contributed struct {
+	fx.In
+	Routes []httpserver.Route `group:"http_routes"`
 }
 
-func TestModuleIsInertWhenDisabled(t *testing.T) {
+func TestModuleContributesRoutes(t *testing.T) {
 	t.Parallel()
 
-	// A disabled block must not bind anything, so the module must produce no
-	// Server at all rather than one that happens not to have started. Starting
-	// the app also exercises the lifecycle hook itself: with no Server, it must
-	// never be appended, so there is nothing for OnStart to call on a nil
-	// receiver.
-	cfg := &config.Config{}
-	require.False(t, cfg.CodecServer.Enabled)
+	tests := []struct {
+		name    string
+		enabled bool
+	}{
+		{name: "none when disabled"},
+		{name: "the codec routes at the root when enabled", enabled: true},
+	}
 
-	var svr *codecserver.Server
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	app := fx.New(
-		fx.Supply(cfg),
-		fx.Provide(func() (*proxy.Codecs, error) { return proxy.NewCodecs(proxy.CodecOptions{}) }),
-		fx.Provide(func() api.Connections { return api.Connections{} }),
-		fx.Provide(func() *metrics.Factory {
-			return metrics.New("test", promauto.With(prometheus.NewRegistry()))
-		}),
-		fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
-		codecserver.Module,
-		fx.Populate(&svr),
-	)
-	require.NoError(t, app.Err())
-	require.Nil(t, svr)
+			cfg := &config.Config{HTTP: config.HTTP{CodecServer: config.CodecServer{Enabled: tc.enabled}}}
 
-	require.NoError(t, app.Start(t.Context()))
-	t.Cleanup(func() { require.NoError(t, app.Stop(context.Background())) })
+			var routes []httpserver.Route
+
+			app := fx.New(
+				fx.Supply(cfg),
+				fx.Provide(func() (*proxy.Codecs, error) { return proxy.NewCodecs(proxy.CodecOptions{}) }),
+				fx.Provide(func() api.Connections { return api.Connections{} }),
+				fx.Provide(func() *metrics.Factory {
+					return metrics.New("test", promauto.With(prometheus.NewRegistry()))
+				}),
+				fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
+				codecserver.Module,
+				fx.Invoke(func(c contributed) { routes = c.Routes }),
+				fx.NopLogger,
+			)
+			require.NoError(t, app.Err())
+
+			if !tc.enabled {
+				require.Empty(t, routes)
+
+				return
+			}
+
+			require.Len(t, routes, 1)
+			require.Equal(t, "/", routes[0].Pattern)
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/decode", strings.NewReader(`{"payloads":[]}`))
+			req.Header.Set("Content-Type", "application/json")
+			routes[0].Handler.ServeHTTP(rec, req)
+			require.Equal(t, http.StatusOK, rec.Code)
+		})
+	}
 }
