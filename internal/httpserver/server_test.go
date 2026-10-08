@@ -18,7 +18,7 @@ import (
 func TestServerStartsAndReportsItsAddress(t *testing.T) {
 	t.Parallel()
 
-	svr := httpserver.NewServer(
+	svr := httpserver.New(
 		"127.0.0.1:0",
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) }),
 		nil,
@@ -31,8 +31,8 @@ func TestServerStartsAndReportsItsAddress(t *testing.T) {
 	require.NotNil(t, svr.Addr())
 
 	// t.Context() is already cancelled by the time cleanups run, so the drain
-	// needs its own context.
-	t.Cleanup(func() { require.NoError(t, svr.Stop(context.Background())) })
+	// detaches from its cancellation.
+	t.Cleanup(func() { require.NoError(t, svr.Stop(context.WithoutCancel(t.Context()))) })
 
 	res, err := http.Get("http://" + svr.Addr().String() + "/")
 	require.NoError(t, err)

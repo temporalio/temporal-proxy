@@ -33,9 +33,9 @@ type Server struct {
 	addr net.Addr
 }
 
-// NewServer returns a Server that serves h on hostPort. It binds nothing,
+// New returns a Server that serves h on hostPort. It binds nothing,
 // [Server.Start] does that.
-func NewServer(
+func New(
 	hostPort string,
 	h http.Handler,
 	tlsCfg *tls.Config,
@@ -68,7 +68,7 @@ func (s *Server) Addr() net.Addr {
 // Start binds the listener and serves in a background goroutine until
 // [Server.Stop], returning once the listener is accepting. It returns an error
 // only if the bind fails; a serving failure after that reaches the abort
-// function given to [NewServer] instead.
+// function given to [New] instead.
 //
 // Call it at most once. A Server is not restartable after [Server.Stop].
 func (s *Server) Start(ctx context.Context) error {

@@ -3,6 +3,7 @@ package httpserver_test
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"testing"
 
@@ -14,7 +15,7 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 )
 
-func TestModuleMountsEveryGroupsRoutes(t *testing.T) {
+func TestModuleMountsEveryRouteGroup(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{
@@ -38,11 +39,38 @@ func TestModuleMountsEveryGroupsRoutes(t *testing.T) {
 	)
 	require.NoError(t, app.Err())
 	require.NoError(t, app.Start(t.Context()))
-	t.Cleanup(func() { require.NoError(t, app.Stop(context.Background())) })
+	t.Cleanup(func() { require.NoError(t, app.Stop(context.WithoutCancel(t.Context()))) })
 
 	base := "http://" + svr.Addr().String()
 	require.Equal(t, "root", get(t, base+"/decode"))
 	require.Equal(t, "other", get(t, base+"/other/thing"))
+}
+
+func TestModuleFailsToStartWhenThePortIsTaken(t *testing.T) {
+	t.Parallel()
+
+	// Start binds before it returns, so a taken port fails the app's start
+	// rather than surfacing later through the abort path.
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = held.Close() })
+
+	app := newTestApp(t, config.ListenConfig{HostPort: held.Addr().String(), Insecure: true})
+	require.NoError(t, app.Err())
+
+	require.ErrorContains(t, app.Start(t.Context()), "address already in use")
+}
+
+func TestModuleFailsWhenTheTLSMaterialWillNotLoad(t *testing.T) {
+	t.Parallel()
+
+	missing := t.TempDir() + "/missing.pem"
+	app := newTestApp(t, config.ListenConfig{
+		HostPort: "127.0.0.1:0",
+		TLS:      &config.TLSConfig{Cert: missing, Key: missing},
+	})
+
+	require.ErrorContains(t, app.Err(), "failed to load server key pair")
 }
 
 func TestModuleIsInertWithNoRoutes(t *testing.T) {
@@ -67,7 +95,22 @@ func TestModuleIsInertWithNoRoutes(t *testing.T) {
 	require.Nil(t, svr)
 
 	require.NoError(t, app.Start(t.Context()))
-	t.Cleanup(func() { require.NoError(t, app.Stop(context.Background())) })
+	t.Cleanup(func() { require.NoError(t, app.Stop(context.WithoutCancel(t.Context()))) })
+}
+
+// newTestApp builds the module serving a single root route on listen.
+func newTestApp(t *testing.T, listen config.ListenConfig) *fx.App {
+	t.Helper()
+
+	return fx.New(
+		fx.Supply(&config.Config{HTTP: config.HTTP{Listen: listen}}),
+		fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
+		fx.Provide(httpserver.AsRoutes(func() []httpserver.Route {
+			return []httpserver.Route{{Pattern: "/", Handler: body("root")}}
+		})),
+		httpserver.Module,
+		fx.NopLogger,
+	)
 }
 
 func body(s string) http.Handler {

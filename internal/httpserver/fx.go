@@ -68,7 +68,7 @@ func newFromParams(p Params) (*Server, error) {
 		mux.Handle(r.Pattern, r.Handler)
 	}
 
-	svr := NewServer(cfg.HostPort, mux, tlsCfg, p.Logger.With(tag.Component("httpserver")), func(error) {
+	svr := New(cfg.HostPort, mux, tlsCfg, p.Logger.With(tag.Component("httpserver")), func(error) {
 		_ = p.Shutdowner.Shutdown(fx.ExitCode(1))
 	})
 

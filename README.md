@@ -194,22 +194,22 @@ The codec server is a route group on the proxy's HTTP server, which listens on i
 gateway's. The listener is configured under `http:`, and the codec server under `http.codecServer:`. Nothing binds
 unless a route group is enabled.
 
-| Key                                 | Default | Meaning                                                                                                |
-| ----------------------------------- | ------- | ------------------------------------------------------------------------------------------------------ |
-| `http.hostPort`                     | none    | Address the HTTP server listens on.                                                                    |
-| `http.insecure`                     | `false` | Serve plaintext instead of TLS. Validation only allows this on a loopback bind.                        |
-| `http.tls`                          | none    | Certificate and key to terminate TLS with.                                                             |
-| `http.codecServer.enabled`          | `false` | Turns the codec server on.                                                                             |
-| `http.codecServer.cors.origins`     | none    | Origins a browser-based caller, such as the Cloud UI, may reach the codec server from.                 |
-| `http.codecServer.cors.credentials` | `false` | Whether a browser may send cookies and `Authorization` alongside an allowed origin.                    |
-| `http.codecServer.auth`             | none    | Static-token or JWKS authentication. Required, along with `http.tls`, once `hostPort` is not loopback. |
+| Key                                 | Default | Meaning                                                                                                     |
+| ----------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------- |
+| `http.hostPort`                     | none    | Address the HTTP server listens on.                                                                         |
+| `http.insecure`                     | `false` | Serve plaintext instead of TLS. Validation only allows this on a loopback bind.                             |
+| `http.tls`                          | none    | Certificate and key to terminate TLS with.                                                                  |
+| `http.codecServer.enabled`          | `false` | Turns the codec server on.                                                                                  |
+| `http.codecServer.cors.origins`     | none    | Origins a browser-based caller, such as the Cloud UI, may reach the codec server from.                      |
+| `http.codecServer.cors.credentials` | `false` | Whether a browser may send cookies and `Authorization` alongside an allowed origin.                         |
+| `http.codecServer.auth`             | none    | Static-token or JWKS authentication. Required, along with `http.tls`, once `http.hostPort` is not loopback. |
 
 In v0.8.0, these keys all lived in a top-level `codecServer:` block. A config that still has one fails validation
 rather than starting with the codec server silently off.
 
 A codec server holds the same KMS unwrap permission the proxy itself does: whoever can reach it can decrypt anything
-an operator's keys protect. That is why configuration requires authentication and TLS the moment `hostPort` is not
-loopback, and why a loopback bind, meant for local development where the caller is on the same host, is left
+an operator's keys protect. That is why configuration requires authentication and TLS the moment `http.hostPort` is
+not loopback, and why a loopback bind, meant for local development where the caller is on the same host, is left
 unauthenticated by default rather than by oversight. Point one at anything but `127.0.0.1` or `localhost` only once
 `auth` and `tls` are configured.
 

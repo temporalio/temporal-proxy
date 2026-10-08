@@ -113,7 +113,7 @@ func TestHTTPValidate(t *testing.T) {
 	}
 }
 
-func TestLoad_HTTP(t *testing.T) {
+func TestLoadHTTP(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := config.Load(strings.NewReader(
@@ -130,7 +130,7 @@ func TestLoad_HTTP(t *testing.T) {
 // A v0.8.0 config put the codec server at the top level. Load ignores keys it
 // does not know, so without this rule the block would silently turn into a
 // disabled codec server.
-func TestValidate_RetiredCodecServerIsRejected(t *testing.T) {
+func TestValidateRejectsRetiredCodecServer(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := config.Load(strings.NewReader(
