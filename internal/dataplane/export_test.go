@@ -2,7 +2,6 @@ package dataplane
 
 import (
 	"net"
-	"slices"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/internal/metrics"
@@ -10,18 +9,6 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/router"
 	"github.com/temporalio/temporal-proxy/internal/server"
 )
-
-// Listeners is the set of listeners Start bound, exported for tests that break
-// serving out from under a running plane. Nothing a caller can reach does that:
-// Stop and cancelling the serving context are both clean shutdowns, and a taken
-// port fails before serving starts, so closing these is the only way into the
-// unexpected-exit path.
-func (d *Dataplane) Listeners() []net.Listener {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	return slices.Clone(d.listeners)
-}
 
 // Reporters exposes the metric reporters built for one dataplane so tests can
 // pin the exact metric surface they register.
@@ -40,4 +27,13 @@ func NewReporters(f *metrics.Factory, c *config.Config, encryption bool) (*Repor
 	}
 
 	return &Reporters{Router: r.router, Server: r.server, Encryption: r.encryption}, nil
+}
+
+// Listener is the gateway listener Start bound, exported for tests that break
+// it to drive an unexpected stop.
+func (d *Dataplane) Listener() net.Listener {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.lis
 }

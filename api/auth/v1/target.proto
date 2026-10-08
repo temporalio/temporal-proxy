@@ -4,14 +4,18 @@ package api.auth.v1;
 
 option go_package = "github.com/temporalio/temporal-proxy/pkg/api/auth/v1;auth";
 
-// Target is what a call is addressing, as the proxy resolved it from the stream
-// it accepted. It is not caller-supplied: the proxy takes the method from the
-// stream itself and the namespace from the first request message, so a caller
-// cannot forge either by sending a header.
+// Target is what a call is addressing, as the proxy resolved it. For a gRPC call
+// the proxy takes the method from the stream it accepted and the namespace from
+// the first request message, so a caller cannot forge either by sending a
+// header. For an HTTP request the proxy takes the group, method, and path from
+// the route it matched, and the namespace as that route group names it, such as
+// the codec server's path segment or X-Namespace header; the caller chooses that
+// namespace, and the proxy acts on the namespace it authorized.
 message Target {
   // full_name is the gRPC full method being invoked, leading slash included, as
   // in "/temporal.api.workflowservice.v1.WorkflowService/DescribeNamespace". It
-  // is always set.
+  // is set for a gRPC call and empty for an HTTP request, which sets http
+  // instead.
   string full_name = 1;
   // namespace is the Temporal namespace the request names. It is empty when the
   // method has no namespace to name, as many do, when the caller sent no message
@@ -20,4 +24,30 @@ message Target {
   // nothing": match a namespace-scoped rule against full_name as well, rather than
   // reading empty as a namespace that some rule might accept.
   string namespace = 2;
+  // http describes an HTTP request to one of the proxy's route groups. It is set
+  // exactly when full_name is empty.
+  HTTPTarget http = 3;
+}
+
+// HTTPTarget is an HTTP request to one of the proxy's route groups, as the proxy
+// matched it. Its fields describe the request the proxy routed, not a claim the
+// caller made about it.
+message HTTPTarget {
+  // Group is the route group a request reached. A value added after this
+  // server was built reads as an unrecognized number, so treat anything but a
+  // group you know as one you do not authorize.
+  enum Group {
+    // GROUP_UNSPECIFIED is no group. The proxy never sends it.
+    GROUP_UNSPECIFIED = 0;
+    // GROUP_CODEC_SERVER is the codec server, which decodes and encodes
+    // payloads for the Temporal UI and CLI.
+    GROUP_CODEC_SERVER = 1;
+  }
+  // group is the route group the request reached.
+  Group group = 1;
+  // method is the HTTP method, as in "POST".
+  string method = 2;
+  // path is the request URL path, as in "/payments/decode". It can carry a
+  // namespace segment, so match on namespace rather than parsing it from here.
+  string path = 3;
 }

@@ -31,24 +31,23 @@ func (d *Dataplane) Start(ctx context.Context) error {
 		return d.rollback(ctx, fmt.Errorf("failed to create listener: %w", err))
 	}
 
-	d.track(lis)
-
 	d.mu.Lock()
+	d.lis = lis
 	d.addr = lis.Addr()
 	d.mu.Unlock()
 
-	d.serve("gateway", func() error { return d.gateway.Start(d.ctx, lis) })
+	d.serve(func() error { return d.gateway.Start(d.ctx, lis) })
 
 	return nil
 }
 
-// Stop drains the gateway within its shutdown budget and closes every listener
+// Stop drains the gateway within its shutdown budget and closes the listener
 // Start bound.
 func (d *Dataplane) Stop(ctx context.Context) error {
 	d.mu.Lock()
 	d.stopping = true
-	listeners := d.listeners
-	d.listeners = nil
+	lis := d.lis
+	d.lis = nil
 	d.mu.Unlock()
 
 	var errs []error
@@ -56,10 +55,10 @@ func (d *Dataplane) Stop(ctx context.Context) error {
 		errs = append(errs, err)
 	}
 
-	// A graceful stop closes the listeners its server was serving on, but one
-	// bound by a Start that failed before its goroutine reached Serve is not
-	// among them. Closing here is what keeps that case from leaking a socket.
-	for _, lis := range listeners {
+	// A graceful stop closes the listener its server was serving on, but one
+	// bound by a Start that failed before its goroutine reached Serve is not.
+	// Closing here is what keeps that case from leaking a socket.
+	if lis != nil {
 		if err := lis.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			errs = append(errs, err)
 		}
@@ -83,7 +82,7 @@ func (d *Dataplane) rollback(ctx context.Context, cause error) error {
 // serve runs fn in the background and reports an unexpected exit through Abort
 // exactly once. An error after Stop has begun is an ordinary shutdown race and
 // is not reported.
-func (d *Dataplane) serve(name string, fn func() error) {
+func (d *Dataplane) serve(fn func() error) {
 	go func() {
 		err := fn()
 
@@ -95,22 +94,13 @@ func (d *Dataplane) serve(name string, fn func() error) {
 			return
 		}
 
-		d.logger.Error("Dataplane stopped serving", tag.String("tier", name), tag.Error(err))
+		d.logger.Error("Dataplane stopped serving", tag.Error(err))
 		d.abortOnce.Do(func() {
 			if d.abort == nil {
 				return
 			}
 
-			d.abort(fmt.Errorf("%s stopped serving: %w", name, err))
+			d.abort(fmt.Errorf("gateway stopped serving: %w", err))
 		})
 	}()
-}
-
-// track records a listener so Stop can close one whose server never reached
-// Serve, which a graceful stop would otherwise leave open.
-func (d *Dataplane) track(lis net.Listener) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.listeners = append(d.listeners, lis)
 }

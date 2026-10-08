@@ -1,19 +1,12 @@
 package metrics
 
 import (
-	"context"
-	"errors"
-	"net/http"
-	"time"
-
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/fx"
 
 	"github.com/temporalio/temporal-proxy/internal/config"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
 )
 
 // Module provides a namespaced [Factory] bound to the injected Prometheus
@@ -24,10 +17,9 @@ import (
 // which register directly, do not. Consumers inject the [Factory] to declare
 // their collectors, which auto-register under the configured namespace.
 //
-// The HTTP server is bound to the fx lifecycle: it starts in a background
-// goroutine on OnStart and shuts down gracefully on OnStop. If the server
-// stops for any reason other than a clean shutdown, the whole app is brought
-// down with a non-zero exit code.
+// The metrics server binds when the app starts, so a taken port fails startup.
+// If it stops serving for any reason other than a clean shutdown, the whole app
+// is brought down with a non-zero exit code.
 var Module = fx.Options(
 	fx.Provide(func(p MetricsParams) *Factory {
 		return New(
@@ -35,54 +27,8 @@ var Module = fx.Options(
 			promauto.With(WithFixedLabels(p.Registerer, p.Config.Metrics.Labels.Fixed)),
 		)
 	}),
-	fx.Invoke(func(p MetricsParams) error {
-		if p.Config.Metrics.HostPort == "" {
-			return errors.New("metrics addr not set")
-		}
-
-		mux := http.NewServeMux()
-		mux.Handle("/metrics", promhttp.HandlerFor(p.Gatherer, promhttp.HandlerOpts{
-			Registry: p.Registerer,
-		}))
-
-		svr := &http.Server{
-			Addr:              p.Config.Metrics.HostPort,
-			Handler:           mux,
-			ReadHeaderTimeout: 5 * time.Second,
-			ReadTimeout:       10 * time.Second,
-		}
-
-		log := p.Logger.With(
-			tag.Component("metrics"),
-			tag.String("addr", p.Config.Metrics.HostPort),
-		)
-
-		p.Lifecycle.Append(fx.Hook{
-			OnStart: func(context.Context) error {
-				go func() {
-					defer func() { _ = svr.Close() }()
-
-					log.Info("Starting metrics server")
-					if err := svr.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-						log.Error("Failed to run metrics server", tag.Error(err))
-						_ = p.Shutdowner.Shutdown(fx.ExitCode(1))
-					}
-				}()
-
-				return nil
-			},
-			OnStop: func(ctx context.Context) error {
-				log.Info("Shutting down metrics server")
-				if err := svr.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-					return err
-				}
-
-				return nil
-			},
-		})
-
-		return nil
-	}),
+	fx.Provide(newServer),
+	fx.Invoke(func(*Server) {}),
 )
 
 // MetricsParams holds the fx-injected dependencies needed to run the metrics

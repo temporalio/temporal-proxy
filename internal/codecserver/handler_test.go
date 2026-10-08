@@ -13,7 +13,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/common/v1"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/temporalio/temporal-proxy/internal/codecserver"
@@ -35,9 +37,11 @@ type (
 	// OverrideMap without depending on config.
 	fakeNamespaces map[string]string
 
-	// fakeAuth rejects when err is set and records the target it saw.
+	// fakeAuth rejects when err is set, records the target it saw, and reports
+	// secure as the headers it consumes.
 	fakeAuth struct {
 		err     error
+		secure  []string
 		targets []meta.Target
 	}
 )
@@ -77,6 +81,8 @@ func (f *fakeAuth) Authenticate(_ context.Context, target meta.Target, _ metadat
 
 	return f.err
 }
+
+func (f *fakeAuth) SecureHeaders() []string { return f.secure }
 
 func TestHandlerRoutes(t *testing.T) {
 	t.Parallel()
@@ -330,7 +336,83 @@ func TestHandlerAuth(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code)
 		require.Len(t, a.targets, 1)
 		require.Equal(t, "payments", a.targets[0].Namespace)
-		require.Equal(t, "POST /decode", a.targets[0].FullName)
+		require.Empty(t, a.targets[0].FullName)
+		require.Equal(t, &meta.HTTPTarget{Group: meta.HTTPGroupCodecServer, Method: "POST", Path: "/decode"},
+			a.targets[0].HTTP)
+	})
+
+	t.Run("the authenticator and the codec see the same path namespace", func(t *testing.T) {
+		t.Parallel()
+
+		a := &fakeAuth{}
+		codecs := &fakeCodecs{}
+		h := codecserver.Handler(codecs, fakeNamespaces{}, testReporter(t), codecserver.WithAuth(a))
+
+		rec := serve(t, h, http.MethodPost, "/alpha/encode", string(raw), map[string]string{
+			"Content-Type": "application/json",
+			"X-Namespace":  "beta",
+		})
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Len(t, a.targets, 1)
+		require.Equal(t, "alpha", a.targets[0].Namespace)
+		require.Equal(t, []string{"alpha"}, codecs.namespaces)
+	})
+
+	t.Run("the codec sees the authorized namespace when its header is a credential", func(t *testing.T) {
+		t.Parallel()
+
+		a := &fakeAuth{secure: []string{"x-namespace"}}
+		codecs := &fakeCodecs{}
+		h := codecserver.Handler(codecs, fakeNamespaces{}, testReporter(t),
+			codecserver.WithNamespaceRequired(true),
+			codecserver.WithAuth(a))
+
+		rec := serve(t, h, http.MethodPost, "/encode", string(raw), map[string]string{
+			"Content-Type": "application/json",
+			"X-Namespace":  "payments",
+		})
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Len(t, a.targets, 1)
+		require.Equal(t, "payments", a.targets[0].Namespace)
+		require.Equal(t, []string{"payments"}, codecs.namespaces)
+	})
+
+	t.Run("an unauthenticated request without a namespace is 401, not 400", func(t *testing.T) {
+		t.Parallel()
+
+		h := codecserver.Handler(&fakeCodecs{}, fakeNamespaces{}, testReporter(t),
+			codecserver.WithNamespaceRequired(true),
+			codecserver.WithAuth(&fakeAuth{err: errors.New("bad token")}))
+
+		rec := serve(t, h, http.MethodPost, "/encode", string(raw),
+			map[string]string{"Content-Type": "application/json"})
+		require.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+
+	t.Run("every rejection is a 4xx", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			code codes.Code
+			want int
+		}{
+			{code: codes.PermissionDenied, want: http.StatusForbidden},
+			{code: codes.Unavailable, want: http.StatusUnauthorized},
+			{code: codes.DeadlineExceeded, want: http.StatusUnauthorized},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.code.String(), func(t *testing.T) {
+				t.Parallel()
+
+				h := codecserver.Handler(&fakeCodecs{}, fakeNamespaces{}, testReporter(t),
+					codecserver.WithAuth(&fakeAuth{err: status.Error(tt.code, "x")}))
+
+				rec := serve(t, h, http.MethodPost, "/decode", string(raw),
+					map[string]string{"Content-Type": "application/json"})
+				require.Equal(t, tt.want, rec.Code)
+			})
+		}
 	})
 
 	t.Run("a rejected token is 401 on download too", func(t *testing.T) {
@@ -391,6 +473,23 @@ func TestHandlerCORS(t *testing.T) {
 		for _, want := range []string{"Content-Type", "X-Namespace", "Authorization", "Authorization-Extras"} {
 			require.Contains(t, allow, want)
 		}
+	})
+
+	t.Run("a preflight never reaches the authenticator", func(t *testing.T) {
+		t.Parallel()
+
+		a := &fakeAuth{err: errors.New("bad token")}
+		h := codecserver.Handler(&fakeCodecs{}, fakeNamespaces{}, testReporter(t),
+			codecserver.WithCORS([]string{"https://cloud.temporal.io"}, true),
+			codecserver.WithAuth(a))
+
+		rec := serve(t, h, http.MethodOptions, "/decode", "", map[string]string{
+			"Origin":                         "https://cloud.temporal.io",
+			"Access-Control-Request-Method":  "POST",
+			"Access-Control-Request-Headers": "authorization,authorization-extras,x-namespace",
+		})
+		require.Less(t, rec.Code, 400)
+		require.Empty(t, a.targets)
 	})
 
 	t.Run("a disallowed origin gets no allow-origin header but the response still varies by origin", func(t *testing.T) {
@@ -533,6 +632,40 @@ func TestHandlerLogsCodecFailure(t *testing.T) {
 		tag.String("namespace", "payments"),
 		tag.Error(cause),
 	))
+}
+
+func TestHandlerReportsRejections(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	r := codecserver.NewReporter(metrics.New("test", promauto.With(reg)).ForSubsystem("codec_server"))
+	h := codecserver.Handler(&fakeCodecs{}, fakeNamespaces{}, r,
+		codecserver.WithAuth(&fakeAuth{err: errors.New("bad token")}))
+
+	rec := serve(t, h, http.MethodPost, "/payments/decode", "{}",
+		map[string]string{"Content-Type": "application/json"})
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	mfs, err := reg.Gather()
+	require.NoError(t, err)
+
+	var got []string
+	for _, mf := range mfs {
+		if mf.GetName() != "test_codec_server_requests_total" {
+			continue
+		}
+
+		for _, m := range mf.GetMetric() {
+			labels := map[string]string{}
+			for _, l := range m.GetLabel() {
+				labels[l.GetName()] = l.GetValue()
+			}
+
+			got = append(got, labels["route"]+" "+labels["code"])
+		}
+	}
+
+	require.Equal(t, []string{"/decode 401"}, got)
 }
 
 // TestHandlerReportsRouteAsThePatternNotThePath drives a real Handler wired to

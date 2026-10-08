@@ -160,6 +160,44 @@ func TestAuthSendsTarget(t *testing.T) {
 	got := conn.sentTarget(t)
 	require.Equal(t, target.FullName, got.GetFullName())
 	require.Equal(t, target.Namespace, got.GetNamespace())
+	require.Nil(t, got.GetHttp(), "a gRPC call carries no HTTP target")
+}
+
+func TestAuthSendsHTTPTarget(t *testing.T) {
+	t.Parallel()
+
+	conn := allowingConn()
+	a := api.NewAuth(conn, nil)
+
+	target := meta.Target{
+		Namespace: "orders",
+		HTTP:      &meta.HTTPTarget{Group: meta.HTTPGroupCodecServer, Method: "POST", Path: "/orders/decode"},
+	}
+	require.NoError(t, a.Authenticate(t.Context(), target, metadata.MD{}))
+
+	got := conn.sentTarget(t)
+	require.Empty(t, got.GetFullName())
+	require.Equal(t, "orders", got.GetNamespace())
+	require.Equal(t, authv1.HTTPTarget_GROUP_CODEC_SERVER, got.GetHttp().GetGroup())
+	require.Equal(t, "POST", got.GetHttp().GetMethod())
+	require.Equal(t, "/orders/decode", got.GetHttp().GetPath())
+}
+
+func TestAuthMapsEveryHTTPGroup(t *testing.T) {
+	t.Parallel()
+
+	for _, g := range meta.HTTPGroups() {
+		t.Run(g.String(), func(t *testing.T) {
+			t.Parallel()
+
+			conn := allowingConn()
+			a := api.NewAuth(conn, nil)
+
+			target := meta.Target{HTTP: &meta.HTTPTarget{Group: g, Method: "POST", Path: "/"}}
+			require.NoError(t, a.Authenticate(t.Context(), target, metadata.MD{}))
+			require.NotEqual(t, authv1.HTTPTarget_GROUP_UNSPECIFIED, conn.sentTarget(t).GetHttp().GetGroup())
+		})
+	}
 }
 
 func TestAuthHonorsDecision(t *testing.T) {

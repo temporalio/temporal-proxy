@@ -23,56 +23,37 @@ func TestModule(t *testing.T) {
 	t.Run("serves prometheus metrics over the lifecycle", func(t *testing.T) {
 		t.Parallel()
 
-		addr := freeAddr(t)
-
-		var factory *metrics.Factory
-		app := newTestApp(t, addr, fx.Populate(&factory))
+		var (
+			factory *metrics.Factory
+			svr     *metrics.Server
+		)
+		app := newTestApp(t, "127.0.0.1:0", fx.Populate(&factory, &svr))
 		require.NoError(t, app.Err())
 
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		t.Cleanup(cancel)
 		require.NoError(t, app.Start(ctx))
 
-		// Emit a counter via the provided Factory so the scrape has something
-		// proxy-specific to assert on. newTestApp supplies the "tmprl_proxy"
-		// namespace, so the series is tmprl_proxy_answer_total.
 		factory.NewCounter(goprom.CounterOpts{
 			Name: "answer_total",
 			Help: "smoke-test counter",
 		}, nil).WithLabelValues().Inc()
 
-		url := "http://" + addr + "/metrics"
-
-		// OnStart launches ListenAndServe in a goroutine, so the listener may
-		// not be bound the instant Start returns. Retry until it answers.
-		var body string
-		require.Eventually(t, func() bool {
-			b, ok := scrape(url)
-			if ok {
-				body = b
-			}
-			return ok
-		}, 5*time.Second, 20*time.Millisecond)
-
+		// Start binds before it returns, so the address is live immediately.
+		url := "http://" + svr.Addr().String() + "/metrics"
+		body, ok := scrape(url)
+		require.True(t, ok)
 		require.Contains(t, body, "tmprl_proxy_answer_total")
 
-		ctx, cancel = context.WithTimeout(t.Context(), 5*time.Second)
-		t.Cleanup(cancel)
 		require.NoError(t, app.Stop(ctx))
 
-		// OnStop shuts the server down, so the endpoint should stop answering.
-		// This proves the stop hook ran rather than just returning nil.
-		require.Eventually(t, func() bool {
-			_, ok := scrape(url)
-			return !ok
-		}, 5*time.Second, 20*time.Millisecond)
+		_, ok = scrape(url)
+		require.False(t, ok, "the stop hook must close the listener")
 	})
 
-	t.Run("shuts the app down when the listener fails", func(t *testing.T) {
+	t.Run("fails to start when the port is taken", func(t *testing.T) {
 		t.Parallel()
 
-		// Hold the port so the server's ListenAndServe fails to bind, which
-		// should drive the OnStart goroutine to shut the whole app down.
 		l, err := net.Listen("tcp", "127.0.0.1:0")
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = l.Close() })
@@ -82,14 +63,7 @@ func TestModule(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		t.Cleanup(cancel)
-		require.NoError(t, app.Start(ctx))
-
-		select {
-		case sig := <-app.Wait():
-			require.Equal(t, 1, sig.ExitCode)
-		case <-ctx.Done():
-			t.Fatal("app did not shut down after listener failure")
-		}
+		require.Error(t, app.Start(ctx))
 	})
 
 	t.Run("requires the metrics address", func(t *testing.T) {

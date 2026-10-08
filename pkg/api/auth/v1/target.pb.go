@@ -21,15 +21,71 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// Target is what a call is addressing, as the proxy resolved it from the stream
-// it accepted. It is not caller-supplied: the proxy takes the method from the
-// stream itself and the namespace from the first request message, so a caller
-// cannot forge either by sending a header.
+// Group is the route group a request reached. A value added after this
+// server was built reads as an unrecognized number, so treat anything but a
+// group you know as one you do not authorize.
+type HTTPTarget_Group int32
+
+const (
+	// GROUP_UNSPECIFIED is no group. The proxy never sends it.
+	HTTPTarget_GROUP_UNSPECIFIED HTTPTarget_Group = 0
+	// GROUP_CODEC_SERVER is the codec server, which decodes and encodes
+	// payloads for the Temporal UI and CLI.
+	HTTPTarget_GROUP_CODEC_SERVER HTTPTarget_Group = 1
+)
+
+// Enum value maps for HTTPTarget_Group.
+var (
+	HTTPTarget_Group_name = map[int32]string{
+		0: "GROUP_UNSPECIFIED",
+		1: "GROUP_CODEC_SERVER",
+	}
+	HTTPTarget_Group_value = map[string]int32{
+		"GROUP_UNSPECIFIED":  0,
+		"GROUP_CODEC_SERVER": 1,
+	}
+)
+
+func (x HTTPTarget_Group) Enum() *HTTPTarget_Group {
+	p := new(HTTPTarget_Group)
+	*p = x
+	return p
+}
+
+func (x HTTPTarget_Group) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (HTTPTarget_Group) Descriptor() protoreflect.EnumDescriptor {
+	return file_api_auth_v1_target_proto_enumTypes[0].Descriptor()
+}
+
+func (HTTPTarget_Group) Type() protoreflect.EnumType {
+	return &file_api_auth_v1_target_proto_enumTypes[0]
+}
+
+func (x HTTPTarget_Group) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use HTTPTarget_Group.Descriptor instead.
+func (HTTPTarget_Group) EnumDescriptor() ([]byte, []int) {
+	return file_api_auth_v1_target_proto_rawDescGZIP(), []int{1, 0}
+}
+
+// Target is what a call is addressing, as the proxy resolved it. For a gRPC call
+// the proxy takes the method from the stream it accepted and the namespace from
+// the first request message, so a caller cannot forge either by sending a
+// header. For an HTTP request the proxy takes the group, method, and path from
+// the route it matched, and the namespace as that route group names it, such as
+// the codec server's path segment or X-Namespace header; the caller chooses that
+// namespace, and the proxy acts on the namespace it authorized.
 type Target struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// full_name is the gRPC full method being invoked, leading slash included, as
 	// in "/temporal.api.workflowservice.v1.WorkflowService/DescribeNamespace". It
-	// is always set.
+	// is set for a gRPC call and empty for an HTTP request, which sets http
+	// instead.
 	FullName string `protobuf:"bytes,1,opt,name=full_name,json=fullName,proto3" json:"full_name,omitempty"`
 	// namespace is the Temporal namespace the request names. It is empty when the
 	// method has no namespace to name, as many do, when the caller sent no message
@@ -37,7 +93,10 @@ type Target struct {
 	// so never looked. Empty therefore means "unknown", not "a namespace called
 	// nothing": match a namespace-scoped rule against full_name as well, rather than
 	// reading empty as a namespace that some rule might accept.
-	Namespace     string `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Namespace string `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	// http describes an HTTP request to one of the proxy's route groups. It is set
+	// exactly when full_name is empty.
+	Http          *HTTPTarget `protobuf:"bytes,3,opt,name=http,proto3" json:"http,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -86,14 +145,97 @@ func (x *Target) GetNamespace() string {
 	return ""
 }
 
+func (x *Target) GetHttp() *HTTPTarget {
+	if x != nil {
+		return x.Http
+	}
+	return nil
+}
+
+// HTTPTarget is an HTTP request to one of the proxy's route groups, as the proxy
+// matched it. Its fields describe the request the proxy routed, not a claim the
+// caller made about it.
+type HTTPTarget struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// group is the route group the request reached.
+	Group HTTPTarget_Group `protobuf:"varint,1,opt,name=group,proto3,enum=api.auth.v1.HTTPTarget_Group" json:"group,omitempty"`
+	// method is the HTTP method, as in "POST".
+	Method string `protobuf:"bytes,2,opt,name=method,proto3" json:"method,omitempty"`
+	// path is the request URL path, as in "/payments/decode". It can carry a
+	// namespace segment, so match on namespace rather than parsing it from here.
+	Path          string `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HTTPTarget) Reset() {
+	*x = HTTPTarget{}
+	mi := &file_api_auth_v1_target_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HTTPTarget) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HTTPTarget) ProtoMessage() {}
+
+func (x *HTTPTarget) ProtoReflect() protoreflect.Message {
+	mi := &file_api_auth_v1_target_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HTTPTarget.ProtoReflect.Descriptor instead.
+func (*HTTPTarget) Descriptor() ([]byte, []int) {
+	return file_api_auth_v1_target_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *HTTPTarget) GetGroup() HTTPTarget_Group {
+	if x != nil {
+		return x.Group
+	}
+	return HTTPTarget_GROUP_UNSPECIFIED
+}
+
+func (x *HTTPTarget) GetMethod() string {
+	if x != nil {
+		return x.Method
+	}
+	return ""
+}
+
+func (x *HTTPTarget) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
 var File_api_auth_v1_target_proto protoreflect.FileDescriptor
 
 const file_api_auth_v1_target_proto_rawDesc = "" +
 	"\n" +
-	"\x18api/auth/v1/target.proto\x12\vapi.auth.v1\"C\n" +
+	"\x18api/auth/v1/target.proto\x12\vapi.auth.v1\"p\n" +
 	"\x06Target\x12\x1b\n" +
 	"\tfull_name\x18\x01 \x01(\tR\bfullName\x12\x1c\n" +
-	"\tnamespace\x18\x02 \x01(\tR\tnamespaceB\xa7\x01\n" +
+	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12+\n" +
+	"\x04http\x18\x03 \x01(\v2\x17.api.auth.v1.HTTPTargetR\x04http\"\xa5\x01\n" +
+	"\n" +
+	"HTTPTarget\x123\n" +
+	"\x05group\x18\x01 \x01(\x0e2\x1d.api.auth.v1.HTTPTarget.GroupR\x05group\x12\x16\n" +
+	"\x06method\x18\x02 \x01(\tR\x06method\x12\x12\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\"6\n" +
+	"\x05Group\x12\x15\n" +
+	"\x11GROUP_UNSPECIFIED\x10\x00\x12\x16\n" +
+	"\x12GROUP_CODEC_SERVER\x10\x01B\xa7\x01\n" +
 	"\x0fcom.api.auth.v1B\vTargetProtoP\x01Z9github.com/temporalio/temporal-proxy/pkg/api/auth/v1;auth\xa2\x02\x03AAX\xaa\x02\vApi.Auth.V1\xca\x02\vApi\\Auth\\V1\xe2\x02\x17Api\\Auth\\V1\\GPBMetadata\xea\x02\rApi::Auth::V1b\x06proto3"
 
 var (
@@ -108,16 +250,21 @@ func file_api_auth_v1_target_proto_rawDescGZIP() []byte {
 	return file_api_auth_v1_target_proto_rawDescData
 }
 
-var file_api_auth_v1_target_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_api_auth_v1_target_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_api_auth_v1_target_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_api_auth_v1_target_proto_goTypes = []any{
-	(*Target)(nil), // 0: api.auth.v1.Target
+	(HTTPTarget_Group)(0), // 0: api.auth.v1.HTTPTarget.Group
+	(*Target)(nil),        // 1: api.auth.v1.Target
+	(*HTTPTarget)(nil),    // 2: api.auth.v1.HTTPTarget
 }
 var file_api_auth_v1_target_proto_depIdxs = []int32{
-	0, // [0:0] is the sub-list for method output_type
-	0, // [0:0] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	2, // 0: api.auth.v1.Target.http:type_name -> api.auth.v1.HTTPTarget
+	0, // 1: api.auth.v1.HTTPTarget.group:type_name -> api.auth.v1.HTTPTarget.Group
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_api_auth_v1_target_proto_init() }
@@ -130,13 +277,14 @@ func file_api_auth_v1_target_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_auth_v1_target_proto_rawDesc), len(file_api_auth_v1_target_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   1,
+			NumEnums:      1,
+			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_api_auth_v1_target_proto_goTypes,
 		DependencyIndexes: file_api_auth_v1_target_proto_depIdxs,
+		EnumInfos:         file_api_auth_v1_target_proto_enumTypes,
 		MessageInfos:      file_api_auth_v1_target_proto_msgTypes,
 	}.Build()
 	File_api_auth_v1_target_proto = out.File

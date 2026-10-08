@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"go.temporal.io/api/common/v1"
-	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/encoding/protojson"
 
+	"github.com/temporalio/temporal-proxy/internal/auth"
 	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 	"github.com/temporalio/temporal-proxy/pkg/logger"
 	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
@@ -23,10 +24,14 @@ import (
 //
 // CORS is outermost because a preflight arrives as OPTIONS, matches no route,
 // and carries no credentials, so it has to be answered before authentication.
-// Namespace resolution precedes authentication because the authenticator
-// authorizes on the resolved local name. Authentication precedes reading the
-// body so an unauthenticated caller cannot make the process allocate or
-// unmarshal.
+// Every matched request is then reported, rejections included. Authentication
+// wraps each route inside the mux, because the namespace it authorizes on can
+// come from the {ns} path segment, which the mux sets only once it has
+// matched. The namespace is resolved once, ahead of authentication, so the
+// route acts on the namespace that was authorized even when the authenticator
+// strips the header naming it. Authentication precedes request validation and
+// reading the body, so an unauthenticated caller learns nothing about the
+// request and cannot make the process allocate or unmarshal.
 
 const (
 	// defaultMaxBodyBytes bounds a request body. This service unwraps a DEK on
@@ -84,30 +89,11 @@ type (
 		Local(remote string) string
 	}
 
-	// Authenticator decides whether a request may proceed. It is satisfied by
-	// [github.com/temporalio/temporal-proxy/internal/auth.Authenticator].
-	//
-	// Implementations must be safe for concurrent use. Note that the built-in
-	// authenticators ignore target and authorize on the credential alone, so a
-	// token that passes authorizes every namespace; scoping a token to one
-	// namespace requires an implementation that reads target.
-	Authenticator interface {
-		// Authenticate reports whether the request described by target, carrying
-		// the credentials in md, may proceed. target.Namespace is the resolved
-		// local name and is empty when the caller named none. target.FullName is
-		// the matched route rather than a gRPC method, since this caller serves
-		// HTTP.
-		//
-		// Returns a non-nil error to deny the request. The handler answers 401
-		// and does not relay the error's text.
-		Authenticate(ctx context.Context, target meta.Target, md metadata.MD) error
-	}
-
 	// Option configures a [Handler].
 	Option func(*options)
 
 	options struct {
-		auth              Authenticator
+		auth              auth.Authenticator
 		log               logger.Logger
 		origins           []string
 		credentials       bool
@@ -120,6 +106,24 @@ type (
 		ns       Namespaces
 		reporter *Reporter
 		opts     options
+	}
+
+	// resolvedNamespace is the namespace a request addresses, resolved once
+	// before authentication so the route acts on the namespace that was
+	// authorized, even when the authenticator strips the header naming it.
+	resolvedNamespace struct {
+		name  string
+		named bool
+	}
+
+	// namespaceKey carries a resolvedNamespace on a request's context.
+	namespaceKey struct{}
+
+	// statusRecorder remembers the status a handler wrote, so the request is
+	// reported with what the caller actually received.
+	statusRecorder struct {
+		http.ResponseWriter
+		status int
 	}
 )
 
@@ -151,10 +155,17 @@ func Handler(c Codecs, n Namespaces, r *Reporter, opts ...Option) http.Handler {
 		{downloadRoute, h.download},
 	}
 
+	authenticate := func(next http.Handler) http.Handler { return next }
+	if o.auth != nil {
+		authenticate = auth.HTTPMiddleware(o.auth, meta.HTTPGroupCodecServer, namespaceName, o.log,
+			auth.WithRejectionStatus(rejectionStatus))
+	}
+
 	mux := http.NewServeMux()
 	for _, route := range routes {
-		mux.HandleFunc("POST "+route.path, route.fn)
-		mux.HandleFunc("POST /{ns}"+route.path, route.fn)
+		served := h.instrument(route.path, h.resolveNamespace(authenticate(route.fn)))
+		mux.Handle("POST "+route.path, served)
+		mux.Handle("POST /{ns}"+route.path, served)
 	}
 
 	// Outermost, so a preflight is answered without reaching a route or the
@@ -162,11 +173,11 @@ func Handler(c Codecs, n Namespaces, r *Reporter, opts ...Option) http.Handler {
 	return cors(o.origins, o.credentials, mux)
 }
 
-// WithAuth requires every request to satisfy a, answering 401 for any request
-// a denies. A preflight is answered before a reaches it. Omitting it serves
-// every request unauthenticated, which configuration only permits on a
-// loopback bind.
-func WithAuth(a Authenticator) Option {
+// WithAuth requires every request to satisfy a. A rejection is answered with a
+// 4xx, never a 5xx a browser would retry. A preflight is answered before a
+// reaches it. Omitting it serves every request unauthenticated, which
+// configuration only permits on a loopback bind.
+func WithAuth(a auth.Authenticator) Option {
 	return func(o *options) { o.auth = a }
 }
 
@@ -213,18 +224,13 @@ func (h *handler) payloads(
 	namespaceRequired bool,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		code := http.StatusOK
-		defer func() { h.reporter.Request(route, code, time.Since(start).Seconds()) }()
-
-		ns, c, ok := h.prologue(w, r, route, namespaceRequired)
+		ns, ok := h.prologue(w, r, namespaceRequired)
 		if !ok {
-			code = c
 			return
 		}
 
 		if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, contentTypeJSON) {
-			code = fail(w, http.StatusBadRequest, fmt.Sprintf(
+			fail(w, http.StatusBadRequest, fmt.Sprintf(
 				"expected content-type %s, got %q",
 				contentTypeJSON,
 				ct,
@@ -235,13 +241,13 @@ func (h *handler) payloads(
 
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, h.opts.maxBodyBytes))
 		if err != nil {
-			code = fail(w, http.StatusBadRequest, "failed to read request body: "+err.Error())
+			fail(w, http.StatusBadRequest, "failed to read request body: "+err.Error())
 			return
 		}
 
 		var in common.Payloads
 		if err := protojson.Unmarshal(body, &in); err != nil {
-			code = fail(w, http.StatusBadRequest, "failed to parse payloads: "+err.Error())
+			fail(w, http.StatusBadRequest, "failed to parse payloads: "+err.Error())
 			return
 		}
 
@@ -257,13 +263,13 @@ func (h *handler) payloads(
 				tag.Error(err),
 			)
 
-			code = fail(w, http.StatusBadRequest, "failed to transform payloads")
+			fail(w, http.StatusBadRequest, "failed to transform payloads")
 			return
 		}
 
 		res, err := protojson.Marshal(&common.Payloads{Payloads: out})
 		if err != nil {
-			code = fail(w, http.StatusBadRequest, "failed to serialize payloads: "+err.Error())
+			fail(w, http.StatusBadRequest, "failed to serialize payloads: "+err.Error())
 			return
 		}
 
@@ -278,45 +284,26 @@ func (h *handler) payloads(
 // request reaching here can carry one; the message is the one the SDK's own
 // handler returns for a request carrying no references.
 func (h *handler) download(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
-	code := http.StatusOK
-	defer func() { h.reporter.Request(downloadRoute, code, time.Since(start).Seconds()) }()
-
-	if _, c, ok := h.prologue(w, r, downloadRoute, false); !ok {
-		code = c
+	if _, ok := h.prologue(w, r, false); !ok {
 		return
 	}
 
-	code = fail(w, http.StatusBadRequest, "all payloads must be storage references")
+	fail(w, http.StatusBadRequest, "all payloads must be storage references")
 }
 
-// prologue resolves the namespace and authenticates, the checks every route
-// shares. It writes the response and reports ok=false when the request may not
-// proceed, and returns the status it wrote as code.
-func (h *handler) prologue(
-	w http.ResponseWriter,
-	r *http.Request,
-	route string,
-	namespaceRequired bool,
-) (ns string, code int, ok bool) {
-	ns, named := h.namespace(r)
-	if namespaceRequired && !named {
-		code = fail(w, http.StatusBadRequest,
+// prologue resolves the namespace and enforces that one was named when the
+// route requires it. It writes the response and reports ok=false when the
+// request may not proceed.
+func (h *handler) prologue(w http.ResponseWriter, r *http.Request, namespaceRequired bool) (string, bool) {
+	ns := requestNamespace(r)
+	if namespaceRequired && !ns.named {
+		fail(w, http.StatusBadRequest,
 			"a namespace is required: send it as the "+namespaceHeader+" header or in the request path")
 
-		return "", code, false
+		return "", false
 	}
 
-	if h.opts.auth != nil {
-		target := meta.Target{FullName: "POST " + route, Namespace: ns}
-		if err := h.opts.auth.Authenticate(r.Context(), target, headerMetadata(r.Header)); err != nil {
-			code = fail(w, http.StatusUnauthorized, "unauthenticated")
-
-			return "", code, false
-		}
-	}
-
-	return ns, http.StatusOK, true
+	return ns.name, true
 }
 
 // namespace returns the local namespace name the request addresses and whether
@@ -335,24 +322,68 @@ func (h *handler) namespace(r *http.Request) (string, bool) {
 	return h.ns.Local(name), true
 }
 
-// fail writes status with message as the body and returns status, so a caller
-// can record what it sent in one statement. Every failure here is a 4xx, since
-// a browser retries a 5xx three times but never a 4xx, and reporting a
-// misconfiguration as a server error would triple its own load.
-func fail(w http.ResponseWriter, status int, message string) int {
-	http.Error(w, message, status)
-
-	return status
+// instrument reports every request reaching route with the status the caller
+// received and how long it took.
+func (h *handler) instrument(route string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		h.reporter.Request(route, rec.status, time.Since(start).Seconds())
+	})
 }
 
-// headerMetadata converts HTTP headers into gRPC metadata, which is what an
-// Authenticator reads. metadata.MD.Set lowercases each key, matching how an
-// authenticator names the header it wants.
-func headerMetadata(h http.Header) metadata.MD {
-	md := metadata.MD{}
-	for key, values := range h {
-		md.Set(key, values...)
+// resolveNamespace resolves the namespace the request addresses and carries it
+// on the context for everything after it. It runs inside the mux, since the
+// {ns} path segment is only set once a route has matched.
+func (h *handler) resolveNamespace(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name, named := h.namespace(r)
+		ctx := context.WithValue(r.Context(), namespaceKey{}, resolvedNamespace{name: name, named: named})
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// WriteHeader records status before writing it.
+func (s *statusRecorder) WriteHeader(status int) {
+	s.status = status
+	s.ResponseWriter.WriteHeader(status)
+}
+
+// Unwrap returns the wrapped writer, so http.ResponseController can reach it.
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
+// fail writes status with message as the body. Every failure here is a 4xx,
+// since a browser retries a 5xx three times but never a 4xx, and reporting a
+// misconfiguration as a server error would triple its own load.
+func fail(w http.ResponseWriter, status int, message string) {
+	http.Error(w, message, status)
+}
+
+// namespaceName returns the local namespace the request addresses, or "" when
+// it named none, for the authenticator to authorize on.
+func namespaceName(r *http.Request) string {
+	return requestNamespace(r).name
+}
+
+// rejectionStatus keeps every authentication failure a 4xx: a browser retries
+// a 5xx three times, which would triple a provider outage's load.
+func rejectionStatus(c codes.Code) int {
+	if c == codes.PermissionDenied {
+		return http.StatusForbidden
 	}
 
-	return md
+	return http.StatusUnauthorized
+}
+
+// requestNamespace returns the namespace resolveNamespace put on r's context.
+// Panics if it is absent, since a route reached without it would act on no
+// namespace at all.
+func requestNamespace(r *http.Request) resolvedNamespace {
+	ns, ok := r.Context().Value(namespaceKey{}).(resolvedNamespace)
+	if !ok {
+		panic("codecserver: request reached a route without a resolved namespace")
+	}
+
+	return ns
 }

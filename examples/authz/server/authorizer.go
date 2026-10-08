@@ -200,7 +200,10 @@ func (a *authorizer) Authenticate(_ context.Context, req *auth.AuthRequest) (*au
 	if !ok {
 		// Fail closed. A method the table does not describe is charged as the most
 		// privileged thing it could be, so forgetting an entry denies a caller
-		// rather than waving it through.
+		// rather than waving it through. An HTTP request to one of the proxy's route
+		// groups, such as the codec server, arrives with an empty full_name and the
+		// target's http field set, so it lands on this most-privileged
+		// authorization rule.
 		r = rule{scope: scopeCluster, access: accessAdmin}
 	}
 
