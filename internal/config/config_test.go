@@ -16,6 +16,9 @@ import (
 	"github.com/temporalio/temporal-proxy/pkg/validation"
 )
 
+// upstreamYAML is the smallest upstreams block that passes validation.
+const upstreamYAML = "upstreams:\n  - name: primary\n    hostPort: 127.0.0.1:7233\n"
+
 type errReader struct{ err error }
 
 func TestLoad(t *testing.T) {
@@ -29,9 +32,10 @@ func TestLoad(t *testing.T) {
 	}{
 		{
 			name: "valid config",
-			yaml: "hostPort: :8080\n",
+			yaml: "hostPort: :8080\n" + upstreamYAML,
 			want: &config.Config{
 				Listen:          config.ListenConfig{HostPort: ":8080"},
+				Upstreams:       []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
 				AllowedServices: config.Services(services.Default()),
 				Metrics:         defaultMetrics(),
 			},
@@ -42,12 +46,9 @@ func TestLoad(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "empty hostPort",
-			yaml: "hostPort: \"\"\n",
-			want: &config.Config{
-				AllowedServices: config.Services(services.Default()),
-				Metrics:         defaultMetrics(),
-			},
+			name:    "empty hostPort",
+			yaml:    "hostPort: \"\"\n" + upstreamYAML,
+			wantErr: true,
 		},
 	}
 
@@ -62,6 +63,7 @@ func TestLoad(t *testing.T) {
 			}
 
 			require.NoError(t, err)
+			require.NoError(t, tc.want.Prepare())
 			require.Equal(t, tc.want, got)
 		})
 	}
@@ -73,30 +75,28 @@ func TestLoad_UpstreamInsecure(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := config.Load(strings.NewReader(
-		"upstreams:\n  - name: local\n    hostPort: localhost:7233\n    insecure: true\n",
+		"hostPort: :8080\nupstreams:\n  - name: local\n    hostPort: localhost:7233\n    insecure: true\n",
 	))
 	require.NoError(t, err)
 	require.True(t, cfg.Upstreams[0].Listen.Insecure)
 }
 
-// Load does not validate, so this covers the whole path from the yaml keys to
-// the rule that rejects them together.
-func TestValidate_UpstreamInsecureWithTLSIsRejected(t *testing.T) {
+// This covers the whole path from the yaml keys to the rule that rejects them
+// together.
+func TestLoadUpstreamInsecureWithTLSIsRejected(t *testing.T) {
 	t.Parallel()
 
-	cfg, err := config.Load(strings.NewReader(
-		"routing:\n  default: local\n" +
+	_, err := config.Load(strings.NewReader(
+		"hostPort: :8080\nrouting:\n  default: local\n" +
 			"upstreams:\n  - name: local\n    hostPort: localhost:7233\n    insecure: true\n    tls: {}\n",
 	))
-	require.NoError(t, err)
-	require.ErrorContains(t, cfg.Validate(), "cannot be set together with tls")
+	require.ErrorContains(t, err, "cannot be set together with tls")
 }
 
 func TestLoad_EncryptionURLs(t *testing.T) {
 	t.Parallel()
 
-	const doc = `
-hostPort: :8080
+	const doc = upstreamYAML + `hostPort: :8080
 encryption:
   enabled: true
   default:
@@ -136,7 +136,7 @@ func TestLoad_EnvVarExpansion(t *testing.T) {
 	t.Run("set var is substituted", func(t *testing.T) {
 		t.Setenv("CONFIG_TEST_HOST_PORT", ":9090")
 
-		got, err := config.Load(strings.NewReader("hostPort: ${CONFIG_TEST_HOST_PORT}\n"))
+		got, err := config.Load(strings.NewReader("hostPort: ${CONFIG_TEST_HOST_PORT}\n" + upstreamYAML))
 		require.NoError(t, err)
 		require.Equal(t, ":9090", got.Listen.HostPort)
 	})
@@ -144,9 +144,8 @@ func TestLoad_EnvVarExpansion(t *testing.T) {
 	t.Run("unset var becomes empty string", func(t *testing.T) {
 		require.NoError(t, os.Unsetenv("CONFIG_TEST_UNSET_VAR"))
 
-		got, err := config.Load(strings.NewReader("hostPort: ${CONFIG_TEST_UNSET_VAR}\n"))
-		require.NoError(t, err)
-		require.Equal(t, "", got.Listen.HostPort)
+		_, err := config.Load(strings.NewReader("hostPort: ${CONFIG_TEST_UNSET_VAR}\n" + upstreamYAML))
+		require.ErrorContains(t, err, "hostPort: is not a valid host:port")
 	})
 }
 
@@ -168,9 +167,10 @@ func TestLoadFile(t *testing.T) {
 	}{
 		{
 			name:    "valid file",
-			content: "hostPort: :7233\n",
+			content: "hostPort: :7233\n" + upstreamYAML,
 			want: &config.Config{
 				Listen:          config.ListenConfig{HostPort: ":7233"},
+				Upstreams:       []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
 				AllowedServices: config.Services(services.Default()),
 				Metrics:         defaultMetrics(),
 			},
@@ -196,6 +196,7 @@ func TestLoadFile(t *testing.T) {
 			}
 
 			require.NoError(t, err)
+			require.NoError(t, tc.want.Prepare())
 			require.Equal(t, tc.want, got)
 		})
 	}
@@ -211,10 +212,12 @@ func TestLoadFile_MissingFile(t *testing.T) {
 func TestConfig_Validate(t *testing.T) {
 	t.Parallel()
 
-	validUpstreams := []config.Upstream{{
-		Name:   "primary",
-		Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
-	}}
+	validUpstreams := func() []config.Upstream {
+		return []config.Upstream{{
+			Name:   "primary",
+			Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
+		}}
+	}
 
 	// A default key policy that is valid except for renewBefore, so the failure
 	// surfaces from deep inside Encryption and proves the subject path composes.
@@ -231,7 +234,7 @@ func TestConfig_Validate(t *testing.T) {
 			cfg: &config.Config{
 				Metrics:   defaultMetrics(),
 				Listen:    config.ListenConfig{HostPort: ":8080"},
-				Upstreams: validUpstreams,
+				Upstreams: validUpstreams(),
 			},
 		},
 		{
@@ -239,7 +242,7 @@ func TestConfig_Validate(t *testing.T) {
 			cfg: &config.Config{
 				Metrics:   defaultMetrics(),
 				Listen:    config.ListenConfig{HostPort: "localhost"},
-				Upstreams: validUpstreams,
+				Upstreams: validUpstreams(),
 			},
 			wantTuples: [][2]string{{"", "hostPort"}},
 		},
@@ -251,7 +254,7 @@ func TestConfig_Validate(t *testing.T) {
 					HostPort: ":8080",
 					TLS:      &config.TLSConfig{}, // empty -> "a server certificate is required"
 				},
-				Upstreams: validUpstreams,
+				Upstreams: validUpstreams(),
 			},
 			wantTuples: [][2]string{
 				{"tls", "cert"},
@@ -265,7 +268,7 @@ func TestConfig_Validate(t *testing.T) {
 					HostPort: "localhost",
 					TLS:      &config.TLSConfig{},
 				},
-				Upstreams: validUpstreams,
+				Upstreams: validUpstreams(),
 			},
 			wantTuples: [][2]string{
 				{"", "hostPort"},
@@ -320,7 +323,7 @@ func TestConfig_Validate(t *testing.T) {
 				Metrics:    defaultMetrics(),
 				Listen:     config.ListenConfig{HostPort: ":8080"},
 				Encryption: config.Encryption{Enabled: true},
-				Upstreams:  validUpstreams,
+				Upstreams:  validUpstreams(),
 			},
 			wantTuples: [][2]string{{"encryption", "default"}},
 		},
@@ -330,7 +333,7 @@ func TestConfig_Validate(t *testing.T) {
 				Metrics:    defaultMetrics(),
 				Listen:     config.ListenConfig{HostPort: ":8080"},
 				Encryption: config.Encryption{Default: &badPolicy},
-				Upstreams:  validUpstreams,
+				Upstreams:  validUpstreams(),
 			},
 			wantTuples: [][2]string{{"encryption.default", "renewBefore"}},
 		},
@@ -340,7 +343,7 @@ func TestConfig_Validate(t *testing.T) {
 				Metrics:   defaultMetrics(),
 				Listen:    config.ListenConfig{HostPort: ":8080"},
 				Health:    config.Health{Interval: time.Second, Timeout: 2 * time.Second},
-				Upstreams: validUpstreams,
+				Upstreams: validUpstreams(),
 			},
 			wantTuples: [][2]string{{"health", "timeout"}},
 		},
@@ -361,7 +364,7 @@ func TestConfig_Validate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := tt.cfg.Validate()
+			err := tt.cfg.Prepare()
 			if len(tt.wantTuples) == 0 {
 				require.NoError(t, err)
 				return
@@ -454,7 +457,7 @@ func TestConfig_Validate_RoutingReferences(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assertTuples(t, tt.cfg.Validate(), tt.wantTuples)
+			assertTuples(t, tt.cfg.Prepare(), tt.wantTuples)
 		})
 	}
 }
@@ -501,7 +504,55 @@ func TestConfig_Validate_ExternalAuthReferences(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assertTuples(t, tt.cfg.Validate(), tt.wantTuples)
+			assertTuples(t, tt.cfg.Prepare(), tt.wantTuples)
+		})
+	}
+}
+
+func TestConfigPrepareRejectsAnEmptyAuthBlock(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Listen:    config.ListenConfig{HostPort: ":8080"},
+		Metrics:   defaultMetrics(),
+		Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
+		Auth:      &config.AuthConfig{},
+	}
+
+	require.ErrorContains(t, cfg.Prepare(), "exactly one of external, staticToken, or jwks must be set")
+}
+
+func TestConfigPrepareCodecServerAuthReferences(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		enabled    bool
+		wantTuples [][2]string
+	}{
+		{name: "enabled codec server naming an unknown server", enabled: true,
+			wantTuples: [][2]string{{"http.codecServer.auth.external", "name"}}},
+		{name: "disabled codec server is not checked", enabled: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &config.Config{
+				Metrics:   defaultMetrics(),
+				Listen:    config.ListenConfig{HostPort: ":8080"},
+				Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
+				HTTP: config.HTTP{
+					Listen: config.ListenConfig{HostPort: "127.0.0.1:8081"},
+					CodecServer: config.CodecServer{
+						Enabled: tt.enabled,
+						Auth:    &config.AuthConfig{External: &config.ExternalAuthConfig{Name: "nope"}},
+					},
+				},
+			}
+
+			assertTuples(t, cfg.Prepare(), tt.wantTuples)
 		})
 	}
 }
@@ -518,7 +569,7 @@ func TestConfig_ValidateRejectsDuplicateHostPorts(t *testing.T) {
 		},
 	}
 
-	err := cfg.Validate()
+	err := cfg.Prepare()
 	require.Error(t, err)
 	require.ErrorContains(t, err, "upstreams[hostPort]")
 }
@@ -526,20 +577,54 @@ func TestConfig_ValidateRejectsDuplicateHostPorts(t *testing.T) {
 func TestUpstream_IsTemplated(t *testing.T) {
 	t.Parallel()
 
-	require.True(t, (&config.Upstream{Listen: config.ListenConfig{HostPort: "{{ .LocalNamespace }}.acme.cloud:7233"}}).IsTemplated())
-	require.False(t, (&config.Upstream{Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}).IsTemplated())
+	tests := []struct {
+		name   string
+		listen config.ListenConfig
+		want   bool
+	}{
+		{name: "templated hostPort", listen: config.ListenConfig{HostPort: "{{ .LocalNamespace }}.acme.cloud:7233"}, want: true},
+		{name: "static hostPort", listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
+		{name: "templated server name", want: true, listen: config.ListenConfig{
+			HostPort: "127.0.0.1:7233",
+			TLS:      &config.TLSConfig{ServerName: "{{ .RemoteNamespace }}.acme.cloud"},
+		}},
+		{name: "static server name", listen: config.ListenConfig{
+			HostPort: "127.0.0.1:7233",
+			TLS:      &config.TLSConfig{ServerName: "static.acme.cloud"},
+		}},
+	}
 
-	// A templated TLS server name makes the upstream templated even when the
-	// hostPort is static.
-	require.True(t, (&config.Upstream{Listen: config.ListenConfig{
-		HostPort: "127.0.0.1:7233",
-		TLS:      &config.TLSConfig{ServerName: "{{ .RemoteNamespace }}.acme.cloud"},
-	}}).IsTemplated())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	require.False(t, (&config.Upstream{Listen: config.ListenConfig{
-		HostPort: "127.0.0.1:7233",
-		TLS:      &config.TLSConfig{ServerName: "static.acme.cloud"},
-	}}).IsTemplated())
+			cfg := &config.Config{
+				Listen:    config.ListenConfig{HostPort: ":8080"},
+				Upstreams: []config.Upstream{{Name: "primary", Listen: tt.listen}},
+			}
+			require.NoError(t, cfg.Prepare())
+			require.Equal(t, tt.want, cfg.Upstreams[0].IsTemplated())
+		})
+	}
+
+	require.Panics(t, func() { (&config.Upstream{}).IsTemplated() })
+}
+
+func TestConfigPrepareUpstreamTemplateErrors(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Listen: config.ListenConfig{HostPort: ":8080"},
+		Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{
+			HostPort: "{{ .Nope }}.acme.cloud:7233",
+			TLS:      &config.TLSConfig{ServerName: "{{ .Nope }}"},
+		}}},
+	}
+
+	assertTuples(t, cfg.Prepare(), [][2]string{
+		{"upstreams[0]", "hostPort"},
+		{"upstreams[0].tls", "serverName"},
+	})
 }
 
 func (e *errReader) Read(_ []byte) (int, error) { return 0, e.err }
@@ -555,4 +640,133 @@ func urlStrings(us []url.URL) []string {
 	}
 
 	return out
+}
+
+func TestConfigPrepare(t *testing.T) {
+	t.Parallel()
+
+	minimal := func() *config.Config {
+		return &config.Config{
+			Listen:    config.ListenConfig{HostPort: ":8080"},
+			Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
+		}
+	}
+
+	t.Run("fills defaults into zero fields only", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := minimal()
+		cfg.Metrics.Namespace = "custom"
+
+		require.NoError(t, cfg.Prepare())
+		require.Equal(t, ":9090", cfg.Metrics.HostPort)
+		require.Equal(t, "custom", cfg.Metrics.Namespace)
+		require.Equal(t, config.Services(services.Default()), cfg.AllowedServices)
+	})
+
+	t.Run("is idempotent on a prepared config", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := minimal()
+		require.NoError(t, cfg.Prepare())
+		first := *cfg
+
+		require.NoError(t, cfg.Prepare())
+		require.Equal(t, first.AllowedServices, cfg.AllowedServices)
+		require.Equal(t, first.Metrics, cfg.Metrics)
+	})
+
+	t.Run("reports validation errors", func(t *testing.T) {
+		t.Parallel()
+
+		require.ErrorContains(t, (&config.Config{}).Prepare(), "at least one upstream is required")
+	})
+}
+
+func TestLoadRejectsInvalidConfig(t *testing.T) {
+	t.Parallel()
+
+	_, err := config.Load(strings.NewReader("hostPort: \":8080\"\n"))
+	require.ErrorContains(t, err, "at least one upstream is required")
+}
+
+func TestLoadNamespaceOverridesTranslate(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(strings.NewReader(`
+hostPort: ":8080"
+upstreams:
+  - name: primary
+    hostPort: "127.0.0.1:7233"
+    namespaces:
+      rules:
+        suffix: ".acct"
+        overrides:
+          - local: legacy
+            remote: legacy-prod.acct
+`))
+	require.NoError(t, err)
+
+	rules := &cfg.Upstreams[0].Namespaces.Rules
+	require.Equal(t, "legacy-prod.acct", rules.Remote("legacy"))
+	require.Equal(t, "legacy", rules.Local("legacy-prod.acct"))
+	require.Equal(t, "payments.acct", rules.Remote("payments"))
+}
+
+func TestConfigPrepareGoBuiltOverridesTranslate(t *testing.T) {
+	t.Parallel()
+
+	cfg := preparedWithRules(t, config.NamespaceRules{
+		Overrides: []config.NamespaceMapping{{Local: "a", Remote: "b"}},
+	})
+	require.Equal(t, "b", cfg.Upstreams[0].Namespaces.Rules.Remote("a"))
+}
+
+func TestConfigPrepareRecompiles(t *testing.T) {
+	t.Parallel()
+
+	cfg := preparedWithRules(t, config.NamespaceRules{
+		Overrides: []config.NamespaceMapping{{Local: "a", Remote: "b"}},
+	})
+
+	cfg.Upstreams[0].Namespaces.Rules.Overrides[0].Remote = "c"
+	require.NoError(t, cfg.Prepare())
+	require.Equal(t, "c", cfg.Upstreams[0].Namespaces.Rules.Remote("a"))
+}
+
+func TestConfigPrepareFailureClearsCompiledState(t *testing.T) {
+	t.Parallel()
+
+	cfg := preparedWithRules(t, config.NamespaceRules{})
+	cfg.Listen.HostPort = "not a host port"
+	require.Error(t, cfg.Prepare())
+
+	rules := &cfg.Upstreams[0].Namespaces.Rules
+	require.Panics(t, func() { rules.Remote("a") })
+}
+
+func TestNamespaceRulesPanicsBeforePrepare(t *testing.T) {
+	t.Parallel()
+
+	rules := &config.NamespaceRules{Suffix: ".acct"}
+	require.Panics(t, func() { rules.Remote("a") })
+	require.Panics(t, func() { rules.Local("a.acct") })
+}
+
+// preparedWithRules returns a minimal prepared config whose only upstream uses
+// rules.
+func preparedWithRules(t *testing.T, rules config.NamespaceRules) *config.Config {
+	t.Helper()
+
+	cfg := &config.Config{
+		Listen: config.ListenConfig{HostPort: ":8080"},
+		Upstreams: []config.Upstream{{
+			Name:       "primary",
+			Listen:     config.ListenConfig{HostPort: "127.0.0.1:7233"},
+			Namespaces: config.NamespaceConfig{Rules: rules},
+		}},
+	}
+	require.NoError(t, cfg.Prepare())
+
+	return cfg
 }

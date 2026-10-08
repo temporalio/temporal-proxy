@@ -117,7 +117,7 @@ func TestLoadHTTP(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := config.Load(strings.NewReader(
-		"http:\n  hostPort: 127.0.0.1:8445\n  insecure: true\n" +
+		"hostPort: :8080\n" + upstreamYAML + "http:\n  hostPort: 127.0.0.1:8445\n  insecure: true\n" +
 			"  codecServer:\n    enabled: true\n    cors:\n      origins: [http://localhost:8233]\n",
 	))
 	require.NoError(t, err)
@@ -133,11 +133,10 @@ func TestLoadHTTP(t *testing.T) {
 func TestValidateRejectsRetiredCodecServer(t *testing.T) {
 	t.Parallel()
 
-	cfg, err := config.Load(strings.NewReader(
-		"routing:\n  default: local\n" +
+	_, err := config.Load(strings.NewReader(
+		"hostPort: :8080\nrouting:\n  default: local\n" +
 			"upstreams:\n  - name: local\n    hostPort: localhost:7233\n    insecure: true\n" +
 			"codecServer:\n  enabled: true\n  hostPort: 127.0.0.1:8445\n  insecure: true\n",
 	))
-	require.NoError(t, err)
-	require.ErrorContains(t, cfg.Validate(), "moved to http.codecServer")
+	require.ErrorContains(t, err, "moved to http.codecServer")
 }

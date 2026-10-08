@@ -50,25 +50,12 @@ type (
 	ResolverOption func(*DynamicResolver)
 )
 
-// NewDynamicResolver builds a DynamicResolver for up. It compiles the hostPort
-// and TLS server-name templates (failing if either is malformed) and applies
-// opts. By default the remote namespace equals the local one and no dial options
-// are added; use WithRemoteNamespacer and WithOptionsFactory to change that.
-func NewDynamicResolver(up *config.Upstream, opts ...ResolverOption) (*DynamicResolver, error) {
-	host, err := template.ParseUpstream(up.Listen.HostPort)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse upstream host template %q: %w", up.Name, err)
-	}
-
-	tsn := ""
-	if up.Listen.TLS != nil {
-		tsn = up.Listen.TLS.ServerName
-	}
-
-	serverName, err := template.ParseUpstream(tsn)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse upstream TLS server name template %q: %w", up.Name, err)
-	}
+// NewDynamicResolver builds a DynamicResolver for the prepared upstream up,
+// using its parsed hostPort and TLS server-name templates, and applies opts. By
+// default the remote namespace equals the local one and no dial options are
+// added; use WithRemoteNamespacer and WithOptionsFactory to change that.
+func NewDynamicResolver(up *config.Upstream, opts ...ResolverOption) *DynamicResolver {
+	host, serverName := up.Templates()
 
 	r := &DynamicResolver{
 		name:       up.Name,
@@ -82,7 +69,7 @@ func NewDynamicResolver(up *config.Upstream, opts ...ResolverOption) (*DynamicRe
 		opt(r)
 	}
 
-	return r, nil
+	return r
 }
 
 // WithRemoteNamespacer sets the function that maps the local namespace to the
@@ -142,7 +129,7 @@ func ResolverFor(upstream *config.Upstream, opts []grpc.DialOption, log logger.L
 			resolverOpts = append(resolverOpts, WithResolverLogger(log.With(tag.Component("resolver"))))
 		}
 
-		return NewDynamicResolver(upstream, resolverOpts...)
+		return NewDynamicResolver(upstream, resolverOpts...), nil
 	}
 
 	serverName := ""

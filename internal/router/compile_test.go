@@ -1,6 +1,9 @@
 package router_test
 
 import (
+	"fmt"
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -9,7 +12,7 @@ import (
 	"github.com/temporalio/temporal-proxy/internal/router"
 )
 
-func TestCompileMux(t *testing.T) {
+func TestMuxFor(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -98,8 +101,7 @@ func TestCompileMux(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			mux, err := router.CompileMux(tt.routing)
-			require.NoError(t, err)
+			mux := router.MuxFor(prepared(t, tt.routing))
 
 			got, outcome := mux.Switch(tt.ns, tt.md)
 			require.Equal(t, tt.want, got)
@@ -108,55 +110,31 @@ func TestCompileMux(t *testing.T) {
 	}
 }
 
-func TestCompileMuxErrors(t *testing.T) {
-	t.Parallel()
+// prepared returns r after preparing it inside a minimal config with one
+// upstream per name r references.
+func prepared(t *testing.T, r config.Routing) config.Routing {
+	t.Helper()
 
-	tests := []struct {
-		name    string
-		routing config.Routing
-		wantErr string
-	}{
-		{
-			name: "interior wildcard in a namespace",
-			routing: config.Routing{
-				Rules: []config.RoutingRule{
-					{Upstream: "prod", Match: config.RoutingMatch{Namespace: "a*b"}},
-				},
-			},
-			wantErr: `rules[0].match.namespace`,
-		},
-		{
-			name: "interior wildcard in a metadata value",
-			routing: config.Routing{
-				Rules: []config.RoutingRule{
-					{Upstream: "prod", Match: config.RoutingMatch{
-						Namespace: "*",
-						Metadata:  map[string]string{"x-tier": "a*b"},
-					}},
-				},
-			},
-			wantErr: `rules[0].match.metadata["x-tier"]`,
-		},
-		{
-			name: "metadata keys colliding once lowercased",
-			routing: config.Routing{
-				Rules: []config.RoutingRule{
-					{Upstream: "prod", Match: config.RoutingMatch{
-						Namespace: "*",
-						Metadata:  map[string]string{"X-Tier": "gold", "x-tier": "silver"},
-					}},
-				},
-			},
-			wantErr: `both map to "x-tier" when lowercased`,
-		},
+	names := map[string]struct{}{"primary": {}}
+	for _, n := range []string{r.DefaultUpstream, r.SystemUpstream} {
+		if n != "" {
+			names[n] = struct{}{}
+		}
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+	for _, rr := range r.Rules {
+		names[rr.Upstream] = struct{}{}
+	}
 
-			_, err := router.CompileMux(tt.routing)
-			require.ErrorContains(t, err, tt.wantErr)
+	cfg := &config.Config{Listen: config.ListenConfig{HostPort: ":8080"}, Routing: r}
+	for i, n := range slices.Sorted(maps.Keys(names)) {
+		cfg.Upstreams = append(cfg.Upstreams, config.Upstream{
+			Name:   n,
+			Listen: config.ListenConfig{HostPort: fmt.Sprintf("127.0.0.1:%d", 7233+i)},
 		})
 	}
+
+	require.NoError(t, cfg.Prepare())
+
+	return cfg.Routing
 }

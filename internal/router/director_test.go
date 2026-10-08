@@ -20,13 +20,12 @@ import (
 func TestDirectorResolve(t *testing.T) {
 	t.Parallel()
 
-	mux, err := router.CompileMux(config.Routing{
+	mux := router.MuxFor(prepared(t, config.Routing{
 		DefaultUpstream: "primary",
 		Rules: []config.RoutingRule{
 			{Upstream: "prod", Match: config.RoutingMatch{Namespace: "prod-*"}},
 		},
-	})
-	require.NoError(t, err)
+	}))
 
 	// Handlers are not comparable, so each records its upstream when called.
 	var served string
@@ -62,13 +61,12 @@ tmprl_proxy_router_decisions_total{outcome="unroutable",upstream="unknown"} 0
 func TestDirectorResolveUnroutable(t *testing.T) {
 	t.Parallel()
 
-	mux, err := router.CompileMux(config.Routing{})
-	require.NoError(t, err)
+	mux := router.MuxFor(prepared(t, config.Routing{}))
 
 	rep, reg := newTestReporter(t)
 	d := router.NewDirector(mux, nil, rep, nil)
 
-	_, err = d.Resolve(t.Context(), "/svc/Method", "anything", nil)
+	_, err := d.Resolve(t.Context(), "/svc/Method", "anything", nil)
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	// An unroutable request is attributed to the "unknown" upstream, since no
@@ -81,13 +79,12 @@ tmprl_proxy_router_decisions_total{outcome="unroutable",upstream="unknown"} 1
 func TestDirectorResolveNoHandler(t *testing.T) {
 	t.Parallel()
 
-	mux, err := router.CompileMux(config.Routing{DefaultUpstream: "primary"})
-	require.NoError(t, err)
+	mux := router.MuxFor(prepared(t, config.Routing{DefaultUpstream: "primary"}))
 
 	rep, reg := newTestReporter(t, "primary")
 	d := router.NewDirector(mux, nil, rep, nil)
 
-	_, err = d.Resolve(t.Context(), "/svc/Method", "anything", nil)
+	_, err := d.Resolve(t.Context(), "/svc/Method", "anything", nil)
 	require.Equal(t, codes.Unavailable, status.Code(err))
 	require.ErrorContains(t, err, `no handler for upstream "primary"`)
 
@@ -107,8 +104,7 @@ tmprl_proxy_router_forwarding_errors_total{reason="no_handler",upstream="primary
 func TestDirectorLogsRoutingDecision(t *testing.T) {
 	t.Parallel()
 
-	mux, err := router.CompileMux(config.Routing{DefaultUpstream: "primary"})
-	require.NoError(t, err)
+	mux := router.MuxFor(prepared(t, config.Routing{DefaultUpstream: "primary"}))
 
 	rep, _ := newTestReporter(t, "primary")
 	log := logger.NewTestLogger()
@@ -119,7 +115,7 @@ func TestDirectorLogsRoutingDecision(t *testing.T) {
 		log,
 	)
 
-	_, err = d.Resolve(t.Context(), "/svc/Method", "orders", nil)
+	_, err := d.Resolve(t.Context(), "/svc/Method", "orders", nil)
 	require.NoError(t, err)
 
 	// The constructor scopes the logger to the router component, so that tag

@@ -16,7 +16,7 @@ func TestModule_ProvidesConfig(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(path, []byte("hostPort: :7233\n"), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("hostPort: :7233\n"+upstreamYAML), 0o600))
 
 	var got *config.Config
 	app := fx.New(
@@ -27,11 +27,15 @@ func TestModule_ProvidesConfig(t *testing.T) {
 	)
 
 	require.NoError(t, app.Err())
-	require.Equal(t, &config.Config{
+
+	want := &config.Config{
 		Listen:          config.ListenConfig{HostPort: ":7233"},
+		Upstreams:       []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
 		AllowedServices: config.Services(services.Default()),
 		Metrics:         defaultMetrics(),
-	}, got)
+	}
+	require.NoError(t, want.Prepare())
+	require.Equal(t, want, got)
 }
 
 func TestModule_ProvidesAllowlist(t *testing.T) {
@@ -41,7 +45,7 @@ func TestModule_ProvidesAllowlist(t *testing.T) {
 	// without it the binary fails at construction with "missing type:
 	// services.Allowlist" while every other test still passes.
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(path, []byte("allowedServices: [\""+services.Reflection+"\"]\n"), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("hostPort: :7233\n"+upstreamYAML+"allowedServices: [\""+services.Reflection+"\"]\n"), 0o600))
 
 	var got services.Allowlist
 	app := fx.New(
@@ -61,7 +65,7 @@ func TestModule_AllowlistDefaultsWhenConfigNamesNone(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(path, []byte("hostPort: :7233\n"), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("hostPort: :7233\n"+upstreamYAML), 0o600))
 
 	var got services.Allowlist
 	app := fx.New(
@@ -90,4 +94,44 @@ func TestModule_ErrorPropagates(t *testing.T) {
 	)
 
 	require.ErrorIs(t, app.Err(), os.ErrNotExist)
+}
+
+func TestSupply(t *testing.T) {
+	t.Parallel()
+
+	t.Run("provides the config prepared", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := &config.Config{
+			Listen:    config.ListenConfig{HostPort: ":8080"},
+			Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
+		}
+
+		var got *config.Config
+		app := fx.New(fx.NopLogger, config.Supply(cfg), fx.Populate(&got))
+		require.NoError(t, app.Err())
+		require.Equal(t, ":9090", got.Metrics.HostPort)
+	})
+
+	t.Run("fails the graph on an invalid config", func(t *testing.T) {
+		t.Parallel()
+
+		app := fx.New(fx.NopLogger, config.Supply(&config.Config{}), fx.Invoke(func(*config.Config) {}))
+		require.ErrorContains(t, app.Err(), "at least one upstream is required")
+	})
+}
+
+func TestModuleRejectsInvalidFile(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "proxy.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("hostPort: \":8080\"\n"), 0o600))
+
+	app := fx.New(
+		fx.NopLogger,
+		fx.Supply(fx.Annotate(path, config.ConfigFileTag)),
+		config.Module,
+		fx.Invoke(func(*config.Config) {}),
+	)
+	require.ErrorContains(t, app.Err(), "at least one upstream is required")
 }

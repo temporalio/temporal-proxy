@@ -348,7 +348,7 @@ func TestConfig_Validate_ExtensionServers(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assertTuples(t, base(tt.servers).Validate(), tt.wantTuples)
+			assertTuples(t, base(tt.servers).Prepare(), tt.wantTuples)
 		})
 	}
 }

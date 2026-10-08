@@ -1,6 +1,7 @@
 package dataplanetest
 
 import (
+	"cmp"
 	"context"
 	"net"
 	"testing"
@@ -117,7 +118,7 @@ func Start(t *testing.T, cfg *config.Config, opts ...Option) *Fixture {
 		opt(o)
 	}
 
-	applyDefaults(cfg)
+	setTestDefaults(cfg)
 
 	pool := connect.NewPool()
 	t.Cleanup(func() { _ = pool.Close() })
@@ -158,7 +159,7 @@ func Start(t *testing.T, cfg *config.Config, opts ...Option) *Fixture {
 func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 	t.Helper()
 
-	applyDefaults(cfg)
+	setTestDefaults(cfg)
 
 	// A private registry per app: reporters register their collectors during
 	// construction, and Prometheus rejects a duplicate registration, so a
@@ -169,7 +170,7 @@ func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 	var httpSvr *httpserver.Server
 	app := fx.New(
 		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
-		fx.Supply(cfg),
+		config.Supply(cfg),
 		fx.Provide(
 			func() logger.Logger { return logger.NewNoopLogger() },
 			func() prometheus.Gatherer { return reg },
@@ -184,10 +185,6 @@ func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 		kms.Module,
 		metrics.Module,
 		protoutil.Module,
-		// config.Module's other half loads a file, which these tests skip in
-		// favour of supplying a Config; this is the allowlist provider it would
-		// otherwise contribute.
-		fx.Provide(config.NewAllowlist),
 		fx.Populate(&dp, &httpSvr),
 		fx.NopLogger,
 	)
@@ -244,32 +241,17 @@ func (f *Fixture) Context() context.Context {
 	return ctx
 }
 
-// applyDefaults fills in the fields every case would otherwise repeat. Routing
-// is deliberately untouched: an empty DefaultUpstream is indistinguishable from
-// an unset one, so filling it would quietly make a test of the unroutable path
-// unable to fail.
-func applyDefaults(cfg *config.Config) {
-	if cfg.Listen.HostPort == "" {
-		cfg.Listen.HostPort = "127.0.0.1:0"
-	}
+// setTestDefaults sets the values these tests need that differ from the
+// production defaults. Prepare only fills zero fields, so these win. Ports are
+// ephemeral so parallel apps never contend, and every forwardable service is
+// admitted so admission never stands in for the behavior under test.
+func setTestDefaults(cfg *config.Config) {
+	cfg.Listen.HostPort = cmp.Or(cfg.Listen.HostPort, "127.0.0.1:0")
+	cfg.Metrics.HostPort = cmp.Or(cfg.Metrics.HostPort, "127.0.0.1:0")
+	cfg.Metrics.Namespace = cmp.Or(cfg.Metrics.Namespace, "test")
 
-	// Load applies this default when parsing YAML, which these tests skip.
-	// Admit everything forwardable so admission never stands in for the
-	// behaviour under test; it has its own coverage in internal/services and
-	// internal/router.
 	if len(cfg.AllowedServices) == 0 {
 		cfg.AllowedServices = config.Services(services.Known())
-	}
-
-	// Also a Load default, and Config.Validate requires both. The address is
-	// ephemeral so parallel apps never contend for a port, and the namespace
-	// matches the factory Start builds directly.
-	if cfg.Metrics.HostPort == "" {
-		cfg.Metrics.HostPort = "127.0.0.1:0"
-	}
-
-	if cfg.Metrics.Namespace == "" {
-		cfg.Metrics.Namespace = "test"
 	}
 }
 

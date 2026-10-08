@@ -15,10 +15,9 @@
 //     resolved namespace as outgoing metadata.
 //
 // Together they let the server route any method it does not handle locally,
-// selecting the upstream per request from the routing table CompileMux
-// compiles.
+// selecting the upstream per request from the routing table MuxFor builds.
 //
-// internal/dataplane assembles these pieces directly: it calls CompileMux,
+// internal/dataplane assembles these pieces directly: it calls MuxFor,
 // Codec, PeekInterceptor, NewDirector, NewReporter, and Handler to build the
 // request path.
 package router

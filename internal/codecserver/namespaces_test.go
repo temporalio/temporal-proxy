@@ -1,8 +1,11 @@
 package codecserver_test
 
 import (
+	"fmt"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -16,7 +19,11 @@ func TestNewOverrideMap(t *testing.T) {
 	policy := func(names ...string) config.Encryption {
 		e := config.Encryption{Overrides: map[string]config.KeyPolicy{}}
 		for _, n := range names {
-			e.Overrides[n] = config.KeyPolicy{}
+			e.Overrides[n] = config.KeyPolicy{
+				URI:         url.URL{Scheme: "testing", Host: "a2V5"},
+				Duration:    time.Hour,
+				RenewBefore: 10 * time.Minute,
+			}
 		}
 
 		return e
@@ -93,6 +100,18 @@ func TestNewOverrideMap(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
+			// Literal configs only name what the test cares about; give them the
+			// addresses Prepare requires.
+			if tc.cfg.Listen.HostPort == "" {
+				tc.cfg.Listen.HostPort = ":8080"
+			}
+			for i := range tc.cfg.Upstreams {
+				if tc.cfg.Upstreams[i].Listen.HostPort == "" {
+					tc.cfg.Upstreams[i].Listen.HostPort = fmt.Sprintf("127.0.0.1:%d", 7233+i)
+				}
+			}
+			require.NoError(t, tc.cfg.Prepare())
+
 			got, err := codecserver.NewOverrideMap(tc.cfg)
 			if tc.wantErr != "" {
 				require.ErrorContains(t, err, tc.wantErr)
@@ -110,8 +129,8 @@ func TestNewOverrideMap(t *testing.T) {
 
 const (
 	// explicitMappingYAML declares a NamespaceMapping override so that
-	// UnmarshalYAML populates NamespaceRules' localToRemote lookup, which a
-	// struct literal cannot do.
+	// Prepare populates NamespaceRules' override lookup, which a struct literal
+	// alone does not have.
 	explicitMappingYAML = `
 hostPort: 127.0.0.1:7233
 upstreams:
@@ -126,6 +145,8 @@ encryption:
   overrides:
     payments:
       uri: testing://a2V5
+      duration: 1h
+      renewBefore: 10m
 `
 
 	// collidingRemoteYAML has two upstreams whose explicit overrides compute the
@@ -155,8 +176,12 @@ encryption:
   overrides:
     orders:
       uri: testing://a2V5
+      duration: 1h
+      renewBefore: 10m
     payments:
       uri: testing://a2V5
+      duration: 1h
+      renewBefore: 10m
 `
 )
 

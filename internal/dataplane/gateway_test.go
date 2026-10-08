@@ -26,7 +26,7 @@ import (
 )
 
 // echoMethod is the method the stand-in upstream in this file answers.
-// AllowedServices only admits names Config.Validate recognizes, so the
+// AllowedServices only admits names Config.Prepare recognizes, so the
 // stand-in has to register under a real, known service rather than a
 // fictional one.
 const echoMethod = "/" + services.WorkflowService + "/GetSystemInfo"

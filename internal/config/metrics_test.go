@@ -233,7 +233,7 @@ func TestLoad_MetricsDefaults(t *testing.T) {
 	}{
 		{
 			name: "absent metrics block gets both defaults",
-			yaml: "hostPort: :8080\n",
+			yaml: "",
 			want: config.Metrics{HostPort: ":9090", Namespace: "tmprl_proxy"},
 		},
 		{
@@ -273,7 +273,7 @@ func TestLoad_MetricsDefaults(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := config.Load(strings.NewReader(tt.yaml))
+			got, err := config.Load(strings.NewReader("hostPort: :8080\n" + upstreamYAML + tt.yaml))
 			require.NoError(t, err)
 			require.Equal(t, tt.want, got.Metrics)
 		})
@@ -527,7 +527,8 @@ func TestLoad_MetricLabels(t *testing.T) {
 		t.Parallel()
 
 		got, err := config.Load(strings.NewReader(
-			"metrics:\n  labels:\n    metadata:\n      - \"x-tenant:tenant\"\n      - \" x-Region : region \"\n",
+			"hostPort: :8080\n" + upstreamYAML +
+				"metrics:\n  labels:\n    metadata:\n      - \"x-tenant:tenant\"\n      - \" x-Region : region \"\n",
 		))
 		require.NoError(t, err)
 		require.Equal(t, []config.MetricLabel{
@@ -540,7 +541,8 @@ func TestLoad_MetricLabels(t *testing.T) {
 		t.Parallel()
 
 		got, err := config.Load(strings.NewReader(
-			"metrics:\n  labels:\n    fixed:\n      region: us-west-2\n      zone: us-west-2a\n",
+			"hostPort: :8080\n" + upstreamYAML +
+				"metrics:\n  labels:\n    fixed:\n      region: us-west-2\n      zone: us-west-2a\n",
 		))
 		require.NoError(t, err)
 		require.Equal(
@@ -553,7 +555,7 @@ func TestLoad_MetricLabels(t *testing.T) {
 	t.Run("an absent metadata key leaves none configured", func(t *testing.T) {
 		t.Parallel()
 
-		got, err := config.Load(strings.NewReader("metrics:\n  namespace: acme\n"))
+		got, err := config.Load(strings.NewReader("hostPort: :8080\n" + upstreamYAML + "metrics:\n  namespace: acme\n"))
 		require.NoError(t, err)
 		require.Empty(t, got.Metrics.Labels.Metadata)
 	})

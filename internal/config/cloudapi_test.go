@@ -19,8 +19,11 @@ import (
 func TestCloudAPIUpstreamsAreDistinctPerSource(t *testing.T) {
 	t.Parallel()
 
-	a := config.CloudAPI{}.Upstream(&config.Upstream{Name: "alpha"})
-	b := config.CloudAPI{}.Upstream(&config.Upstream{Name: "beta"})
+	a, err := config.CloudAPI{}.Upstream(&config.Upstream{Name: "alpha"})
+	require.NoError(t, err)
+
+	b, err := config.CloudAPI{}.Upstream(&config.Upstream{Name: "beta"})
+	require.NoError(t, err)
 
 	require.Equal(t, a.Listen.HostPort, b.Listen.HostPort, "both reach the same control plane")
 	require.NotEqual(t, a.Name, b.Name, "but must not share a pooled connection")
@@ -34,7 +37,8 @@ func TestCloudAPIUpstreamDefaults(t *testing.T) {
 	var unset config.CloudAPI
 	src := &config.Upstream{Name: "frontend"}
 
-	api := unset.Upstream(src)
+	api, err := unset.Upstream(src)
+	require.NoError(t, err)
 	require.Equal(t, cloud.APIHostPort, api.Listen.HostPort)
 	require.False(t, api.Listen.Insecure, "the real control plane is always TLS")
 	require.True(t, api.IsCloud())
@@ -50,7 +54,8 @@ func TestCloudAPIUpstreamInheritsConnection(t *testing.T) {
 		KeepAlive:       config.KeepAliveConfig{Time: time.Minute, Timeout: 20 * time.Second},
 	}
 
-	api := config.CloudAPI{}.Upstream(&config.Upstream{Name: "frontend", Connection: conn})
+	api, err := config.CloudAPI{}.Upstream(&config.Upstream{Name: "frontend", Connection: conn})
+	require.NoError(t, err)
 	require.Equal(t, conn, api.Connection)
 }
 
@@ -66,7 +71,10 @@ func TestAPITranslationsZeroValueIsTheUnconfiguredCase(t *testing.T) {
 	require.True(t, absent.CloudAPI.IsZero(), "an absent block configures no control plane of its own")
 	require.NoError(t, absent.Validate())
 	require.True(t, absent.CloudAPI.IsSaasAPI(), "and the derived control plane is Cloud's own")
-	require.Equal(t, cloud.APIHostPort, absent.CloudAPI.Upstream(&config.Upstream{Name: "frontend"}).Listen.HostPort)
+
+	api, err := absent.CloudAPI.Upstream(&config.Upstream{Name: "frontend"})
+	require.NoError(t, err)
+	require.Equal(t, cloud.APIHostPort, api.Listen.HostPort)
 }
 
 func TestLoad_CloudUpstreamNeedsNoTranslationConfig(t *testing.T) {
@@ -89,7 +97,7 @@ upstreams:
 
 	cfg, err := config.Load(strings.NewReader(yaml))
 	require.NoError(t, err)
-	require.NoError(t, cfg.Validate())
+	require.NoError(t, cfg.Prepare())
 
 	require.Empty(t, cfg.Routing.Rules, "translation needs no routing rule")
 	require.True(t, cfg.APITranslations.CloudAPI.IsZero(), "and no cloudApi block")
@@ -97,7 +105,8 @@ upstreams:
 
 	// The control plane is derived from the upstream: its own address, and the
 	// upstream's credentials, since one API key authorizes both.
-	api := cfg.APITranslations.CloudAPI.Upstream(&cfg.Upstreams[0])
+	api, err := cfg.APITranslations.CloudAPI.Upstream(&cfg.Upstreams[0])
+	require.NoError(t, err)
 	require.Equal(t, cloud.APIHostPort, api.Listen.HostPort)
 	require.Equal(t, cfg.Upstreams[0].Credentials, api.Credentials)
 	require.NotEqual(t, cfg.Upstreams[0].Name, api.Name, "distinct name keeps the pooled connections apart")
@@ -126,9 +135,10 @@ apiTranslations:
 
 	cfg, err := config.Load(strings.NewReader(yaml))
 	require.NoError(t, err)
-	require.NoError(t, cfg.Validate())
+	require.NoError(t, cfg.Prepare())
 
-	api := cfg.APITranslations.CloudAPI.Upstream(&cfg.Upstreams[0])
+	api, err := cfg.APITranslations.CloudAPI.Upstream(&cfg.Upstreams[0])
+	require.NoError(t, err)
 	require.Equal(t, "saas-api.staging.tmprl.cloud:443", api.Listen.HostPort)
 	require.NotEqual(t, cfg.Upstreams[0].Credentials, api.Credentials, "the override wins over inheritance")
 	require.True(t, cfg.APITranslations.CloudAPI.IsSaasAPI())
@@ -154,7 +164,15 @@ apiTranslations:
         apiKey: sekrit
 `
 
-	cfg, err := config.Load(strings.NewReader(yaml))
+	_, err := config.Load(strings.NewReader(yaml))
+	require.ErrorContains(t, err, "requires TLS")
+}
+
+func TestCloudAPIUpstreamIsCompiled(t *testing.T) {
+	t.Parallel()
+
+	api, err := config.CloudAPI{}.Upstream(&config.Upstream{Name: "frontend"})
 	require.NoError(t, err)
-	require.ErrorContains(t, cfg.Validate(), "requires TLS")
+	require.NotPanics(t, func() { api.IsTemplated() })
+	require.False(t, api.IsTemplated())
 }

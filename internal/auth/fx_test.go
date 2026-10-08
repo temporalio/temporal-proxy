@@ -107,19 +107,3 @@ func TestModuleInvalidConfigFailsApp(t *testing.T) {
 	)
 	require.Error(t, app.Err())
 }
-
-func TestModuleEmptyAuthBlockFailsApp(t *testing.T) {
-	t.Parallel()
-
-	cfg := &config.Config{Auth: &config.AuthConfig{}} // present but neither selected
-
-	var got auth.Authenticator
-	app := fx.New(
-		fx.Supply(cfg),
-		fx.Supply(api.Connections{}),
-		auth.Module,
-		fx.Populate(&got),
-		fx.NopLogger,
-	)
-	require.Error(t, app.Err())
-}

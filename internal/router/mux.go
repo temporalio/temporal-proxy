@@ -36,7 +36,7 @@ type (
 	// and, for every constrained metadata key, at least one of the request's
 	// values for that key is accepted. Metadata keys are compared as stored, so
 	// the rule builder is responsible for canonicalizing them (gRPC lowercases
-	// metadata keys). Construct rules with CompileMux.
+	// metadata keys). Construct rules with MuxFor.
 	Rule struct {
 		upstream string
 		ns       match.Matcher

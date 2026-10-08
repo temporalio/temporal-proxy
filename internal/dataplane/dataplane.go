@@ -76,12 +76,13 @@ type (
 	}
 )
 
-// New validates cfg in full, compiles the routing table, and builds the gateway
-// and every upstream's forwarder. ctx is long lived and drives the gateway's
-// health check; the context passed to Start bounds startup only. Neither
-// stops serving, which only Stop does. New binds nothing and dials nothing. Every
-// Prometheus collector is registered here, so New must be called once per
-// registry.
+// New prepares cfg (see [config.Config.Prepare]), builds the routing mux from
+// the matchers that preparation compiled, and builds the gateway and a
+// per-upstream proxy for every upstream. ctx is long lived and drives the
+// gateway's health check; the context passed to Start bounds startup only.
+// Neither stops serving, which only Stop does. New binds nothing and dials
+// nothing. Every Prometheus collector is registered here, so New must be called
+// once per registry.
 func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, error) {
 	o := &options{logger: logger.Default(), types: protoregistry.GlobalTypes}
 	for _, opt := range opts {
@@ -92,7 +93,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		return nil, err
 	}
 
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.Prepare(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
@@ -134,10 +135,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		return nil, fmt.Errorf("failed to build payload codecs: %w", err)
 	}
 
-	mux, err := router.CompileMux(cfg.Routing)
-	if err != nil {
-		return nil, err
-	}
+	mux := router.MuxFor(cfg.Routing)
 
 	// A translation block nothing will consult changes nothing and would leave an
 	// operator waiting for behaviour that cannot arrive, so say so rather than
@@ -450,7 +448,10 @@ func cloudAPIConn(cfg *config.Config, o *options, up *config.Upstream) (*transla
 		return nil, nil, fmt.Errorf("failed to build method translations: %w", err)
 	}
 
-	api := cfg.APITranslations.CloudAPI.Upstream(up)
+	api, err := cfg.APITranslations.CloudAPI.Upstream(up)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// This connection terminates at Cloud too, and carries the proxy's version for
 	// the same reason the frontend upstream does. Nothing installs it here: the

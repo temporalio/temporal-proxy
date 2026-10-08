@@ -28,23 +28,23 @@ func TestFor(t *testing.T) {
 			cfg:  &config.AuthConfig{StaticToken: &config.StaticTokenConfig{Token: "s3cret"}},
 		},
 		{
-			name:    "none selected",
-			cfg:     &config.AuthConfig{},
-			wantErr: "exactly one of external, staticToken, or jwks must be configured",
-		},
-		{
-			name: "several selected",
-			cfg: &config.AuthConfig{
-				StaticToken: &config.StaticTokenConfig{Token: "s3cret"},
-				JWKS:        &config.JWKSConfig{URL: "https://example.test/jwks"},
-			},
-			wantErr: "exactly one of external, staticToken, or jwks must be configured",
-		},
-		{
 			name:    "external names an unknown extension server",
 			cfg:     &config.AuthConfig{External: &config.ExternalAuthConfig{Name: "nope"}},
 			conns:   api.Connections{},
 			wantErr: `names unknown extension server "nope"`,
+		},
+		{
+			name:    "block that sets no method",
+			cfg:     &config.AuthConfig{},
+			wantErr: "exactly one of external, staticToken, or jwks must be set",
+		},
+		{
+			name: "block that sets two methods",
+			cfg: &config.AuthConfig{
+				StaticToken: &config.StaticTokenConfig{Token: "s3cret"},
+				JWKS:        &config.JWKSConfig{URL: "https://issuer.example/jwks"},
+			},
+			wantErr: "exactly one of external, staticToken, or jwks must be set",
 		},
 	}
 
