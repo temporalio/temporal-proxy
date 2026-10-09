@@ -48,8 +48,10 @@ type (
 	//
 	// The request's credentials hold one entry per configured credential header
 	// the caller sent, so an empty slice means it presented none; its target is
-	// what the call is addressing. The proxy's own credential to this server is
-	// not among the credentials and stays in the request metadata.
+	// what the call is addressing. A gRPC call sets the target's full_name; an
+	// HTTP request to one of the proxy's route groups, such as the codec server,
+	// leaves it empty and sets http instead. The proxy's own credential to this
+	// server is not among the credentials and stays in the request metadata.
 	//
 	// Only a Decision of DECISION_ALLOW admits; an unset decision denies. Reason
 	// is for whoever operates this server and is withheld from the rejected

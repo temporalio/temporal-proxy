@@ -96,3 +96,41 @@ func TestWithVersionKeepsOtherMetadata(t *testing.T) {
 
 	require.Equal(t, "orders", meta.NamespaceFrom(ctx))
 }
+
+func TestHTTPGroups(t *testing.T) {
+	t.Parallel()
+
+	groups := meta.HTTPGroups()
+	require.NotEmpty(t, groups)
+	require.NotContains(t, groups, meta.HTTPGroupUnspecified)
+
+	seen := map[string]bool{}
+	for _, g := range groups {
+		name := g.String()
+		require.NotEqual(t, meta.HTTPGroupUnspecified.String(), name, "group %d needs a String case", int(g))
+		require.NotContains(t, name, "HTTPGroup(", "group %d needs a String case", int(g))
+		require.False(t, seen[name], "duplicate group name %q", name)
+		seen[name] = true
+	}
+}
+
+func TestHTTPGroupString(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		group meta.HTTPGroup
+		want  string
+	}{
+		{group: meta.HTTPGroupUnspecified, want: "unspecified"},
+		{group: meta.HTTPGroupCodecServer, want: "codecServer"},
+		{group: meta.HTTPGroup(99), want: "HTTPGroup(99)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			t.Parallel()
+
+			require.Equal(t, tt.want, tt.group.String())
+		})
+	}
+}

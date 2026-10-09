@@ -6,6 +6,7 @@ package meta
 
 import (
 	"context"
+	"fmt"
 
 	"google.golang.org/grpc/metadata"
 )
@@ -21,14 +22,36 @@ const (
 	VersionHeader = "x-temporal-proxy-version"
 )
 
+const (
+	// HTTPGroupUnspecified is no route group. It is the zero value so a target
+	// built without naming one is recognizably incomplete.
+	HTTPGroupUnspecified HTTPGroup = iota
+	// HTTPGroupCodecServer is the codec server's routes.
+	HTTPGroupCodecServer
+)
+
 type (
-	// Target is what a request is addressing: the gRPC full method and the
-	// Temporal namespace named in its first message. Namespace is "" when the
-	// request names none, when its payload could not be read, or when the gateway
-	// does not forward the method's service and so never read one.
+	// HTTPGroup identifies which of the proxy's HTTP route groups a request
+	// reached. Every value except HTTPGroupUnspecified is listed by [HTTPGroups].
+	HTTPGroup int
+
+	// HTTPTarget describes an HTTP request to one of the proxy's route groups:
+	// the group it reached, its method, and its URL path.
+	HTTPTarget struct {
+		Group  HTTPGroup
+		Method string
+		Path   string
+	}
+
+	// Target is what a request is addressing. A gRPC call sets FullName to its
+	// full method; an HTTP request to a route group sets HTTP instead and leaves
+	// FullName empty. Namespace is "" when the request names none, when its
+	// payload could not be read, or when the gateway does not forward the
+	// method's service and so never read one.
 	Target struct {
 		FullName  string
 		Namespace string
+		HTTP      *HTTPTarget
 	}
 
 	// targetKey keys a Target on a context. It is an unexported type so no other
@@ -37,8 +60,9 @@ type (
 )
 
 // WithTarget returns ctx carrying target. It travels as a context value rather
-// than as metadata because a caller must not be able to forge it: the gateway
-// derives a Target from the stream it accepted, and authentication decides on it.
+// than as metadata because a caller must not be able to forge it: the proxy
+// derives a Target from the stream or HTTP route it accepted, and
+// authentication decides on it.
 func WithTarget(ctx context.Context, target Target) context.Context {
 	return context.WithValue(ctx, targetKey{}, target)
 }
@@ -50,6 +74,12 @@ func WithTarget(ctx context.Context, target Target) context.Context {
 func TargetFrom(ctx context.Context) Target {
 	target, _ := ctx.Value(targetKey{}).(Target)
 	return target
+}
+
+// HTTPGroups returns every declared route group except HTTPGroupUnspecified. A
+// new group is added here alongside its constant.
+func HTTPGroups() []HTTPGroup {
+	return []HTTPGroup{HTTPGroupCodecServer}
 }
 
 // WithNamespace returns ctx with namespace set on its outgoing gRPC metadata,
@@ -67,21 +97,6 @@ func WithVersion(ctx context.Context, version string) context.Context {
 	return withHeader(ctx, VersionHeader, version)
 }
 
-// withHeader returns ctx with key set to value on its outgoing gRPC metadata,
-// replacing any values already present for key. It copies the metadata rather
-// than writing through, since the map on ctx may be shared with other calls.
-func withHeader(ctx context.Context, key, value string) context.Context {
-	md, ok := metadata.FromOutgoingContext(ctx)
-	if !ok {
-		md = metadata.MD{}
-	} else {
-		md = md.Copy()
-	}
-
-	md.Set(key, value)
-	return metadata.NewOutgoingContext(ctx, md)
-}
-
 // NamespaceFrom returns the namespace carried on ctx's outgoing metadata, or ""
 // when absent. When multiple values are present the last (most recently added)
 // wins.
@@ -97,4 +112,31 @@ func NamespaceFrom(ctx context.Context) string {
 	}
 
 	return vals[len(vals)-1]
+}
+
+// String returns the group's name as it appears in logs.
+func (g HTTPGroup) String() string {
+	switch g {
+	case HTTPGroupUnspecified:
+		return "unspecified"
+	case HTTPGroupCodecServer:
+		return "codecServer"
+	default:
+		return fmt.Sprintf("HTTPGroup(%d)", int(g))
+	}
+}
+
+// withHeader returns ctx with key set to value on its outgoing gRPC metadata,
+// replacing any values already present for key. It copies the metadata rather
+// than writing through, since the map on ctx may be shared with other calls.
+func withHeader(ctx context.Context, key, value string) context.Context {
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if !ok {
+		md = metadata.MD{}
+	} else {
+		md = md.Copy()
+	}
+
+	md.Set(key, value)
+	return metadata.NewOutgoingContext(ctx, md)
 }

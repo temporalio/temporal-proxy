@@ -36,9 +36,9 @@ func TestAbortFiresWhenServingStopsUnexpectedly(t *testing.T) {
 
 	t.Cleanup(func() { _ = dp.Stop(context.WithoutCancel(t.Context())) })
 
-	listeners := dp.Listeners()
-	require.Len(t, listeners, 1, "only the gateway binds")
-	require.NoError(t, listeners[0].Close())
+	lis := dp.Listener()
+	require.NotNil(t, lis, "the gateway binds")
+	require.NoError(t, lis.Close())
 
 	select {
 	case err := <-aborts:
@@ -62,9 +62,9 @@ func TestAbortIsOptional(t *testing.T) {
 	// then the only record.
 	dp := startPlane(t, d)
 
-	for _, lis := range dp.Listeners() {
-		require.NoError(t, lis.Close())
-	}
+	lis := dp.Listener()
+	require.NotNil(t, lis, "the gateway binds")
+	require.NoError(t, lis.Close())
 
 	require.Eventually(
 		t,

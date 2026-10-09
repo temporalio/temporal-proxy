@@ -70,9 +70,9 @@ func TestModuleShutsTheAppDownWhenServingStops(t *testing.T) {
 	// that arrives first.
 	shutdown := app.Wait()
 
-	for _, lis := range dp.Listeners() {
-		require.NoError(t, lis.Close())
-	}
+	lis := dp.Listener()
+	require.NotNil(t, lis, "the gateway binds")
+	require.NoError(t, lis.Close())
 
 	select {
 	case sig := <-shutdown:

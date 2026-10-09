@@ -42,10 +42,10 @@ type (
 		abortOnce sync.Once
 		logger    logger.Logger
 
-		mu        sync.Mutex
-		addr      net.Addr
-		listeners []net.Listener
-		stopping  bool
+		mu       sync.Mutex
+		addr     net.Addr
+		lis      net.Listener
+		stopping bool
 	}
 
 	// Option configures a [Dataplane] via [New].

@@ -55,9 +55,7 @@ func NewAuth(cc grpc.ClientConnInterface, secureHeaders []string) *Auth {
 // the reserved keys gRPC drops (":authority", "user-agent", "content-type",
 // "grpc-*"), so a caller cannot reach the extension server's transport this way.
 func (a *Auth) Authenticate(ctx context.Context, target meta.Target, md metadata.MD) error {
-	req := &auth.AuthRequest{
-		Target: &auth.Target{FullName: target.FullName, Namespace: target.Namespace},
-	}
+	req := &auth.AuthRequest{Target: protoTarget(target)}
 	fwd := md.Copy()
 
 	for _, h := range a.headers {
@@ -124,5 +122,31 @@ func clientMessageFor(code codes.Code) string {
 		return "caller is not permitted"
 	default:
 		return "authentication temporarily unavailable"
+	}
+}
+
+// protoTarget converts the gateway's view of a request into the wire Target an
+// extension server decides on.
+func protoTarget(t meta.Target) *auth.Target {
+	pt := &auth.Target{FullName: t.FullName, Namespace: t.Namespace}
+	if t.HTTP != nil {
+		pt.Http = &auth.HTTPTarget{
+			Group:  protoHTTPGroup(t.HTTP.Group),
+			Method: t.HTTP.Method,
+			Path:   t.HTTP.Path,
+		}
+	}
+
+	return pt
+}
+
+// protoHTTPGroup maps a route group onto its wire value. A group with no case
+// here maps to GROUP_UNSPECIFIED, which TestAuthMapsEveryHTTPGroup catches.
+func protoHTTPGroup(g meta.HTTPGroup) auth.HTTPTarget_Group {
+	switch g {
+	case meta.HTTPGroupCodecServer:
+		return auth.HTTPTarget_GROUP_CODEC_SERVER
+	default:
+		return auth.HTTPTarget_GROUP_UNSPECIFIED
 	}
 }
