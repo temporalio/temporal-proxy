@@ -36,8 +36,9 @@ func TestCodecServerDecodesWhatTheGatewaySealed(t *testing.T) {
 	up := dataplanetest.NewUpstream(t)
 	cfg := dataplanetest.Config(up)
 	cfg.Encryption = config.Encryption{
-		Enabled: true,
-		Default: &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
+		Enabled:          true,
+		NamespaceBinding: config.NamespaceBindingStrict,
+		Default:          &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
 	}
 	cfg.HTTP = config.HTTP{
 		Listen:      config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
@@ -91,8 +92,9 @@ func TestCodecServerEncodeOpensThroughTheGateway(t *testing.T) {
 	up := dataplanetest.NewUpstream(t)
 	cfg := dataplanetest.Config(up)
 	cfg.Encryption = config.Encryption{
-		Enabled: true,
-		Default: &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
+		Enabled:          true,
+		NamespaceBinding: config.NamespaceBindingStrict,
+		Default:          &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
 	}
 	cfg.HTTP = config.HTTP{
 		Listen:      config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
@@ -143,8 +145,9 @@ func TestCodecServerDecodesTheRemoteNamespaceCloudSendsAfterTranslation(t *testi
 	cfg.Upstreams[0].Namespaces.Rules.Suffix = ".a8x72"
 	cfg.Metrics.Labels.Namespace = true
 	cfg.Encryption = config.Encryption{
-		Enabled: true,
-		Default: &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
+		Enabled:          true,
+		NamespaceBinding: config.NamespaceBindingStrict,
+		Default:          &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
 		Overrides: map[string]config.KeyPolicy{
 			"ns1": {URI: secondaryKeyURI(t), Duration: time.Hour},
 		},
@@ -380,4 +383,46 @@ func requireNoLabelValue(t *testing.T, f *dataplanetest.Fixture, family, label, 
 	}
 
 	t.Fatalf("no metric family named %s was gathered", family)
+}
+
+// TestCodecServerStrictRefusesUnboundPayloads pins what the UI sees when strict
+// refuses a legacy payload: the codec server's generic 400, never plaintext,
+// and a vault_ops result of "unbound" that shows the vault refused it. Making
+// strict accept unbound payloads fails the status and plaintext checks, and a
+// 400 from anything other than the vault's refusal (a malformed request, say)
+// fails the label check.
+func TestCodecServerStrictRefusesUnboundPayloads(t *testing.T) {
+	t.Parallel()
+
+	key := testingKeyURI(t)
+	secret := &common.Payload{
+		Metadata: map[string][]byte{wireEncoding: []byte("json/plain")},
+		Data:     []byte(`"the-answer-is-42"`),
+	}
+	legacy := sealThrough(t, key, config.NamespaceBindingOff, secret)
+
+	up := dataplanetest.NewUpstream(t)
+	cfg := dataplanetest.Config(up)
+	cfg.Encryption = config.Encryption{
+		Enabled:          true,
+		NamespaceBinding: config.NamespaceBindingStrict,
+		Default:          &config.KeyPolicy{URI: key, Duration: time.Hour},
+	}
+	cfg.HTTP = config.HTTP{
+		Listen:      config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
+		CodecServer: config.CodecServer{Enabled: true},
+	}
+	f := dataplanetest.StartApp(t, cfg)
+
+	body, err := protojson.Marshal(legacy)
+	require.NoError(t, err)
+
+	res := postCodecServer(t, f, "/decode", string(body), map[string]string{namespaceHeader: "ns1"})
+	raw, err := io.ReadAll(res.Body)
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusBadRequest, res.StatusCode, "response body: %s", raw)
+	require.NotContains(t, string(raw), "the-answer-is-42")
+
+	requireLabel(t, f, "test_encryption_vault_ops_total", "result", "unbound")
 }

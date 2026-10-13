@@ -367,7 +367,14 @@ func newUpstreamForwarder(
 	// installed unconditionally rather than gated on any one codec's config.
 	// Added after translation so it is the innermost unary interceptor, encoding
 	// outbound payloads last and decoding inbound payloads first.
-	cdc, err := codecs.Interceptor()
+	// Payloads are bound to the namespace the upstream knows, so a local rename
+	// leaves them readable and two proxies naming one namespace differently agree.
+	var codecOpts []proxy.InterceptorOption
+	if rules.Configured() {
+		codecOpts = append(codecOpts, proxy.WithRemoteNamespace(rules.Remote))
+	}
+
+	cdc, err := codecs.Interceptor(codecOpts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to build codec interceptor for upstream %q: %w", up.Name, err)
 	}

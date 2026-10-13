@@ -3,6 +3,7 @@ package crypto_test
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -70,6 +71,11 @@ func TestNewVault(t *testing.T) {
 		{
 			name:    "renew before exceeds duration",
 			opts:    []crypto.VaultOption{crypto.WithKeyConfig("ns1", crypto.KeyConfig{Duration: time.Hour, RenewBefore: 2 * time.Hour})},
+			wantErr: true,
+		},
+		{
+			name:    "unknown binding mode",
+			opts:    []crypto.VaultOption{crypto.WithBindingMode(crypto.BindingMode(99))},
 			wantErr: true,
 		},
 		{
@@ -467,6 +473,388 @@ func TestVaultSealMidFlightRotation(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []byte("after"), pt)
 	})
+}
+
+// TestVaultBindingModes pins what each mode seals and opens. Making off stop
+// opening bound messages, or strict stop rejecting unbound ones, fails a row.
+func TestVaultBindingModes(t *testing.T) {
+	t.Parallel()
+
+	cfg := crypto.WithKeyConfig("ns1", crypto.KeyConfig{Duration: time.Hour})
+
+	tests := []struct {
+		name           string
+		mode           crypto.BindingMode
+		wantBound      bool
+		wantUnboundErr error
+	}{
+		{name: "off", mode: crypto.BindingOff},
+		{name: "permissive", mode: crypto.BindingPermissive, wantBound: true},
+		{name: "strict", mode: crypto.BindingStrict, wantBound: true, wantUnboundErr: crypto.ErrUnbound},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := t.Context()
+			// The identity KEK shares its id across vaults, so each can open what
+			// the others sealed.
+			bound, err := newVault(t, &countingKEK{id: "default"}, cfg,
+				crypto.WithBindingMode(crypto.BindingPermissive)).Seal(ctx, "ns1", []byte("bound"))
+			require.NoError(t, err)
+			unbound, err := newVault(t, &countingKEK{id: "default"}, cfg).Seal(ctx, "ns1", []byte("unbound"))
+			require.NoError(t, err)
+
+			v := newVault(t, &countingKEK{id: "default"}, cfg, crypto.WithBindingMode(tc.mode))
+
+			own, err := v.Seal(ctx, "ns1", []byte("own"))
+			require.NoError(t, err)
+			require.Equal(t, tc.wantBound, own.Bound)
+			if tc.wantBound {
+				require.Equal(t, "ns1", own.Namespace)
+			} else {
+				require.Empty(t, own.Namespace)
+			}
+
+			pt, err := v.Open(ctx, bound)
+			require.NoError(t, err, "every mode opens bound messages")
+			require.Equal(t, []byte("bound"), pt)
+
+			pt, err = v.Open(ctx, unbound)
+			if tc.wantUnboundErr != nil {
+				require.ErrorIs(t, err, tc.wantUnboundErr)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, []byte("unbound"), pt)
+		})
+	}
+}
+
+// TestVaultBindingTamper pins that the binding is authenticated. Dropping the
+// AAD from gcm.Seal or gcm.Open makes the relabel rows open; removing the
+// version prefix or separator makes the empty-namespace rows open.
+func TestVaultBindingTamper(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	cfg := crypto.WithDefaultKeyConfig(crypto.KeyConfig{Duration: time.Hour})
+	permissive := newVault(t, &countingKEK{id: "default"}, cfg, crypto.WithBindingMode(crypto.BindingPermissive))
+	off := newVault(t, &countingKEK{id: "default"}, cfg)
+
+	seal := func(v *crypto.Vault, ns string) *crypto.Message {
+		msg, err := v.Seal(ctx, ns, []byte("secret"))
+		require.NoError(t, err)
+		return msg
+	}
+
+	tests := []struct {
+		name   string
+		msg    *crypto.Message
+		tamper func(*crypto.Message)
+	}{
+		{name: "relabel", msg: seal(permissive, "ns1"), tamper: func(m *crypto.Message) { m.Namespace = "ns2" }},
+		{name: "strip", msg: seal(permissive, "ns1"), tamper: func(m *crypto.Message) { m.Bound = false; m.Namespace = "" }},
+		{name: "add to legacy", msg: seal(off, "ns1"), tamper: func(m *crypto.Message) { m.Bound = true; m.Namespace = "ns1" }},
+		{name: "strip empty namespace", msg: seal(permissive, ""), tamper: func(m *crypto.Message) { m.Bound = false }},
+		{name: "add empty namespace to legacy", msg: seal(off, ""), tamper: func(m *crypto.Message) { m.Bound = true }},
+		{name: "non-utf8 label", msg: seal(permissive, "ns1"), tamper: func(m *crypto.Message) { m.Namespace = "\xff\x00\xfe" }},
+		{name: "oversized label", msg: seal(permissive, "ns1"), tamper: func(m *crypto.Message) {
+			m.Namespace = string(bytes.Repeat([]byte("n"), 64*1024))
+		}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			tc.tamper(tc.msg)
+			_, err := permissive.Open(ctx, tc.msg)
+			require.ErrorIs(t, err, crypto.ErrMalformedCipherText)
+		})
+	}
+}
+
+// TestVaultStrictRejectsBeforeUnwrap pins where the strict check sits. Moving
+// it after the unwrap makes decCount non-zero; moving it before the KEK lookup
+// turns the foreign row into ErrUnbound; moving it after the cache lookup makes
+// the cached row emit a CacheEvent for the refused message.
+func TestVaultStrictRejectsBeforeUnwrap(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	cfg := crypto.WithKeyConfig("ns1", crypto.KeyConfig{Duration: time.Hour})
+
+	legacy, err := newVault(t, &countingKEK{id: "default"}, cfg).Seal(ctx, "ns1", []byte("legacy"))
+	require.NoError(t, err)
+
+	t.Run("held key", func(t *testing.T) {
+		t.Parallel()
+
+		kek := &countingKEK{id: "default"}
+		v := newVault(t, kek, cfg, crypto.WithBindingMode(crypto.BindingStrict))
+
+		_, err := v.Open(ctx, legacy)
+		require.ErrorIs(t, err, crypto.ErrUnbound)
+		require.Zero(t, kek.decCount.Load(), "a refused message must not reach the KEK")
+	})
+
+	t.Run("foreign key", func(t *testing.T) {
+		t.Parallel()
+
+		kek := &countingKEK{id: "default"}
+		v := newVault(t, kek, cfg, crypto.WithBindingMode(crypto.BindingStrict))
+
+		foreign := *legacy
+		foreign.KeyMaterial = &crypto.DEKMaterial{KEKID: "other-proxy", EncryptedDEK: legacy.KeyMaterial.EncryptedDEK}
+
+		_, err := v.Open(ctx, &foreign)
+		require.ErrorIs(t, err, crypto.ErrUnknownKey)
+		require.NotErrorIs(t, err, crypto.ErrUnbound)
+		require.Zero(t, kek.decCount.Load())
+	})
+
+	t.Run("cached DEK", func(t *testing.T) {
+		t.Parallel()
+
+		spy := &spyObserver{}
+		v := newVault(t, &countingKEK{id: "default"}, cfg,
+			crypto.WithBindingMode(crypto.BindingStrict), crypto.WithObserver(spy))
+
+		bound, err := v.Seal(ctx, "ns1", []byte("bound"))
+		require.NoError(t, err)
+		_, err = v.Open(ctx, bound) // caches the DEK under bound's material
+		require.NoError(t, err)
+
+		stripped := *bound
+		stripped.Bound = false
+		stripped.Namespace = ""
+
+		spy.reset()
+		_, err = v.Open(ctx, &stripped)
+		require.ErrorIs(t, err, crypto.ErrUnbound)
+		require.Empty(t, spy.cacheHitSizes(), "a refused message must not read the cache")
+		require.Empty(t, spy.cacheMissSizes(), "a refused message must not read the cache")
+		require.Len(t, spy.envelopeOps(), 1)
+	})
+}
+
+// TestVaultSealWithLabel pins that the label is independent of the namespace
+// that selects the key. Labeling with ns instead of the option fails the bound
+// rows; selecting the key by label fails every row, since only ns1 has a key.
+func TestVaultSealWithLabel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		mode      crypto.BindingMode
+		opts      []crypto.SealOption
+		wantBound bool
+		wantNS    string
+	}{
+		{name: "label given", mode: crypto.BindingPermissive, opts: []crypto.SealOption{crypto.WithLabel("ns1.acct")}, wantBound: true, wantNS: "ns1.acct"},
+		{name: "empty label given", mode: crypto.BindingPermissive, opts: []crypto.SealOption{crypto.WithLabel("")}, wantBound: true, wantNS: ""},
+		{name: "no label defaults to ns", mode: crypto.BindingPermissive, wantBound: true, wantNS: "ns1"},
+		{name: "off ignores the label", mode: crypto.BindingOff, opts: []crypto.SealOption{crypto.WithLabel("ns1.acct")}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			v := newVault(t, &countingKEK{id: "default"},
+				crypto.WithKeyConfig("ns1", crypto.KeyConfig{Duration: time.Hour}),
+				crypto.WithBindingMode(tc.mode))
+
+			msg, err := v.Seal(t.Context(), "ns1", []byte("x"), tc.opts...)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantBound, msg.Bound)
+			require.Equal(t, tc.wantNS, msg.Namespace)
+
+			pt, err := v.Open(t.Context(), msg)
+			require.NoError(t, err)
+			require.Equal(t, []byte("x"), pt)
+		})
+	}
+}
+
+// TestVaultOpenExpectNamespace pins which modes enforce the expected namespace.
+// Enforcing outside strict fails the permissive and off mismatch rows; skipping
+// the comparison fails the strict mismatch row; comparing without an
+// expectation fails the last row.
+func TestVaultOpenExpectNamespace(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		mode    crypto.BindingMode
+		label   string
+		opts    []crypto.OpenOption
+		wantErr error
+	}{
+		{name: "strict match", mode: crypto.BindingStrict, label: "a", opts: []crypto.OpenOption{crypto.ExpectNamespace("a")}},
+		{name: "strict match on empty", mode: crypto.BindingStrict, label: "", opts: []crypto.OpenOption{crypto.ExpectNamespace("")}},
+		{
+			name: "strict mismatch", mode: crypto.BindingStrict, label: "a",
+			opts: []crypto.OpenOption{crypto.ExpectNamespace("b")}, wantErr: crypto.ErrNamespaceMismatch,
+		},
+		{
+			name: "strict empty expected, labeled", mode: crypto.BindingStrict, label: "a",
+			opts: []crypto.OpenOption{crypto.ExpectNamespace("")}, wantErr: crypto.ErrNamespaceMismatch,
+		},
+		{name: "permissive mismatch opens", mode: crypto.BindingPermissive, label: "a", opts: []crypto.OpenOption{crypto.ExpectNamespace("b")}},
+		{name: "off mismatch opens", mode: crypto.BindingOff, label: "a", opts: []crypto.OpenOption{crypto.ExpectNamespace("b")}},
+		{name: "strict without expectation opens", mode: crypto.BindingStrict, label: "a"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := t.Context()
+			cfg := crypto.WithDefaultKeyConfig(crypto.KeyConfig{Duration: time.Hour})
+			sealer := newVault(t, &countingKEK{id: "default"}, cfg, crypto.WithBindingMode(crypto.BindingPermissive))
+			msg, err := sealer.Seal(ctx, "ns1", []byte("x"), crypto.WithLabel(tc.label))
+			require.NoError(t, err)
+
+			v := newVault(t, &countingKEK{id: "default"}, cfg, crypto.WithBindingMode(tc.mode))
+			pt, err := v.Open(ctx, msg, tc.opts...)
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, []byte("x"), pt)
+		})
+	}
+}
+
+// TestVaultStrictMismatchBeforeUnwrap pins where the mismatch check sits.
+// Moving it after the unwrap makes decCount non-zero; moving it before the KEK
+// lookup turns the foreign row into ErrNamespaceMismatch; moving it after the
+// cache lookup emits a CacheEvent for the refused message.
+func TestVaultStrictMismatchBeforeUnwrap(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	cfg := crypto.WithKeyConfig("ns1", crypto.KeyConfig{Duration: time.Hour})
+	sealer := newVault(t, &countingKEK{id: "default"}, cfg, crypto.WithBindingMode(crypto.BindingPermissive))
+	msg, err := sealer.Seal(ctx, "ns1", []byte("x"), crypto.WithLabel("a"))
+	require.NoError(t, err)
+
+	t.Run("held key", func(t *testing.T) {
+		t.Parallel()
+
+		kek := &countingKEK{id: "default"}
+		v := newVault(t, kek, cfg, crypto.WithBindingMode(crypto.BindingStrict))
+
+		_, err := v.Open(ctx, msg, crypto.ExpectNamespace("b"))
+		require.ErrorIs(t, err, crypto.ErrNamespaceMismatch)
+		require.Zero(t, kek.decCount.Load(), "a refused message must not reach the KEK")
+	})
+
+	t.Run("foreign key", func(t *testing.T) {
+		t.Parallel()
+
+		kek := &countingKEK{id: "default"}
+		v := newVault(t, kek, cfg, crypto.WithBindingMode(crypto.BindingStrict))
+
+		foreign := *msg
+		foreign.KeyMaterial = &crypto.DEKMaterial{KEKID: "other-proxy", EncryptedDEK: msg.KeyMaterial.EncryptedDEK}
+
+		_, err := v.Open(ctx, &foreign, crypto.ExpectNamespace("b"))
+		require.ErrorIs(t, err, crypto.ErrUnknownKey)
+		require.NotErrorIs(t, err, crypto.ErrNamespaceMismatch)
+		require.Zero(t, kek.decCount.Load())
+	})
+
+	t.Run("cached DEK", func(t *testing.T) {
+		t.Parallel()
+
+		spy := &spyObserver{}
+		v := newVault(t, &countingKEK{id: "default"}, cfg,
+			crypto.WithBindingMode(crypto.BindingStrict), crypto.WithObserver(spy))
+
+		_, err := v.Open(ctx, msg, crypto.ExpectNamespace("a")) // caches the DEK
+		require.NoError(t, err)
+		spy.reset()
+
+		_, err = v.Open(ctx, msg, crypto.ExpectNamespace("b"))
+		require.ErrorIs(t, err, crypto.ErrNamespaceMismatch)
+		require.Empty(t, spy.cacheHitSizes(), "a refused message must not read the cache")
+		require.Empty(t, spy.cacheMissSizes(), "a refused message must not read the cache")
+		require.Len(t, spy.envelopeOps(), 1)
+	})
+}
+
+// Golden namespace-binding material. Never regenerate these: every bound
+// payload in every workflow history authenticates against the AAD bytes they
+// pin, so if this test fails the AAD encoding moved and must be put back.
+// goldenDEK is the DEK (bytes 0x01 through 0x20) and, because countingKEK is
+// an identity KEK, also its wrapped form. Both ciphertexts seal "golden" under
+// nonce 0xa0 through 0xab: goldenBound for namespace "orders", goldenLegacy
+// with no additional data.
+const (
+	goldenDEK    = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
+	goldenBound  = "a0a1a2a3a4a5a6a7a8a9aaabdebe510298db13e25ce2c32e82187f0ee59eb8c747ad"
+	goldenLegacy = "a0a1a2a3a4a5a6a7a8a9aaabdebe510298db1b3ab944a2f7b14522cafef884562780"
+)
+
+func TestVaultOpensGoldenMaterial(t *testing.T) {
+	t.Parallel()
+
+	golden := func(t *testing.T, ct string, bound bool, ns string) *crypto.Message {
+		t.Helper()
+
+		raw, err := hex.DecodeString(ct)
+		require.NoError(t, err)
+
+		return &crypto.Message{
+			Ciphertext:  raw,
+			KeyMaterial: &crypto.DEKMaterial{KEKID: "default", EncryptedDEK: goldenDEK},
+			Bound:       bound,
+			Namespace:   ns,
+		}
+	}
+
+	tests := []struct {
+		name    string
+		ct      string
+		bound   bool
+		mode    crypto.BindingMode
+		wantErr error
+	}{
+		{name: "bound under off", ct: goldenBound, bound: true, mode: crypto.BindingOff},
+		{name: "bound under permissive", ct: goldenBound, bound: true, mode: crypto.BindingPermissive},
+		{name: "bound under strict", ct: goldenBound, bound: true, mode: crypto.BindingStrict},
+		{name: "legacy under off", ct: goldenLegacy, mode: crypto.BindingOff},
+		{name: "legacy under permissive", ct: goldenLegacy, mode: crypto.BindingPermissive},
+		{name: "legacy under strict", ct: goldenLegacy, mode: crypto.BindingStrict, wantErr: crypto.ErrUnbound},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ns := ""
+			if tc.bound {
+				ns = "orders"
+			}
+
+			v := newVault(t, &countingKEK{id: "default"}, crypto.WithBindingMode(tc.mode))
+			pt, err := v.Open(t.Context(), golden(t, tc.ct, tc.bound, ns))
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, []byte("golden"), pt)
+		})
+	}
 }
 
 func newVault(t *testing.T, kek crypto.KEK, opts ...crypto.VaultOption) *crypto.Vault {

@@ -75,6 +75,9 @@ reaches a different upstream with no change to the Worker.
   responses, so the upstream only ever sees ciphertext while local Workers keep exchanging cleartext. DEKs are wrapped
   by a KMS key (AWS KMS, Azure Key Vault, or GCP KMS), rotate automatically, and can be overridden per Namespace.
   Set `encryption.failures` to seal failure messages and stack traces too, as the SDK's `EncodeCommonAttributes` does.
+  Payloads can be bound to the Namespace they were sealed in, authenticated as AES-GCM additional data.
+  `encryption.namespaceBinding` is required whenever keys are configured: `strict` for a new deployment, `off` for an
+  existing one until it follows [Namespace binding](#namespace-binding).
 
   Payloads a Worker's own codec already encrypted, or that an earlier proxy sealed, can be forwarded as they are by
   listing their encoding under `encryption.skipEncodings`. Listing an encoding trusts every Worker that sets it: the
@@ -223,6 +226,51 @@ On a 4xx response from `/decode`, the Temporal Web UI does not surface an error:
 already had rather than the plaintext, so a rejected token or a malformed request looks the same to whoever is
 looking at it as ciphertext the UI has not decoded yet (`binary/encrypted`), not an obvious failure.
 
+## Namespace binding
+
+With binding on, the proxy records the Namespace a payload was sealed under in its `encryption-namespace` metadata and
+authenticates it as AES-GCM additional data, so a payload opens only with the label it was sealed with. The label is
+the Namespace's name on the upstream, after any translation, so renaming a local Namespace in config is safe and two
+proxies that name one Namespace differently agree. Changing a translation rule changes the label, though, so payloads
+sealed before the change no longer match.
+
+When a payload is opened on the gRPC path, its label is also compared with the request's Namespace, translated the
+same way. Nexus payloads are exempt, along with everything nested in a Nexus message, such as an operation's failure
+details: a Nexus operation's input, result, and failure cross Namespaces by design. Child Workflows started in, and
+signals sent from, another Namespace carry that Namespace's label and are not exempt, so deployments that rely on them
+should stay on `permissive`. The codec server does not compare labels yet, and `/encode` labels payloads with the
+Namespace name it is given.
+
+| Mode         | Seals     | Opens labeled for the request's Namespace | Opens labeled for another | Opens unlabeled         |
+| ------------ | --------- | ----------------------------------------- | ------------------------- | ----------------------- |
+| `off`        | Unlabeled | Yes                                       | Yes, counted              | Yes, counted            |
+| `permissive` | Labeled   | Yes                                       | Yes, counted              | Yes, counted            |
+| `strict`     | Labeled   | Yes                                       | No (`result="mismatch"`)  | No (`result="unbound"`) |
+
+`encryption.namespaceBinding` has no default: the proxy refuses to start when keys are configured and it is unset,
+because the right mode depends on whether payloads sealed by an earlier release exist.
+
+**New deployments** have no earlier payloads, so set `strict` and you are done.
+
+**Existing deployments** have unlabeled payloads in history, which `strict` refuses. Set `off` before upgrading, then:
+
+1. **Upgrade.** Roll this release out to every replica and every chained proxy that holds the keys, leaving `off`.
+   An older binary cannot open a labeled payload, so nothing may label until nothing older is running.
+2. **Turn on `permissive`** everywhere, in any order. Every upgraded proxy already opens labeled payloads.
+3. **Watch `vault_unbound_opens_total` and `vault_namespace_mismatches_total`.** They count every unlabeled payload,
+   and every payload labeled for another Namespace, handed to decrypt, whatever the outcome. When both have stayed at
+   zero for longer than the longest retention period, plus anything you still read from archives, set `strict`.
+   Deciding per Namespace needs `metrics.labels.namespace`. Judge readiness for `strict` on the proxies that hold the
+   key, because a chained proxy that passes foreign payloads through keeps counting them.
+
+Going back from `strict` to `permissive` is always safe, so setting `strict` too early makes unlabeled payloads
+unreadable but not lost: switching to `permissive` restores them. Going from `permissive` to `off` still opens labeled
+payloads but seals unlabeled ones again. Downgrading the binary after turning on `permissive` or `strict` leaves every
+labeled payload unreadable to it.
+
+On a chained proxy under `strict`, an unlabeled or mislabeled payload sealed under a key it doesn't hold still passes
+through when `binary/encrypted` is listed in `skipEncodings`, and still counts toward the counters above.
+
 ## Profiling
 
 The proxy serves the runtime's standard pprof endpoints under `/debug/pprof/` on the HTTP listener, off unless
@@ -264,37 +312,41 @@ how series are labeled:
 
 Every name below is prefixed with the metric prefix and its subsystem, so `requests_total` in the `server` subsystem is
 exposed as `tmprl_proxy_server_requests_total` by default. Each configured metadata label is added to the series
-emitted while serving a request: the `server` and `router` series, and `vault_ops`. The KEK and DEK series do not
-carry them, because they are emitted off the request path where no metadata is in scope to read. Neither does
-`vault_ops` when the operation came from the codec server: an HTTP request carries no gRPC metadata, so a metadata
-label reports blank there even though the same series populates it for a request that passed through the gateway. A
-fixed label is added to every series in the table, and to nothing registered outside the proxy's own collectors, so
-the runtime's `go_*` and `process_*` series stay as they are.
+emitted while serving a request: the `server` and `router` series, `vault_ops`, `vault_unbound_opens`, and
+`vault_namespace_mismatches`. The KEK and
+DEK series do not carry them, because they are emitted off the request path where no metadata is in scope to read.
+Neither does `vault_ops` when the operation came from the codec server: an HTTP request carries no gRPC metadata, so a
+metadata label reports blank there even though the same series populates it for a request that passed through the
+gateway. A fixed label is added to every series in the table, and to nothing registered outside the proxy's own
+collectors, so the runtime's `go_*` and `process_*` series stay as they are.
 
 `payloads_skipped_total` carries the metadata labels too (blank, as with `vault_ops`, for operations from the codec
 server, since an HTTP request carries no gRPC metadata), and `vault_ops_total` reports `result="unknown_key"` for a
-payload sealed under a KEK the proxy doesn't hold.
+payload sealed under a KEK the proxy doesn't hold, `result="unbound"` for one `strict` refused for carrying no
+Namespace binding, and `result="mismatch"` for one `strict` refused for being bound to another Namespace.
 
-| Subsystem      | Metric                       | Type      | Labels                               |
-| -------------- | ---------------------------- | --------- | ------------------------------------ |
-| `server`       | `requests_total`             | counter   | `method`, `code`                     |
-| `server`       | `request_duration_seconds`   | histogram | `method`                             |
-| `server`       | `panics_total`               | counter   | `method`                             |
-| `router`       | `decisions_total`            | counter   | `upstream`, `outcome`                |
-| `router`       | `forwarding_errors_total`    | counter   | `upstream`, `reason`                 |
-| `encryption`   | `vault_ops_total`            | counter   | `operation`, `result`, `namespace`   |
-| `encryption`   | `vault_ops_duration_seconds` | histogram | `operation`, `namespace`             |
-| `encryption`   | `payloads_skipped_total`     | counter   | `operation`, `encoding`, `namespace` |
-| `encryption`   | `kek_ops_total`              | counter   | `provider`, `operation`, `result`    |
-| `encryption`   | `kek_ops_duration_seconds`   | histogram | `provider`, `operation`              |
-| `encryption`   | `dek_ops_total`              | counter   | `operation`, `result`                |
-| `encryption`   | `dek_ops_duration_seconds`   | histogram | `operation`                          |
-| `encryption`   | `dek_rotations_total`        | counter   | `reason`                             |
-| `encryption`   | `dek_cache_hits_total`       | counter   | none                                 |
-| `encryption`   | `dek_cache_misses_total`     | counter   | none                                 |
-| `encryption`   | `dek_cache_size`             | gauge     | none                                 |
-| `codec_server` | `requests_total`             | counter   | `route`, `code`                      |
-| `codec_server` | `request_duration_seconds`   | histogram | `route`                              |
+| Subsystem      | Metric                             | Type      | Labels                               |
+| -------------- | ---------------------------------- | --------- | ------------------------------------ |
+| `server`       | `requests_total`                   | counter   | `method`, `code`                     |
+| `server`       | `request_duration_seconds`         | histogram | `method`                             |
+| `server`       | `panics_total`                     | counter   | `method`                             |
+| `router`       | `decisions_total`                  | counter   | `upstream`, `outcome`                |
+| `router`       | `forwarding_errors_total`          | counter   | `upstream`, `reason`                 |
+| `encryption`   | `vault_ops_total`                  | counter   | `operation`, `result`, `namespace`   |
+| `encryption`   | `vault_ops_duration_seconds`       | histogram | `operation`, `namespace`             |
+| `encryption`   | `payloads_skipped_total`           | counter   | `operation`, `encoding`, `namespace` |
+| `encryption`   | `vault_unbound_opens_total`        | counter   | `namespace`                          |
+| `encryption`   | `vault_namespace_mismatches_total` | counter   | `namespace`                          |
+| `encryption`   | `kek_ops_total`                    | counter   | `provider`, `operation`, `result`    |
+| `encryption`   | `kek_ops_duration_seconds`         | histogram | `provider`, `operation`              |
+| `encryption`   | `dek_ops_total`                    | counter   | `operation`, `result`                |
+| `encryption`   | `dek_ops_duration_seconds`         | histogram | `operation`                          |
+| `encryption`   | `dek_rotations_total`              | counter   | `reason`                             |
+| `encryption`   | `dek_cache_hits_total`             | counter   | none                                 |
+| `encryption`   | `dek_cache_misses_total`           | counter   | none                                 |
+| `encryption`   | `dek_cache_size`                   | gauge     | none                                 |
+| `codec_server` | `requests_total`                   | counter   | `route`, `code`                      |
+| `codec_server` | `request_duration_seconds`         | histogram | `route`                              |
 
 The `encryption` subsystem only reports once encryption keys are configured, and `codec_server` only reports once the
 codec server is enabled. Its `route` label is the matched pattern (`/decode`, and so on), never the request path,

@@ -75,6 +75,7 @@ upstreams:
 # encryption:
 #   enabled: true
 #   cacheSize: 200
+#   namespaceBinding: strict # required with keys; see "Namespace binding" in the top-level README
 #   default:
 #     uri: testing://KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=
 #     duration: 1h

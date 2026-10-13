@@ -26,6 +26,7 @@ type (
 		defaultConfig *KeyConfig
 		nowFn         func() time.Time
 		observer      Observer
+		binding       BindingMode
 	}
 
 	// NamespacedVault is a [Vault] bound to a single namespace so callers can
@@ -46,15 +47,44 @@ type (
 		RenewBefore time.Duration
 	}
 
+	// BindingMode controls whether [Vault.Seal] binds a payload to its namespace
+	// and whether [Vault.Open] accepts one that is not bound. A bound payload's
+	// namespace is authenticated as AES-GCM additional data, so a message whose
+	// binding was altered, stripped, or added fails to open. Every mode opens
+	// bound messages, which is what lets a fleet upgrade before any replica
+	// starts binding. Set it with [WithBindingMode].
+	BindingMode int
+
 	// Message is the result of sealing plaintext: the AES-256-GCM ciphertext
-	// together with the wrapped DEK ([DEKMaterial]) required to open it.
+	// together with the wrapped DEK ([DEKMaterial]) required to open it. Bound
+	// reports whether the ciphertext is bound to Namespace through its additional
+	// data; the zero value is an unbound (legacy) message, and Namespace is empty
+	// unless Bound. A bound message may be bound to the empty namespace, which is
+	// distinct from being unbound.
 	Message struct {
 		Ciphertext  []byte
 		KeyMaterial *DEKMaterial
+		Bound       bool
+		Namespace   string
 	}
 
 	// VaultOption configures a [Vault] during construction.
 	VaultOption func(*vaultOptions)
+
+	// SealOption configures a single [Vault.Seal].
+	SealOption func(*sealOptions)
+
+	// OpenOption configures a single [Vault.Open].
+	OpenOption func(*openOptions)
+
+	sealOptions struct {
+		label string
+	}
+
+	openOptions struct {
+		expect    string
+		hasExpect bool
+	}
 
 	vaultOptions struct {
 		config        map[string]KeyConfig
@@ -62,6 +92,7 @@ type (
 		nowFn         func() time.Time
 		cacheSize     int
 		observer      Observer
+		binding       BindingMode
 		errs          []error
 	}
 
@@ -89,6 +120,34 @@ type (
 // defaults the option for itself - configuration, say - inherits this number
 // rather than restating it and drifting from it.
 const DefaultCacheSize = 100
+
+// The binding modes, in rollout order. See [BindingMode].
+const (
+	// BindingOff seals unbound messages and opens both bound and unbound ones.
+	// It is the zero value, so a Vault built without [WithBindingMode] changes
+	// nothing on the wire.
+	BindingOff BindingMode = iota
+	// BindingPermissive seals bound messages and opens both bound and unbound
+	// ones.
+	BindingPermissive
+	// BindingStrict seals bound messages and rejects unbound ones with
+	// [ErrUnbound].
+	BindingStrict
+)
+
+var (
+	// ErrUnbound is returned by [Vault.Open] under [BindingStrict] for a message
+	// that is not bound to a namespace and whose KEK the Vault holds. One whose
+	// KEK it does not hold returns [ErrUnknownKey] instead, so a chained proxy can
+	// still pass it through.
+	ErrUnbound = errors.New("message is not bound to a namespace")
+
+	// ErrNamespaceMismatch is returned by [Vault.Open] under [BindingStrict] for
+	// a bound message whose namespace differs from the one given through
+	// [ExpectNamespace], when the Vault holds its KEK. As with [ErrUnbound], one
+	// whose KEK it does not hold returns [ErrUnknownKey] instead.
+	ErrNamespaceMismatch = errors.New("message is bound to a different namespace")
+)
 
 // NewVault constructs a Vault backed by r, applying opts in order. A DEK is
 // pre-generated for every namespace registered via [WithKeyConfig]. NewVault
@@ -120,6 +179,7 @@ func NewVault(r *KEKRegistry, opts ...VaultOption) (*Vault, error) {
 		defaultConfig: vopts.defaultConfig,
 		nowFn:         vopts.nowFn,
 		observer:      vopts.observer,
+		binding:       vopts.binding,
 	}
 
 	if vopts.cacheSize > 0 {
@@ -219,16 +279,55 @@ func WithObserver(o Observer) VaultOption {
 	}
 }
 
+// WithBindingMode sets how the Vault binds payloads to their namespace. Without
+// it the mode is [BindingOff]. A value other than the declared modes is
+// rejected by [NewVault].
+func WithBindingMode(m BindingMode) VaultOption {
+	return func(e *vaultOptions) {
+		if m < BindingOff || m > BindingStrict {
+			e.errs = append(e.errs, fmt.Errorf("unknown binding mode %d", m))
+			return
+		}
+
+		e.binding = m
+	}
+}
+
+// WithLabel sets the namespace a sealed message is bound to, which otherwise is
+// the namespace that selects the key. It lets a caller key by one name and bind
+// by another, such as a proxy that keys by local name and binds by the name the
+// upstream knows. It has no effect under [BindingOff].
+func WithLabel(label string) SealOption {
+	return func(o *sealOptions) { o.label = label }
+}
+
+// ExpectNamespace sets the namespace a bound message must be bound to. Under
+// [BindingStrict] a bound message bound to any other namespace fails with
+// [ErrNamespaceMismatch]; other modes only open it. Without this option Open
+// compares nothing.
+func ExpectNamespace(ns string) OpenOption {
+	return func(o *openOptions) {
+		o.expect = ns
+		o.hasExpect = true
+	}
+}
+
 // Seal encrypts data for ns, returning the ciphertext together with the wrapped
 // DEK required to Open it. The active DEK for ns is created or rotated on demand.
 // Concurrent first-time seals holding the same DEK are coalesced into a single
-// KEK (KMS) call.
+// KEK (KMS) call. Unless the mode is [BindingOff], the message is bound to ns,
+// or to the label given through [WithLabel].
 //
 // Exactly one [EnvelopeEvent] is reported to the Observer, on every path
 // including failures.
-func (v *Vault) Seal(ctx context.Context, ns string, data []byte) (*Message, error) {
+func (v *Vault) Seal(ctx context.Context, ns string, data []byte, opts ...SealOption) (*Message, error) {
+	so := sealOptions{label: ns}
+	for _, opt := range opts {
+		opt(&so)
+	}
+
 	start := time.Now()
-	msg, step, err := v.seal(ctx, ns, data)
+	msg, step, err := v.seal(ctx, ns, so.label, data)
 
 	v.observer.Observe(EnvelopeEvent{
 		Op:              OpEncrypt,
@@ -246,13 +345,21 @@ func (v *Vault) Seal(ctx context.Context, ns string, data []byte) (*Message, err
 // Open decrypts msg, which must have been produced by [Vault.Seal] (or
 // [NamespacedVault.Seal]). The wrapped DEK is unwrapped via the [KEKRegistry]
 // using the KEK identified by the material carried in msg, served from the
-// decrypted-DEK cache when it is enabled.
+// decrypted-DEK cache when it is enabled. Under [BindingStrict] an unbound
+// message is rejected with [ErrUnbound], and a bound one with a namespace other
+// than the one given through [ExpectNamespace] with [ErrNamespaceMismatch], or
+// either with [ErrUnknownKey] when its KEK is not held, all before any KEK call.
 //
 // Exactly one [EnvelopeEvent], with no namespace, is reported to the Observer
 // on every path including failures.
-func (v *Vault) Open(ctx context.Context, msg *Message) ([]byte, error) {
+func (v *Vault) Open(ctx context.Context, msg *Message, opts ...OpenOption) ([]byte, error) {
+	var oo openOptions
+	for _, opt := range opts {
+		opt(&oo)
+	}
+
 	start := time.Now()
-	pt, step, err := v.open(ctx, msg)
+	pt, step, err := v.open(ctx, msg, oo)
 
 	v.observer.Observe(EnvelopeEvent{
 		Op:              OpDecrypt,
@@ -335,7 +442,7 @@ func (v *Vault) ForNamespace(ns string) *NamespacedVault {
 // seal is Seal's body. The middle return value describes what the AES-256-GCM
 // step cost and whether it failed, or is the zero value if it was never
 // reached.
-func (v *Vault) seal(ctx context.Context, ns string, data []byte) (*Message, cryptoStep, error) {
+func (v *Vault) seal(ctx context.Context, ns, label string, data []byte) (*Message, cryptoStep, error) {
 	sd, err := v.getOrRefreshKey(ns)
 	if err != nil {
 		return nil, cryptoStep{}, err
@@ -348,15 +455,25 @@ func (v *Vault) seal(ctx context.Context, ns string, data []byte) (*Message, cry
 	material := sd.material
 	v.mu.RUnlock()
 
+	bound := v.binding != BindingOff
+	out := &Message{Bound: bound}
+	var aad []byte
+	if bound {
+		out.Namespace = label
+		aad = namespaceAAD(label)
+	}
+
 	cryptoStart := time.Now()
-	ct, err := dek.Encrypt(ctx, data)
+	ct, err := dek.Encrypt(ctx, data, aad)
 	step := cryptoStep{ran: true, dur: time.Since(cryptoStart), err: err}
 	if err != nil {
 		return nil, step, err
 	}
+	out.Ciphertext = ct
 
 	if material != nil {
-		return &Message{Ciphertext: ct, KeyMaterial: material}, step, nil
+		out.KeyMaterial = material
+		return out, step, nil
 	}
 
 	// First Seal after a rotation: coalesce concurrent callers for the same namespace
@@ -392,15 +509,38 @@ func (v *Vault) seal(ctx context.Context, ns string, data []byte) (*Message, cry
 	}
 	v.mu.Unlock()
 
-	return &Message{Ciphertext: ct, KeyMaterial: m}, step, nil
+	out.KeyMaterial = m
+	return out, step, nil
 }
 
 // open is Open's body. The middle return value describes what the AES-256-GCM
 // step cost and whether it failed, or is the zero value if it was never
 // reached.
-func (v *Vault) open(ctx context.Context, msg *Message) ([]byte, cryptoStep, error) {
+func (v *Vault) open(ctx context.Context, msg *Message, oo openOptions) ([]byte, cryptoStep, error) {
 	if msg == nil || msg.KeyMaterial == nil {
 		return nil, cryptoStep{}, errors.New("message and key material must not be nil")
+	}
+
+	// Rejected before the cache and the KEK, so a refused message costs no KMS
+	// call and a cached DEK cannot let one through. The KEK check comes first so
+	// a message sealed under a key this Vault lacks still reports ErrUnknownKey,
+	// which a chained proxy passes through.
+	if v.binding == BindingStrict {
+		var refusal error
+		switch {
+		case !msg.Bound:
+			refusal = ErrUnbound
+		case oo.hasExpect && msg.Namespace != oo.expect:
+			refusal = ErrNamespaceMismatch
+		}
+
+		if refusal != nil {
+			if !v.registry.holds(msg.KeyMaterial.KEKID) {
+				return nil, cryptoStep{}, fmt.Errorf("%w: %s", ErrUnknownKey, msg.KeyMaterial.KEKID)
+			}
+
+			return nil, cryptoStep{}, refusal
+		}
 	}
 
 	var dek *DEK
@@ -425,8 +565,13 @@ func (v *Vault) open(ctx context.Context, msg *Message) ([]byte, cryptoStep, err
 		}
 	}
 
+	var aad []byte
+	if msg.Bound {
+		aad = namespaceAAD(msg.Namespace)
+	}
+
 	cryptoStart := time.Now()
-	pt, err := dek.Decrypt(ctx, msg.Ciphertext)
+	pt, err := dek.Decrypt(ctx, msg.Ciphertext, aad)
 
 	return pt, cryptoStep{ran: true, dur: time.Since(cryptoStart), err: err}, err
 }
@@ -513,14 +658,15 @@ func (v *Vault) createDefaultKey(ns string) (*slidingDEK, *RotationEvent, error)
 }
 
 // Seal encrypts data within the bound namespace. See [Vault.Seal].
-func (v *NamespacedVault) Seal(ctx context.Context, data []byte) (*Message, error) {
-	return v.inner.Seal(ctx, v.ns, data)
+func (v *NamespacedVault) Seal(ctx context.Context, data []byte, opts ...SealOption) (*Message, error) {
+	return v.inner.Seal(ctx, v.ns, data, opts...)
 }
 
 // Open decrypts msg by delegating to the inner vault. The bound namespace is
-// unused; the key is selected from msg's key material. See [Vault.Open].
-func (v *NamespacedVault) Open(ctx context.Context, msg *Message) ([]byte, error) {
-	return v.inner.Open(ctx, msg)
+// unused: the key is selected from msg's key material, and any namespace
+// binding is read from msg itself. See [Vault.Open].
+func (v *NamespacedVault) Open(ctx context.Context, msg *Message, opts ...OpenOption) ([]byte, error) {
+	return v.inner.Open(ctx, msg, opts...)
 }
 
 func (c KeyConfig) validate() error {
@@ -543,4 +689,18 @@ func (d *slidingDEK) rotate(newKey *DEK, now func() time.Time) {
 	d.key = newKey
 	d.material = nil
 	d.exp = now().Add(d.dur)
+}
+
+// namespaceAAD is the additional data binding a payload to ns. The version and
+// separator keep it prefix-free, and an empty ns still yields non-empty bytes,
+// so bound-to-empty never matches unbound. It is permanent: every bound payload
+// authenticates against these bytes, so a change needs a new version string,
+// never an edit to this one.
+func namespaceAAD(ns string) []byte {
+	const prefix = "temporal-proxy/ns/v1\x00"
+
+	aad := make([]byte, 0, len(prefix)+len(ns))
+	aad = append(aad, prefix...)
+
+	return append(aad, ns...)
 }

@@ -10,8 +10,8 @@ import (
 )
 
 // These keys form the on-the-wire contract for a sealed payload: the encoding
-// marker lets Decode recognize its own output, and the key-ID and wrapped-DEK
-// entries carry the material needed to open it.
+// marker lets Decode recognize its own output, and the key-ID, wrapped-DEK, and
+// namespace entries carry the material needed to open it.
 const (
 	// MetadataEncoding is the payload metadata key holding the encoding name.
 	MetadataEncoding = "encoding"
@@ -22,6 +22,11 @@ const (
 
 	// MetadataEncryptionDEK is the payload metadata key holding the wrapped DEK.
 	MetadataEncryptionDEK = "encryption-dek"
+
+	// MetadataEncryptionNamespace is the payload metadata key holding the
+	// namespace a sealed payload is bound to. Its presence, not its value, marks
+	// the payload as bound, so the value may be empty.
+	MetadataEncryptionNamespace = "encryption-namespace"
 
 	// EncryptionEncoding is the encoding a sealed payload is marked with.
 	EncryptionEncoding = "binary/encrypted"
@@ -91,7 +96,8 @@ func WithSkipObserver(fn SkipObserver) EncryptorOption {
 // Encode seals every payload in payloads, returning payloads whose data is
 // the ciphertext and whose metadata carries the wrapped DEK needed to open
 // it. Each original payload is sealed whole, metadata included, so
-// [Encryptor.Decode] restores it exactly. Payloads whose encoding is listed
+// [Encryptor.Decode] restores it exactly. A bound message also records its
+// namespace under MetadataEncryptionNamespace. Payloads whose encoding is listed
 // through [WithSkipEncodings] are returned as they are.
 func (c *Encryptor) Encode(payloads []*common.Payload) ([]*common.Payload, error) {
 	res := make([]*common.Payload, len(payloads))
@@ -114,14 +120,16 @@ func (c *Encryptor) Encode(payloads []*common.Payload) ([]*common.Payload, error
 			return nil, fmt.Errorf("failed to encrypt payload: %w", err)
 		}
 
-		res[i] = &common.Payload{
-			Metadata: map[string][]byte{
-				MetadataEncoding:        []byte(EncryptionEncoding),
-				MetadataEncryptionKeyID: []byte(msg.KeyMaterial.KEKID),
-				MetadataEncryptionDEK:   []byte(msg.KeyMaterial.EncryptedDEK),
-			},
-			Data: msg.Ciphertext,
+		md := map[string][]byte{
+			MetadataEncoding:        []byte(EncryptionEncoding),
+			MetadataEncryptionKeyID: []byte(msg.KeyMaterial.KEKID),
+			MetadataEncryptionDEK:   []byte(msg.KeyMaterial.EncryptedDEK),
 		}
+		if msg.Bound {
+			md[MetadataEncryptionNamespace] = []byte(msg.Namespace)
+		}
+
+		res[i] = &common.Payload{Metadata: md, Data: msg.Ciphertext}
 	}
 
 	return res, nil
@@ -133,7 +141,9 @@ func (c *Encryptor) Encode(payloads []*common.Payload) ([]*common.Payload, error
 // payloads produced elsewhere survive the round trip, including ones that use the
 // same encoding name without our key material. When EncryptionEncoding is listed
 // through [WithSkipEncodings], a payload sealed under a KEK the cipher doesn't hold
-// is passed through too.
+// is passed through too. The namespace entry, when present, is handed to the
+// cipher as the payload's binding; it plays no part in deciding whether a
+// payload is ours.
 func (c *Encryptor) Decode(payloads []*common.Payload) ([]*common.Payload, error) {
 	res := make([]*common.Payload, len(payloads))
 	for i, p := range payloads {
@@ -151,12 +161,15 @@ func (c *Encryptor) Decode(payloads []*common.Payload) ([]*common.Payload, error
 			continue
 		}
 
+		ns, bound := p.Metadata[MetadataEncryptionNamespace]
 		pt, err := c.cipher.Decrypt(&crypto.Message{
 			Ciphertext: p.Data,
 			KeyMaterial: &crypto.DEKMaterial{
 				KEKID:        string(p.Metadata[MetadataEncryptionKeyID]),
 				EncryptedDEK: string(p.Metadata[MetadataEncryptionDEK]),
 			},
+			Bound:     bound,
+			Namespace: string(ns),
 		})
 		if err != nil {
 			// A chained hop sees payloads an earlier proxy sealed under keys it

@@ -35,8 +35,9 @@ func TestEndToEndMetadataLabels(t *testing.T) {
 	cfg.Metrics.Labels.Metadata = []config.MetricLabel{{Header: "X-Tenant", Name: "tenant"}}
 	// Encryption is what makes the per-upstream hop emit vault_ops at all.
 	cfg.Encryption = config.Encryption{
-		Enabled: true,
-		Default: &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
+		Enabled:          true,
+		NamespaceBinding: config.NamespaceBindingStrict,
+		Default:          &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
 	}
 
 	f := dataplanetest.StartApp(t, cfg)
@@ -64,8 +65,9 @@ func TestEndToEndMetadataLabelsWithoutTheHeader(t *testing.T) {
 	cfg := dataplanetest.Config(up)
 	cfg.Metrics.Labels.Metadata = []config.MetricLabel{{Header: "x-tenant", Name: "tenant"}}
 	cfg.Encryption = config.Encryption{
-		Enabled: true,
-		Default: &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
+		Enabled:          true,
+		NamespaceBinding: config.NamespaceBindingStrict,
+		Default:          &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
 	}
 
 	f := dataplanetest.StartApp(t, cfg)
@@ -90,8 +92,9 @@ func TestEndToEndFixedLabels(t *testing.T) {
 	cfg.Metrics.Labels.Fixed = map[string]string{"region": "us-west-2"}
 	cfg.Metrics.Labels.Metadata = []config.MetricLabel{{Header: "x-tenant", Name: "tenant"}}
 	cfg.Encryption = config.Encryption{
-		Enabled: true,
-		Default: &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
+		Enabled:          true,
+		NamespaceBinding: config.NamespaceBindingStrict,
+		Default:          &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
 	}
 
 	f := dataplanetest.StartApp(t, cfg)

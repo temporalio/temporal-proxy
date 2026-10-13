@@ -134,6 +134,7 @@ func TestNewRejectsConfiguredKeysWithoutVault(t *testing.T) {
 					Duration:    time.Hour,
 					RenewBefore: time.Minute,
 				},
+				NamespaceBinding: config.NamespaceBindingStrict,
 			}
 
 			_, err := dataplane.New(t.Context(), cfg, newTestDeps(t, cfg).opts()...)

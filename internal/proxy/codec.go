@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"strings"
 
 	"go.temporal.io/api/common/v1"
 	"go.temporal.io/api/failure/v1"
 	"go.temporal.io/api/proxy"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/temporalio/temporal-proxy/internal/transport/meta"
 	"github.com/temporalio/temporal-proxy/pkg/codec"
@@ -52,10 +54,29 @@ type (
 		restoreFailures bool
 	}
 
+	// InterceptorOption configures one [Codecs.Interceptor].
+	InterceptorOption func(*interceptorOptions)
+
+	interceptorOptions struct {
+		remote func(string) string
+	}
+
+	// scope is what a codec knows about the request its payloads belong to: the
+	// local namespace that selects the key policy, the namespace sealed payloads
+	// are bound to, and whether opened payloads must be bound to that namespace.
+	scope struct {
+		ns    string
+		label string
+		check bool
+	}
+
 	// codecOpt builds the [codec.Option] for one codec, given the request the
 	// payloads belong to. A codec with no per-request state ignores both
 	// arguments; the encryption codec uses them to bind its cipher.
-	codecOpt func(ctx context.Context, ns string) codec.Option
+	codecOpt func(ctx context.Context, s scope) codec.Option
+
+	// nexusKey marks a context whose payloads sit under a Nexus message.
+	nexusKey struct{}
 )
 
 // NewCodecs returns the [Codecs] opts select. Encoding is gated per codec;
@@ -81,8 +102,8 @@ func NewCodecs(opts CodecOptions) (*Codecs, error) {
 
 	c := &Codecs{encodeFailures: opts.EncodeFailures, restoreFailures: opts.Vault != nil}
 	if opts.Vault != nil {
-		enc := func(ctx context.Context, ns string) codec.Option {
-			return codec.WithCipher(&cipher{ctx: ctx, ns: ns, v: opts.Vault, r: opts.Reporter})
+		enc := func(ctx context.Context, s scope) codec.Option {
+			return codec.WithCipher(&cipher{ctx: ctx, s: s, v: opts.Vault, r: opts.Reporter})
 		}
 
 		c.inbound = append(c.inbound, enc)
@@ -93,9 +114,9 @@ func NewCodecs(opts CodecOptions) (*Codecs, error) {
 		// The set is built once here; only the observer is bound per request.
 		if len(opts.SkipEncodings) > 0 {
 			encodings := codec.WithSkipEncodings(opts.SkipEncodings...)
-			skip := func(ctx context.Context, ns string) codec.Option {
+			skip := func(ctx context.Context, s scope) codec.Option {
 				return codec.WithEncryptorOptions(encodings, codec.WithSkipObserver(func(op, encoding string) {
-					opts.Reporter.PayloadSkipped(ctx, op, encoding, ns)
+					opts.Reporter.PayloadSkipped(ctx, op, encoding, s.ns)
 				}))
 			}
 
@@ -111,13 +132,20 @@ func NewCodecs(opts CodecOptions) (*Codecs, error) {
 
 // CodecInterceptor returns the unary client interceptor for the codecs opts
 // select. It is [NewCodecs] followed by [Codecs.Interceptor].
-func CodecInterceptor(opts CodecOptions) (grpc.UnaryClientInterceptor, error) {
+func CodecInterceptor(opts CodecOptions, iopts ...InterceptorOption) (grpc.UnaryClientInterceptor, error) {
 	c, err := NewCodecs(opts)
 	if err != nil {
 		return nil, err
 	}
 
-	return c.Interceptor()
+	return c.Interceptor(iopts...)
+}
+
+// WithRemoteNamespace sets how the interceptor maps a request's local namespace
+// to the one its upstream knows. Sealed payloads are bound to that name and
+// opened payloads must be bound to it. Without it the two names are the same.
+func WithRemoteNamespace(remote func(string) string) InterceptorOption {
+	return func(o *interceptorOptions) { o.remote = remote }
 }
 
 // Interceptor returns a unary client interceptor that encodes outbound requests
@@ -126,17 +154,24 @@ func CodecInterceptor(opts CodecOptions) (grpc.UnaryClientInterceptor, error) {
 //
 // Search attributes are never encoded, so they stay queryable upstream. The
 // namespace a codec is given is the one the request carries, read via
-// [meta.NamespaceFrom].
+// [meta.NamespaceFrom]; payloads are bound to its remote name (see
+// [WithRemoteNamespace]), and opened payloads must be bound to it unless they
+// sit under a Nexus message, whose payloads cross namespaces by design.
 //
 // Failures are handled outside the payload codecs. With failure encoding on, they
 // are encoded first, so the payload holding their attributes is sealed like any
 // other. With a vault, their text is restored last, from attributes already
 // opened, whether or not encoding is on, so failures encoded earlier stay
 // readable after it is turned off.
-func (c *Codecs) Interceptor() (grpc.UnaryClientInterceptor, error) {
+func (c *Codecs) Interceptor(opts ...InterceptorOption) (grpc.UnaryClientInterceptor, error) {
+	var io interceptorOptions
+	for _, opt := range opts {
+		opt(&io)
+	}
+
 	payloads, err := proxy.NewPayloadVisitorInterceptor(proxy.PayloadVisitorInterceptorOptions{
-		Inbound:  visitPayloads(c.inbound, codec.Chain.Decode),
-		Outbound: visitPayloads(c.outbound, codec.Chain.Encode),
+		Inbound:  visitPayloads(c.inbound, codec.Chain.Decode, io.remote),
+		Outbound: visitPayloads(c.outbound, codec.Chain.Encode, io.remote),
 	})
 	if err != nil || (!c.encodeFailures && !c.restoreFailures) {
 		return payloads, err
@@ -154,38 +189,39 @@ func (c *Codecs) Interceptor() (grpc.UnaryClientInterceptor, error) {
 }
 
 // Decode runs payloads through the inbound chain for ns, the same chain
-// [Codecs.Interceptor] applies to a response.
+// [Codecs.Interceptor] applies to a response, except that it does not require
+// opened payloads to be bound to ns.
 func (c *Codecs) Decode(
 	ctx context.Context,
 	ns string,
 	payloads []*common.Payload,
 ) ([]*common.Payload, error) {
-	return apply(ctx, ns, c.inbound, codec.Chain.Decode, payloads)
+	return apply(ctx, scope{ns: ns, label: ns}, c.inbound, codec.Chain.Decode, payloads)
 }
 
 // Encode runs payloads through the outbound chain for ns, the same chain
-// [Codecs.Interceptor] applies to a request.
+// [Codecs.Interceptor] applies to a request, binding them to ns as given.
 func (c *Codecs) Encode(
 	ctx context.Context,
 	ns string,
 	payloads []*common.Payload,
 ) ([]*common.Payload, error) {
-	return apply(ctx, ns, c.outbound, codec.Chain.Encode, payloads)
+	return apply(ctx, scope{ns: ns, label: ns}, c.outbound, codec.Chain.Encode, payloads)
 }
 
-// apply builds the chain opts imply for ctx and ns and runs payloads through it
+// apply builds the chain opts imply for ctx and s and runs payloads through it
 // with fn. Every caller reaches the chain through here, so no two of them can
 // apply different chains.
 func apply(
 	ctx context.Context,
-	ns string,
+	s scope,
 	opts []codecOpt,
 	fn func(codec.Chain, []*common.Payload) ([]*common.Payload, error),
 	payloads []*common.Payload,
 ) ([]*common.Payload, error) {
 	chain := make([]codec.Option, len(opts))
 	for i, opt := range opts {
-		chain[i] = opt(ctx, ns)
+		chain[i] = opt(ctx, s)
 	}
 
 	return fn(codec.NewChain(chain...), payloads)
@@ -211,10 +247,12 @@ func chainUnary(outer, inner grpc.UnaryClientInterceptor) grpc.UnaryClientInterc
 }
 
 // visitPayloads returns the options that apply opts with fn per request, or nil
-// when opts is empty so that direction is left alone.
+// when opts is empty so that direction is left alone. remote maps the request's
+// local namespace to its upstream's, and may be nil.
 func visitPayloads(
 	opts []codecOpt,
 	fn func(codec.Chain, []*common.Payload) ([]*common.Payload, error),
+	remote func(string) string,
 ) *proxy.VisitPayloadsOptions {
 	if len(opts) == 0 {
 		return nil
@@ -223,10 +261,44 @@ func visitPayloads(
 	return &proxy.VisitPayloadsOptions{
 		ConcurrencyLimit:     runtime.NumCPU(),
 		SkipSearchAttributes: true,
+		ContextHook:          markNexus,
 		Visitor: func(ctx *proxy.VisitPayloadsContext, payloads []*common.Payload) ([]*common.Payload, error) {
-			return apply(ctx, meta.NamespaceFrom(ctx), opts, fn, payloads)
+			ns := meta.NamespaceFrom(ctx)
+			s := scope{ns: ns, label: remoteName(remote, ns), check: ctx.Value(nexusKey{}) == nil}
+
+			return apply(ctx, s, opts, fn, payloads)
 		},
 	}
+}
+
+// remoteName maps ns through remote. An absent namespace stays absent rather
+// than becoming whatever prefix or suffix a translation rule adds.
+func remoteName(remote func(string) string, ns string) string {
+	if remote == nil || ns == "" {
+		return ns
+	}
+
+	return remote(ns)
+}
+
+// markNexus marks ctx when the visitor enters a Nexus message, so every payload
+// beneath it, including those in nested failures, is exempt from the namespace
+// comparison: a Nexus operation's input, result, and failure cross namespaces
+// by design.
+func markNexus(ctx context.Context, m proto.Message) (context.Context, error) {
+	if isNexus(m) {
+		return context.WithValue(ctx, nexusKey{}, true), nil
+	}
+
+	return ctx, nil
+}
+
+// isNexus reports whether m is a Nexus message: one in the nexus package, or
+// one whose name says it belongs to a Nexus operation or task.
+func isNexus(m proto.Message) bool {
+	d := m.ProtoReflect().Descriptor()
+
+	return d.ParentFile().Package() == "temporal.api.nexus.v1" || strings.Contains(string(d.Name()), "Nexus")
 }
 
 // visitFailures returns the options that apply visitor to every failure, or nil

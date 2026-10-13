@@ -99,6 +99,7 @@ func TestLoad_EncryptionURLs(t *testing.T) {
 	const doc = upstreamYAML + `hostPort: :8080
 encryption:
   enabled: true
+  namespaceBinding: strict
   default:
     uri: awskms://alias/primary
     decryptURIs:
@@ -332,7 +333,7 @@ func TestConfig_Validate(t *testing.T) {
 			cfg: &config.Config{
 				Metrics:    defaultMetrics(),
 				Listen:     config.ListenConfig{HostPort: ":8080"},
-				Encryption: config.Encryption{Default: &badPolicy},
+				Encryption: config.Encryption{Default: &badPolicy, NamespaceBinding: config.NamespaceBindingStrict},
 				Upstreams:  validUpstreams(),
 			},
 			wantTuples: [][2]string{{"encryption.default", "renewBefore"}},

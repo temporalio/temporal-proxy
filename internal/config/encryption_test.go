@@ -71,7 +71,7 @@ func TestLoad_DEKCacheSizeDefault(t *testing.T) {
 		},
 		{
 			name: "an encryption block that omits cacheSize",
-			yaml: "encryption:\n  enabled: true\n  default:\n    uri: testing://a2V5\n    duration: 1h\n    renewBefore: 10m\n",
+			yaml: "encryption:\n  enabled: true\n  namespaceBinding: strict\n  default:\n    uri: testing://a2V5\n    duration: 1h\n    renewBefore: 10m\n",
 			want: crypto.DefaultCacheSize,
 		},
 		{
@@ -97,6 +97,66 @@ func TestLoad_DEKCacheSizeDefault(t *testing.T) {
 	}
 }
 
+// TestNamespaceBindingMode pins the YAML spellings. Matching case-insensitively,
+// or mapping an absent or unknown value to a mode, fails a row.
+func TestNamespaceBindingMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		in      config.NamespaceBinding
+		want    crypto.BindingMode
+		wantErr string
+	}{
+		{name: "absent", in: "", wantErr: "not set, expected one of off, permissive, strict"},
+		{name: "off", in: config.NamespaceBindingOff, want: crypto.BindingOff},
+		{name: "permissive", in: config.NamespaceBindingPermissive, want: crypto.BindingPermissive},
+		{name: "strict", in: config.NamespaceBindingStrict, want: crypto.BindingStrict},
+		{name: "wrong case", in: "Strict", wantErr: `unknown mode "Strict"`},
+		{name: "unknown", in: "loose", wantErr: `unknown mode "loose", expected one of off, permissive, strict`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := tc.in.Mode()
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestLoad_NamespaceBinding pins that the YAML key reaches the field. Renaming
+// the yaml tag fails the "written" row.
+func TestLoad_NamespaceBinding(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		yaml string
+		want config.NamespaceBinding
+	}{
+		{name: "absent", yaml: "", want: ""},
+		{name: "written", yaml: "encryption:\n  namespaceBinding: permissive\n", want: config.NamespaceBindingPermissive},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := config.Load(strings.NewReader("hostPort: :8080\n" + upstreamYAML + tt.yaml))
+			require.NoError(t, err)
+			require.Equal(t, tt.want, cfg.Encryption.NamespaceBinding)
+		})
+	}
+}
+
 func TestEncryptionValidate(t *testing.T) {
 	t.Parallel()
 
@@ -113,7 +173,7 @@ func TestEncryptionValidate(t *testing.T) {
 		},
 		{
 			name: "enabled with valid default",
-			cfg:  config.Encryption{Enabled: true, Default: &valid},
+			cfg:  config.Encryption{Enabled: true, Default: &valid, NamespaceBinding: config.NamespaceBindingStrict},
 		},
 		{
 			name:    "negative cache size",
@@ -127,7 +187,12 @@ func TestEncryptionValidate(t *testing.T) {
 		},
 		{
 			name: "enabled with failures",
-			cfg:  config.Encryption{Enabled: true, Failures: true, Default: &valid},
+			cfg: config.Encryption{
+				Enabled:          true,
+				Failures:         true,
+				Default:          &valid,
+				NamespaceBinding: config.NamespaceBindingStrict,
+			},
 		},
 		{
 			name:    "failures without enabled",
@@ -137,17 +202,19 @@ func TestEncryptionValidate(t *testing.T) {
 		{
 			name: "default present but invalid, even when disabled",
 			cfg: config.Encryption{
-				Enabled: false,
-				Default: &config.KeyPolicy{URI: mustURL(t, "awskms://alias/primary"), Duration: time.Hour, RenewBefore: 2 * time.Hour},
+				Enabled:          false,
+				Default:          &config.KeyPolicy{URI: mustURL(t, "awskms://alias/primary"), Duration: time.Hour, RenewBefore: 2 * time.Hour},
+				NamespaceBinding: config.NamespaceBindingStrict,
 			},
 			wantErr: "renewBefore",
 		},
 		{
 			name: "valid overrides",
 			cfg: config.Encryption{
-				Enabled:   true,
-				Default:   &valid,
-				Overrides: map[string]config.KeyPolicy{"payments": valid},
+				Enabled:          true,
+				Default:          &valid,
+				Overrides:        map[string]config.KeyPolicy{"payments": valid},
+				NamespaceBinding: config.NamespaceBindingStrict,
 			},
 		},
 		{
@@ -158,24 +225,27 @@ func TestEncryptionValidate(t *testing.T) {
 				Overrides: map[string]config.KeyPolicy{
 					"payments": {URI: mustURL(t, "https://example.com/key"), Duration: time.Hour},
 				},
+				NamespaceBinding: config.NamespaceBindingStrict,
 			},
 			wantErr: "overrides[payments]",
 		},
 		{
 			name: "empty override namespace key",
 			cfg: config.Encryption{
-				Enabled:   true,
-				Default:   &valid,
-				Overrides: map[string]config.KeyPolicy{"": valid},
+				Enabled:          true,
+				Default:          &valid,
+				Overrides:        map[string]config.KeyPolicy{"": valid},
+				NamespaceBinding: config.NamespaceBindingStrict,
 			},
 			wantErr: "overrides",
 		},
 		{
 			name: "skip encodings",
 			cfg: config.Encryption{
-				Enabled:       true,
-				Default:       &valid,
-				SkipEncodings: []string{"binary/encrypted", "acme/aes-gcm"},
+				Enabled:          true,
+				Default:          &valid,
+				SkipEncodings:    []string{"binary/encrypted", "acme/aes-gcm"},
+				NamespaceBinding: config.NamespaceBindingStrict,
 			},
 		},
 		{
@@ -183,9 +253,10 @@ func TestEncryptionValidate(t *testing.T) {
 			// Children rule fails this row.
 			name: "blank skip encoding",
 			cfg: config.Encryption{
-				Enabled:       true,
-				Default:       &valid,
-				SkipEncodings: []string{"acme/aes-gcm", ""},
+				Enabled:          true,
+				Default:          &valid,
+				SkipEncodings:    []string{"acme/aes-gcm", ""},
+				NamespaceBinding: config.NamespaceBindingStrict,
 			},
 			wantErr: "skipEncodings[1]",
 		},
@@ -193,11 +264,37 @@ func TestEncryptionValidate(t *testing.T) {
 			// Dropping the Unique check fails this row.
 			name: "duplicate skip encoding",
 			cfg: config.Encryption{
-				Enabled:       true,
-				Default:       &valid,
-				SkipEncodings: []string{"acme/aes-gcm", "acme/aes-gcm"},
+				Enabled:          true,
+				Default:          &valid,
+				SkipEncodings:    []string{"acme/aes-gcm", "acme/aes-gcm"},
+				NamespaceBinding: config.NamespaceBindingStrict,
 			},
 			wantErr: "skipEncodings",
+		},
+		{
+			name: "strict without enabled, for a decrypt-only proxy",
+			cfg:  config.Encryption{Default: &valid, NamespaceBinding: config.NamespaceBindingStrict},
+		},
+		{
+			name:    "unknown namespace binding",
+			cfg:     config.Encryption{NamespaceBinding: "loose"},
+			wantErr: `namespaceBinding: unknown mode "loose"`,
+		},
+		{
+			// Dropping the required-with-keys rule fails this row and the next.
+			name:    "keys without namespace binding",
+			cfg:     config.Encryption{Enabled: true, Default: &valid},
+			wantErr: "namespaceBinding: required when encryption keys are configured",
+		},
+		{
+			name:    "decrypt-only keys without namespace binding",
+			cfg:     config.Encryption{Default: &valid},
+			wantErr: "namespaceBinding: required when encryption keys are configured",
+		},
+		{
+			// Requiring the setting unconditionally fails this row.
+			name: "no keys and no namespace binding",
+			cfg:  config.Encryption{},
 		},
 	}
 
@@ -306,11 +403,14 @@ func TestEncryption_ValidateAcceptsExtensionKeyScheme(t *testing.T) {
 
 	// The referential check lives at the Config level; Encryption.Validate only
 	// sees the scheme, which must now be recognized.
-	e := &config.Encryption{Default: &config.KeyPolicy{
-		URI:         mustURL(t, "extension://audit/payments"),
-		Duration:    time.Hour,
-		RenewBefore: time.Minute,
-	}}
+	e := &config.Encryption{
+		Default: &config.KeyPolicy{
+			URI:         mustURL(t, "extension://audit/payments"),
+			Duration:    time.Hour,
+			RenewBefore: time.Minute,
+		},
+		NamespaceBinding: config.NamespaceBindingStrict,
+	}
 
 	require.NoError(t, e.Validate())
 }
@@ -332,6 +432,8 @@ func TestConfig_ValidateExtensionKeyReferences(t *testing.T) {
 	}
 
 	base := func(e config.Encryption) *config.Config {
+		e.NamespaceBinding = config.NamespaceBindingStrict
+
 		return &config.Config{
 			Listen:     config.ListenConfig{HostPort: ":8080"},
 			Encryption: e,
@@ -440,11 +542,14 @@ func TestEncryption_ValidateRejectsHostlessExtensionURI(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			e := &config.Encryption{Default: &config.KeyPolicy{
-				URI:         mustURL(t, tt.uri),
-				Duration:    time.Hour,
-				RenewBefore: time.Minute,
-			}}
+			e := &config.Encryption{
+				Default: &config.KeyPolicy{
+					URI:         mustURL(t, tt.uri),
+					Duration:    time.Hour,
+					RenewBefore: time.Minute,
+				},
+				NamespaceBinding: config.NamespaceBindingStrict,
+			}
 
 			err := e.Validate()
 			if tt.wantErr == "" {

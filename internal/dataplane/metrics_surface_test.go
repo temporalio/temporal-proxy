@@ -22,13 +22,15 @@ import (
 // so a diff here means a rename or a reshape that needs a release note, not a
 // test to update quietly.
 var wantSurface = map[string][]string{
-	"tmprl_proxy_router_decisions_total":                {"outcome", "upstream"},
-	"tmprl_proxy_router_forwarding_errors_total":        {"reason", "upstream"},
-	"tmprl_proxy_server_requests_total":                 {"code", "method"},
-	"tmprl_proxy_server_request_duration_seconds":       {"method"},
-	"tmprl_proxy_server_panics_total":                   {"method"},
-	"tmprl_proxy_encryption_vault_ops_total":            {"namespace", "operation", "result"},
-	"tmprl_proxy_encryption_vault_ops_duration_seconds": {"namespace", "operation"},
+	"tmprl_proxy_router_decisions_total":                      {"outcome", "upstream"},
+	"tmprl_proxy_router_forwarding_errors_total":              {"reason", "upstream"},
+	"tmprl_proxy_server_requests_total":                       {"code", "method"},
+	"tmprl_proxy_server_request_duration_seconds":             {"method"},
+	"tmprl_proxy_server_panics_total":                         {"method"},
+	"tmprl_proxy_encryption_vault_ops_total":                  {"namespace", "operation", "result"},
+	"tmprl_proxy_encryption_vault_ops_duration_seconds":       {"namespace", "operation"},
+	"tmprl_proxy_encryption_vault_unbound_opens_total":        {"namespace"},
+	"tmprl_proxy_encryption_vault_namespace_mismatches_total": {"namespace"},
 }
 
 // wantMetadataSurface is the same contract for a dataplane running one metadata
@@ -42,23 +44,27 @@ var wantSurface = map[string][]string{
 // is pinned end to end instead. Spelled out rather than derived from wantSurface
 // for the same reason as above.
 var wantFixedSurface = map[string][]string{
-	"tmprl_proxy_router_decisions_total":                {"outcome", "region", "upstream"},
-	"tmprl_proxy_router_forwarding_errors_total":        {"reason", "region", "upstream"},
-	"tmprl_proxy_server_requests_total":                 {"code", "method", "region"},
-	"tmprl_proxy_server_request_duration_seconds":       {"method", "region"},
-	"tmprl_proxy_server_panics_total":                   {"method", "region"},
-	"tmprl_proxy_encryption_vault_ops_total":            {"namespace", "operation", "region", "result"},
-	"tmprl_proxy_encryption_vault_ops_duration_seconds": {"namespace", "operation", "region"},
+	"tmprl_proxy_router_decisions_total":                      {"outcome", "region", "upstream"},
+	"tmprl_proxy_router_forwarding_errors_total":              {"reason", "region", "upstream"},
+	"tmprl_proxy_server_requests_total":                       {"code", "method", "region"},
+	"tmprl_proxy_server_request_duration_seconds":             {"method", "region"},
+	"tmprl_proxy_server_panics_total":                         {"method", "region"},
+	"tmprl_proxy_encryption_vault_ops_total":                  {"namespace", "operation", "region", "result"},
+	"tmprl_proxy_encryption_vault_ops_duration_seconds":       {"namespace", "operation", "region"},
+	"tmprl_proxy_encryption_vault_unbound_opens_total":        {"namespace", "region"},
+	"tmprl_proxy_encryption_vault_namespace_mismatches_total": {"namespace", "region"},
 }
 
 var wantMetadataSurface = map[string][]string{
-	"tmprl_proxy_router_decisions_total":                {"outcome", "tenant", "upstream"},
-	"tmprl_proxy_router_forwarding_errors_total":        {"reason", "tenant", "upstream"},
-	"tmprl_proxy_server_requests_total":                 {"code", "method", "tenant"},
-	"tmprl_proxy_server_request_duration_seconds":       {"method", "tenant"},
-	"tmprl_proxy_server_panics_total":                   {"method", "tenant"},
-	"tmprl_proxy_encryption_vault_ops_total":            {"namespace", "operation", "result", "tenant"},
-	"tmprl_proxy_encryption_vault_ops_duration_seconds": {"namespace", "operation", "tenant"},
+	"tmprl_proxy_router_decisions_total":                      {"outcome", "tenant", "upstream"},
+	"tmprl_proxy_router_forwarding_errors_total":              {"reason", "tenant", "upstream"},
+	"tmprl_proxy_server_requests_total":                       {"code", "method", "tenant"},
+	"tmprl_proxy_server_request_duration_seconds":             {"method", "tenant"},
+	"tmprl_proxy_server_panics_total":                         {"method", "tenant"},
+	"tmprl_proxy_encryption_vault_ops_total":                  {"namespace", "operation", "result", "tenant"},
+	"tmprl_proxy_encryption_vault_ops_duration_seconds":       {"namespace", "operation", "tenant"},
+	"tmprl_proxy_encryption_vault_unbound_opens_total":        {"namespace", "tenant"},
+	"tmprl_proxy_encryption_vault_namespace_mismatches_total": {"namespace", "tenant"},
 }
 
 func TestReportersMetricSurface(t *testing.T) {
@@ -150,6 +156,8 @@ func driveReporters(t *testing.T, reg *prometheus.Registry, m config.Metrics, md
 	reps.Server.Observe(ctx, "/svc/Method", codes.OK, time.Millisecond)
 	reps.Server.Panic(ctx, "/svc/Method")
 	reps.Encryption.VaultOp(ctx, "encrypt", "success", "ns1", 0.01)
+	reps.Encryption.UnboundOpen(ctx, "ns1")
+	reps.Encryption.NamespaceMismatch(ctx, "ns1")
 }
 
 // surfaceOf maps every gathered metric family to its sorted label names.

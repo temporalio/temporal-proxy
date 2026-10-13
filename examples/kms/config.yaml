@@ -65,6 +65,11 @@ encryption:
   # the codec server to show it.
   # failures: true
 
+  # Required whenever keys are configured: strict for a new deployment like this
+  # one, off for one with payloads sealed by an earlier release. See "Namespace
+  # binding" in the top-level README.
+  namespaceBinding: strict
+
   default:
     uri: extension://kms/payloads
     duration: 1h

@@ -379,9 +379,10 @@ func TestModule_ZeroCacheSizeDisablesTheCache(t *testing.T) {
 // encryptionConfig builds a Config whose encryption is governed by policy.
 func encryptionConfig(enabled bool, policy config.KeyPolicy) *config.Config {
 	return &config.Config{Encryption: config.Encryption{
-		Enabled:   enabled,
-		CacheSize: new(10),
-		Default:   &policy,
+		Enabled:          enabled,
+		CacheSize:        new(10),
+		Default:          &policy,
+		NamespaceBinding: config.NamespaceBindingStrict,
 	}}
 }
 

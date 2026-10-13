@@ -65,6 +65,12 @@ encryption:
   # skipEncodings:
   #   - binary/encrypted
 
+  # Bind payloads to the Namespace they were sealed in: off, permissive, or
+  # strict, required whenever keys are configured. Use off if your local
+  # history holds payloads sealed by an earlier release. See "Namespace
+  # binding" in the README.
+  namespaceBinding: strict
+
   default:
     uri: testing://-ynIaZzFbAjp9VPgu0Ohk9YeQSLS9ta0m9mtnOnGZqo=
     decryptURIs:
