@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"maps"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +20,8 @@ import (
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"github.com/temporalio/temporal-proxy/internal/metrics"
 	"github.com/temporalio/temporal-proxy/internal/proxy"
@@ -119,10 +124,11 @@ func TestEncryptionComparesTheRemoteNamespace(t *testing.T) {
 	}
 }
 
-// TestEncryptionExemptsNexusPayloads pins that payloads under a Nexus message,
-// including inside a failure nested in one, skip the comparison while other
-// payloads in the same response do not. Dropping the context hook fails the
-// Nexus rows; exempting by anything wider than Nexus fails the signal row.
+// TestEncryptionExemptsNexusPayloads pins that Nexus payloads crossing
+// namespaces, including inside a failure nested in one, skip the comparison
+// while the caller's own Nexus payloads and other payloads do not. Dropping the
+// context hook fails the exempt rows; exempting whole Nexus messages fails the
+// input rows.
 func TestEncryptionExemptsNexusPayloads(t *testing.T) {
 	t.Parallel()
 
@@ -168,6 +174,38 @@ func TestEncryptionExemptsNexusPayloads(t *testing.T) {
 					},
 				})
 			},
+		},
+		{
+			name: "nexus operation completed result",
+			reply: func(t *testing.T) proto.Message {
+				return historyWith(&history.HistoryEvent{
+					Attributes: &history.HistoryEvent_NexusOperationCompletedEventAttributes{
+						NexusOperationCompletedEventAttributes: &history.NexusOperationCompletedEventAttributes{
+							Result: theirs(t),
+						},
+					},
+				})
+			},
+		},
+		{
+			name: "standalone nexus operation input is not exempt",
+			reply: func(t *testing.T) proto.Message {
+				return &workflowservice.DescribeNexusOperationExecutionResponse{Input: theirs(t)}
+			},
+			wantErr: true,
+		},
+		{
+			name: "nexus operation scheduled input is not exempt",
+			reply: func(t *testing.T) proto.Message {
+				return historyWith(&history.HistoryEvent{
+					Attributes: &history.HistoryEvent_NexusOperationScheduledEventAttributes{
+						NexusOperationScheduledEventAttributes: &history.NexusOperationScheduledEventAttributes{
+							Input: theirs(t),
+						},
+					},
+				})
+			},
+			wantErr: true,
 		},
 		{
 			name: "signal from another namespace is not exempt",
@@ -286,4 +324,128 @@ func bindingReporter(reg *prometheus.Registry) *proxy.Reporter {
 		metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"),
 		proxy.WithNamespaceLabels(true),
 	)
+}
+
+// TestCrossingCoversEveryNexusField pins which payload-carrying fields of the
+// Nexus messages cross namespaces. A field added upstream fails the first check
+// until it is classified here; a field classified here but missed by (or wrongly
+// added to) crossingOf fails the second.
+func TestCrossingCoversEveryNexusField(t *testing.T) {
+	t.Parallel()
+
+	crosses := map[protoreflect.FullName]bool{
+		"temporal.api.command.v1.ScheduleNexusOperationCommandAttributes.input":                 false,
+		"temporal.api.history.v1.NexusOperationCanceledEventAttributes.failure":                 true,
+		"temporal.api.history.v1.NexusOperationCancelRequestFailedEventAttributes.failure":      true,
+		"temporal.api.history.v1.NexusOperationCompletedEventAttributes.result":                 true,
+		"temporal.api.history.v1.NexusOperationFailedEventAttributes.failure":                   true,
+		"temporal.api.history.v1.NexusOperationScheduledEventAttributes.input":                  false,
+		"temporal.api.history.v1.NexusOperationTimedOutEventAttributes.failure":                 true,
+		"temporal.api.nexus.v1.Endpoint.spec":                                                   false,
+		"temporal.api.nexus.v1.EndpointSpec.description":                                        false,
+		"temporal.api.nexus.v1.NexusOperationExecutionCancellationInfo.last_attempt_failure":    true,
+		"temporal.api.nexus.v1.NexusOperationExecutionInfo.cancellation_info":                   true,
+		"temporal.api.nexus.v1.NexusOperationExecutionInfo.last_attempt_failure":                true,
+		"temporal.api.nexus.v1.NexusOperationExecutionInfo.search_attributes":                   false,
+		"temporal.api.nexus.v1.NexusOperationExecutionInfo.user_metadata":                       false,
+		"temporal.api.nexus.v1.NexusOperationExecutionListInfo.search_attributes":               false,
+		"temporal.api.nexus.v1.Request.start_operation":                                         false,
+		"temporal.api.nexus.v1.Response.start_operation":                                        false,
+		"temporal.api.nexus.v1.StartOperationRequest.payload":                                   true,
+		"temporal.api.nexus.v1.StartOperationResponse.failure":                                  false,
+		"temporal.api.nexus.v1.StartOperationResponse.sync_success":                             false,
+		"temporal.api.nexus.v1.StartOperationResponse.Sync.payload":                             false,
+		"temporal.api.operatorservice.v1.CreateNexusEndpointRequest.spec":                       false,
+		"temporal.api.operatorservice.v1.CreateNexusEndpointResponse.endpoint":                  false,
+		"temporal.api.operatorservice.v1.GetNexusEndpointResponse.endpoint":                     false,
+		"temporal.api.operatorservice.v1.ListNexusEndpointsResponse.endpoints":                  false,
+		"temporal.api.operatorservice.v1.UpdateNexusEndpointRequest.spec":                       false,
+		"temporal.api.operatorservice.v1.UpdateNexusEndpointResponse.endpoint":                  false,
+		"temporal.api.workflow.v1.NexusOperationCancellationInfo.last_attempt_failure":          true,
+		"temporal.api.workflow.v1.PendingNexusOperationInfo.cancellation_info":                  true,
+		"temporal.api.workflow.v1.PendingNexusOperationInfo.last_attempt_failure":               true,
+		"temporal.api.workflowservice.v1.CountNexusOperationExecutionsResponse.groups":          false,
+		"temporal.api.workflowservice.v1.DescribeNexusOperationExecutionResponse.failure":       true,
+		"temporal.api.workflowservice.v1.DescribeNexusOperationExecutionResponse.info":          false,
+		"temporal.api.workflowservice.v1.DescribeNexusOperationExecutionResponse.input":         false,
+		"temporal.api.workflowservice.v1.DescribeNexusOperationExecutionResponse.result":        true,
+		"temporal.api.workflowservice.v1.ListNexusOperationExecutionsResponse.operations":       false,
+		"temporal.api.workflowservice.v1.PollNexusOperationExecutionResponse.failure":           true,
+		"temporal.api.workflowservice.v1.PollNexusOperationExecutionResponse.result":            true,
+		"temporal.api.workflowservice.v1.PollNexusTaskQueueResponse.request":                    false,
+		"temporal.api.workflowservice.v1.RespondNexusTaskCompletedRequest.response":             false,
+		"temporal.api.workflowservice.v1.RespondNexusTaskFailedRequest.failure":                 false,
+		"temporal.api.workflowservice.v1.StartNexusOperationExecutionRequest.input":             false,
+		"temporal.api.workflowservice.v1.StartNexusOperationExecutionRequest.search_attributes": false,
+		"temporal.api.workflowservice.v1.StartNexusOperationExecutionRequest.user_metadata":     false,
+	}
+
+	fields := nexusPayloadFields()
+	require.ElementsMatch(t, slices.Collect(maps.Keys(crosses)), slices.Collect(maps.Keys(fields)),
+		"classify each new Nexus payload field here, then list it in crossingOf if it crosses namespaces")
+
+	for name, fd := range fields {
+		m := fd.mt.New()
+
+		var v protoreflect.Value
+		if fd.fd.IsList() {
+			l := m.Mutable(fd.fd).List()
+			v = l.NewElement()
+			l.Append(v)
+		} else {
+			v = m.NewField(fd.fd)
+			m.Set(fd.fd, v)
+		}
+
+		got := slices.Contains(proxy.CrossingOf(m.Interface()), v.Message().Interface())
+		require.Equal(t, crosses[name], got, "crossingOf disagrees on %s", name)
+	}
+}
+
+// nexusField is one payload-carrying field and the message type it sits on.
+type nexusField struct {
+	mt protoreflect.MessageType
+	fd protoreflect.FieldDescriptor
+}
+
+// nexusPayloadFields returns every field of a registered Nexus message, one in
+// the nexus package or named for Nexus, that can hold a payload.
+func nexusPayloadFields() map[protoreflect.FullName]nexusField {
+	memo := map[protoreflect.FullName]bool{}
+
+	var reaches func(protoreflect.MessageDescriptor) bool
+	reaches = func(d protoreflect.MessageDescriptor) bool {
+		if v, ok := memo[d.FullName()]; ok {
+			return v
+		}
+
+		memo[d.FullName()] = d.FullName() == "temporal.api.common.v1.Payload"
+		for i := range d.Fields().Len() {
+			if md := d.Fields().Get(i).Message(); md != nil && reaches(md) {
+				memo[d.FullName()] = true
+			}
+		}
+
+		return memo[d.FullName()]
+	}
+
+	fields := map[protoreflect.FullName]nexusField{}
+	protoregistry.GlobalTypes.RangeMessages(func(mt protoreflect.MessageType) bool {
+		d := mt.Descriptor()
+		if !strings.HasPrefix(string(d.FullName()), "temporal.api.") ||
+			(d.ParentFile().Package() != "temporal.api.nexus.v1" && !strings.Contains(string(d.Name()), "Nexus")) {
+			return true
+		}
+
+		for i := range d.Fields().Len() {
+			fd := d.Fields().Get(i)
+			if md := fd.Message(); md != nil && reaches(md) {
+				fields[fd.FullName()] = nexusField{mt: mt, fd: fd}
+			}
+		}
+
+		return true
+	})
+
+	return fields
 }

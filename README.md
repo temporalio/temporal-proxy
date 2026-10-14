@@ -235,11 +235,12 @@ proxies that name one Namespace differently agree. Changing a translation rule c
 sealed before the change no longer match.
 
 When a payload is opened on the gRPC path, its label is also compared with the request's Namespace, translated the
-same way. Nexus payloads are exempt, along with everything nested in a Nexus message, such as an operation's failure
-details: a Nexus operation's input, result, and failure cross Namespaces by design. Child Workflows started in, and
-signals sent from, another Namespace carry that Namespace's label and are not exempt, so deployments that rely on them
-should stay on `permissive`. The codec server does not compare labels yet, and `/encode` labels payloads with the
-Namespace name it is given.
+same way. Nexus payloads that cross Namespaces by design are exempt, along with everything nested in them, such as an
+operation's failure details: the input as the handler reads it, and the result and failure as the caller reads them.
+The caller's own copy of the input, in its history or a standalone operation's description, is compared. Child
+Workflows started in, and signals sent from, another Namespace carry that Namespace's label and are not exempt, so
+deployments that rely on them should stay on `permissive`. The codec server does not compare labels yet, and `/encode`
+labels payloads with the Namespace name it is given.
 
 | Mode         | Seals     | Opens labeled for the request's Namespace | Opens labeled for another | Opens unlabeled         |
 | ------------ | --------- | ----------------------------------------- | ------------------------- | ----------------------- |

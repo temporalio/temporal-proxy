@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"runtime"
-	"strings"
+	"slices"
 
 	"go.temporal.io/api/common/v1"
 	"go.temporal.io/api/failure/v1"
+	"go.temporal.io/api/history/v1"
+	"go.temporal.io/api/nexus/v1"
 	"go.temporal.io/api/proxy"
+	"go.temporal.io/api/workflow/v1"
+	"go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
@@ -75,8 +79,17 @@ type (
 	// arguments; the encryption codec uses them to bind its cipher.
 	codecOpt func(ctx context.Context, s scope) codec.Option
 
-	// nexusKey marks a context whose payloads sit under a Nexus message.
-	nexusKey struct{}
+	// crossKey marks a context with the [crossing] of the Nexus message it sits
+	// under.
+	crossKey struct{}
+
+	// crossing is which payloads beneath a Nexus message cross namespaces: all of
+	// them, under a field that crosses, or else only those under parts, the
+	// fields of the nearest Nexus message that do.
+	crossing struct {
+		all   bool
+		parts []proto.Message
+	}
 )
 
 // NewCodecs returns the [Codecs] opts select. Encoding is gated per codec;
@@ -156,7 +169,7 @@ func WithRemoteNamespace(remote func(string) string) InterceptorOption {
 // namespace a codec is given is the one the request carries, read via
 // [meta.NamespaceFrom]; payloads are bound to its remote name (see
 // [WithRemoteNamespace]), and opened payloads must be bound to it unless they
-// sit under a Nexus message, whose payloads cross namespaces by design.
+// sit under a Nexus field that crosses namespaces by design (see [crossingOf]).
 //
 // Failures are handled outside the payload codecs. With failure encoding on, they
 // are encoded first, so the payload holding their attributes is sealed like any
@@ -261,10 +274,10 @@ func visitPayloads(
 	return &proxy.VisitPayloadsOptions{
 		ConcurrencyLimit:     runtime.NumCPU(),
 		SkipSearchAttributes: true,
-		ContextHook:          markNexus,
+		ContextHook:          markCrossing,
 		Visitor: func(ctx *proxy.VisitPayloadsContext, payloads []*common.Payload) ([]*common.Payload, error) {
 			ns := meta.NamespaceFrom(ctx)
-			s := scope{ns: ns, label: remoteName(remote, ns), check: ctx.Value(nexusKey{}) == nil}
+			s := scope{ns: ns, label: remoteName(remote, ns), check: !crosses(ctx, payloads)}
 
 			return apply(ctx, s, opts, fn, payloads)
 		},
@@ -281,24 +294,68 @@ func remoteName(remote func(string) string, ns string) string {
 	return remote(ns)
 }
 
-// markNexus marks ctx when the visitor enters a Nexus message, so every payload
-// beneath it, including those in nested failures, is exempt from the namespace
-// comparison: a Nexus operation's input, result, and failure cross namespaces
-// by design.
-func markNexus(ctx context.Context, m proto.Message) (context.Context, error) {
-	if isNexus(m) {
-		return context.WithValue(ctx, nexusKey{}, true), nil
+// markCrossing records in ctx which payloads beneath m cross namespaces. A
+// field [crossingOf] names marks everything beneath it; a Nexus message records
+// its own crossing fields for its children to match.
+func markCrossing(ctx context.Context, m proto.Message) (context.Context, error) {
+	c, _ := ctx.Value(crossKey{}).(crossing)
+	if c.all {
+		return ctx, nil
+	}
+
+	if slices.Contains(c.parts, m) {
+		return context.WithValue(ctx, crossKey{}, crossing{all: true}), nil
+	}
+
+	if parts := crossingOf(m); parts != nil {
+		return context.WithValue(ctx, crossKey{}, crossing{parts: parts}), nil
 	}
 
 	return ctx, nil
 }
 
-// isNexus reports whether m is a Nexus message: one in the nexus package, or
-// one whose name says it belongs to a Nexus operation or task.
-func isNexus(m proto.Message) bool {
-	d := m.ProtoReflect().Descriptor()
+// crosses reports whether payloads cross namespaces: they sit under a crossing
+// field, or are one themselves.
+func crosses(ctx context.Context, payloads []*common.Payload) bool {
+	c, _ := ctx.Value(crossKey{}).(crossing)
 
-	return d.ParentFile().Package() == "temporal.api.nexus.v1" || strings.Contains(string(d.Name()), "Nexus")
+	return c.all || (len(payloads) == 1 && slices.Contains(c.parts, proto.Message(payloads[0])))
+}
+
+// crossingOf returns the fields of m that carry payloads sealed in another
+// namespace: a Nexus operation's input, which the handler reads, and its
+// outcome, which the caller reads. Every other field is checked, including the
+// caller's own copy of the input, so a field added upstream is compared until
+// it is listed here.
+func crossingOf(m proto.Message) []proto.Message {
+	switch m := m.(type) {
+	case *nexus.StartOperationRequest:
+		return []proto.Message{m.GetPayload()}
+	case *history.NexusOperationCompletedEventAttributes:
+		return []proto.Message{m.GetResult()}
+	case *history.NexusOperationFailedEventAttributes:
+		return []proto.Message{m.GetFailure()}
+	case *history.NexusOperationCanceledEventAttributes:
+		return []proto.Message{m.GetFailure()}
+	case *history.NexusOperationCancelRequestFailedEventAttributes:
+		return []proto.Message{m.GetFailure()}
+	case *history.NexusOperationTimedOutEventAttributes:
+		return []proto.Message{m.GetFailure()}
+	case *workflow.PendingNexusOperationInfo:
+		return []proto.Message{m.GetCancellationInfo(), m.GetLastAttemptFailure()}
+	case *workflow.NexusOperationCancellationInfo:
+		return []proto.Message{m.GetLastAttemptFailure()}
+	case *nexus.NexusOperationExecutionInfo:
+		return []proto.Message{m.GetCancellationInfo(), m.GetLastAttemptFailure()}
+	case *nexus.NexusOperationExecutionCancellationInfo:
+		return []proto.Message{m.GetLastAttemptFailure()}
+	case *workflowservice.DescribeNexusOperationExecutionResponse:
+		return []proto.Message{m.GetResult(), m.GetFailure()}
+	case *workflowservice.PollNexusOperationExecutionResponse:
+		return []proto.Message{m.GetResult(), m.GetFailure()}
+	default:
+		return nil
+	}
 }
 
 // visitFailures returns the options that apply visitor to every failure, or nil
