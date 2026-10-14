@@ -226,6 +226,32 @@ On a 4xx response from `/decode`, the Temporal Web UI does not surface an error:
 already had rather than the plaintext, so a rejected token or a malformed request looks the same to whoever is
 looking at it as ciphertext the UI has not decoded yet (`binary/encrypted`), not an obvious failure.
 
+### Using it from the CLI
+
+The codec server compares every payload it opens with the Namespace the request names, and under `strict` it requires
+one on both routes. Name the Namespace as the Temporal Service knows it (for Temporal Cloud, `orders.acct`), not the
+local name a Worker uses through the gateway: that is the name payloads are labeled with, and the codec server maps it
+to the local name itself to pick keys. The Temporal CLI sends it for you, so either endpoint form works:
+
+```sh
+# The CLI sends X-Namespace from --namespace (or your profile) on every codec request
+temporal workflow show --namespace orders.acct --workflow-id wf-1 \
+  --codec-endpoint https://codec.example.com
+
+# Or name it in the path; the CLI expands {namespace}
+temporal workflow show --namespace orders.acct --workflow-id wf-1 \
+  --codec-endpoint 'https://codec.example.com/{namespace}'
+```
+
+Add `--codec-auth "Bearer $TOKEN"` when the codec server requires a token. A client that sends neither the header nor
+the path segment can add the header explicitly, for example with the CLI's `--codec-header X-Namespace=orders.acct`.
+This was verified against Temporal CLI 1.9.1.
+
+Under `strict`, a request naming no Namespace answers 400 saying so, and `/decode` refuses a payload labeled for a
+different Namespace with the same 400 as any other failure. That includes the results of Nexus operations handled in
+another Namespace, which the Web UI therefore shows as encrypted. Under `permissive`, such payloads decode and are
+counted in `vault_namespace_mismatches_total`.
+
 ## Namespace binding
 
 With binding on, the proxy records the Namespace a payload was sealed under in its `encryption-namespace` metadata and
@@ -239,8 +265,8 @@ same way. Nexus payloads that cross Namespaces by design are exempt, along with 
 operation's failure details: the input as the handler reads it, and the result and failure as the caller reads them.
 The caller's own copy of the input, in its history or a standalone operation's description, is compared. Child
 Workflows started in, and signals sent from, another Namespace carry that Namespace's label and are not exempt, so
-deployments that rely on them should stay on `permissive`. The codec server does not compare labels yet, and `/encode`
-labels payloads with the Namespace name it is given.
+deployments that rely on them should stay on `permissive`. The codec server applies the same comparison to the
+Namespace a request names; see [Using it from the CLI](#using-it-from-the-cli).
 
 | Mode         | Seals     | Opens labeled for the request's Namespace | Opens labeled for another | Opens unlabeled         |
 | ------------ | --------- | ----------------------------------------- | ------------------------- | ----------------------- |
@@ -316,10 +342,10 @@ exposed as `tmprl_proxy_server_requests_total` by default. Each configured metad
 emitted while serving a request: the `server` and `router` series, `vault_ops`, `vault_unbound_opens`, and
 `vault_namespace_mismatches`. The KEK and
 DEK series do not carry them, because they are emitted off the request path where no metadata is in scope to read.
-Neither does `vault_ops` when the operation came from the codec server: an HTTP request carries no gRPC metadata, so a
-metadata label reports blank there even though the same series populates it for a request that passed through the
-gateway. A fixed label is added to every series in the table, and to nothing registered outside the proxy's own
-collectors, so the runtime's `go_*` and `process_*` series stay as they are.
+Neither do `vault_ops`, `vault_unbound_opens`, or `vault_namespace_mismatches` when the operation came from the codec
+server: an HTTP request carries no gRPC metadata, so a metadata label reports blank there even though the same series
+populates it for a request that passed through the gateway. A fixed label is added to every series in the table, and to
+nothing registered outside the proxy's own collectors, so the runtime's `go_*` and `process_*` series stay as they are.
 
 `payloads_skipped_total` carries the metadata labels too (blank, as with `vault_ops`, for operations from the codec
 server, since an HTTP request carries no gRPC metadata), and `vault_ops_total` reports `result="unknown_key"` for a

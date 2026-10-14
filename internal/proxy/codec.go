@@ -201,25 +201,28 @@ func (c *Codecs) Interceptor(opts ...InterceptorOption) (grpc.UnaryClientInterce
 	return chainUnary(failures, payloads), nil
 }
 
-// Decode runs payloads through the inbound chain for ns, the same chain
-// [Codecs.Interceptor] applies to a response, except that it does not require
-// opened payloads to be bound to ns.
+// Decode runs payloads through the inbound chain, the same chain
+// [Codecs.Interceptor] applies to a response. local selects the key policy.
+// When remote is set, opened payloads are compared with it under the vault's
+// binding mode: strict refuses a mismatch, while permissive and off open it and
+// count it. When it is empty nothing is compared.
 func (c *Codecs) Decode(
 	ctx context.Context,
-	ns string,
+	local, remote string,
 	payloads []*common.Payload,
 ) ([]*common.Payload, error) {
-	return apply(ctx, scope{ns: ns, label: ns}, c.inbound, codec.Chain.Decode, payloads)
+	return apply(ctx, scope{ns: local, label: remote, check: remote != ""}, c.inbound, codec.Chain.Decode, payloads)
 }
 
-// Encode runs payloads through the outbound chain for ns, the same chain
-// [Codecs.Interceptor] applies to a request, binding them to ns as given.
+// Encode runs payloads through the outbound chain, the same chain
+// [Codecs.Interceptor] applies to a request. local selects the key policy and
+// sealed payloads are bound to remote.
 func (c *Codecs) Encode(
 	ctx context.Context,
-	ns string,
+	local, remote string,
 	payloads []*common.Payload,
 ) ([]*common.Payload, error) {
-	return apply(ctx, scope{ns: ns, label: ns}, c.outbound, codec.Chain.Encode, payloads)
+	return apply(ctx, scope{ns: local, label: remote}, c.outbound, codec.Chain.Encode, payloads)
 }
 
 // apply builds the chain opts imply for ctx and s and runs payloads through it

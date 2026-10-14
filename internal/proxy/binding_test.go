@@ -252,23 +252,76 @@ func TestEncryptionExemptsNexusPayloads(t *testing.T) {
 	}
 }
 
-// TestCodecsDecodeDoesNotCompareNamespaces pins that the codec server's path
-// opens a payload bound elsewhere even under strict, until /decode compares
-// namespaces itself. Expecting the namespace there fails this test.
-func TestCodecsDecodeDoesNotCompareNamespaces(t *testing.T) {
+// TestCodecsDecodeComparesTheNamedNamespace pins the codec server's decode path.
+// Ignoring remote fails the strict mismatch row; comparing when remote is empty
+// fails the unnamed row; enforcing outside strict fails the permissive row.
+// Labeling the counter with the remote name fails the mismatch rows.
+func TestCodecsDecodeComparesTheNamedNamespace(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		mode      crypto.BindingMode
+		remote    string
+		wantErr   bool
+		wantCount bool
+	}{
+		{name: "strict match", mode: crypto.BindingStrict, remote: "billing"},
+		{name: "strict mismatch", mode: crypto.BindingStrict, remote: "orders.acct", wantErr: true, wantCount: true},
+		{name: "strict unnamed compares nothing", mode: crypto.BindingStrict, remote: ""},
+		{name: "permissive mismatch opens and counts", mode: crypto.BindingPermissive, remote: "orders.acct", wantCount: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			reg := prometheus.NewRegistry()
+			codecs, err := proxy.NewCodecs(proxy.CodecOptions{
+				Vault:    realVault(t, tc.mode),
+				Reporter: bindingReporter(reg),
+			})
+			require.NoError(t, err)
+
+			theirs := sealThroughInterceptor(t, realVault(t, crypto.BindingPermissive), "billing")
+
+			opened, err := codecs.Decode(t.Context(), "orders", tc.remote, []*common.Payload{theirs})
+			if tc.wantErr {
+				require.ErrorContains(t, err, "different namespace")
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, `"x"`, string(opened[0].GetData()))
+			}
+
+			mismatches := gatherFamily(t, reg, "proxy_encryption_vault_namespace_mismatches_total")
+			if tc.wantCount {
+				require.NotNil(t, mismatches)
+				require.True(t, hasLabels(mismatches, map[string]string{"namespace": "orders"}))
+			} else {
+				require.Nil(t, mismatches)
+			}
+		})
+	}
+}
+
+// TestCodecsEncodeLabelsWithTheRemoteName pins that the codec server's encode
+// path keys by the local name and labels with the remote one. Labeling with the
+// local name fails the label check; keying by the remote name fails the seal,
+// since only "orders" has a key policy.
+func TestCodecsEncodeLabelsWithTheRemoteName(t *testing.T) {
 	t.Parallel()
 
 	codecs, err := proxy.NewCodecs(proxy.CodecOptions{
-		Vault:    realVault(t, crypto.BindingStrict),
+		Vault: realVaultWith(t, crypto.BindingPermissive,
+			crypto.WithKeyConfig("orders", crypto.KeyConfig{Duration: time.Hour})),
+		Encrypt:  true,
 		Reporter: bindingReporter(prometheus.NewRegistry()),
 	})
 	require.NoError(t, err)
 
-	theirs := sealThroughInterceptor(t, realVault(t, crypto.BindingPermissive), "billing")
-
-	opened, err := codecs.Decode(t.Context(), "orders", []*common.Payload{theirs})
+	sealed, err := codecs.Encode(t.Context(), "orders", "orders.acct", []*common.Payload{testPayload("json/plain", `"x"`)})
 	require.NoError(t, err)
-	require.Equal(t, `"x"`, string(opened[0].GetData()))
+	require.Equal(t, "orders.acct", string(sealed[0].GetMetadata()[codec.MetadataEncryptionNamespace]))
 }
 
 // sealThroughInterceptor seals one json payload through an encrypting
@@ -297,9 +350,16 @@ func sealThroughInterceptor(t *testing.T, v proxy.Vault, local string, opts ...p
 	return sent
 }
 
-// realVault builds a vault on a fixed testing key, so vaults built separately in
-// one test open each other's payloads.
+// realVault builds a vault on a fixed testing key with a default key policy, so
+// vaults built separately in one test open each other's payloads.
 func realVault(t *testing.T, mode crypto.BindingMode) *crypto.Vault {
+	t.Helper()
+
+	return realVaultWith(t, mode, crypto.WithDefaultKeyConfig(crypto.KeyConfig{Duration: time.Hour}))
+}
+
+// realVaultWith is realVault with opts instead of the default key policy.
+func realVaultWith(t *testing.T, mode crypto.BindingMode, opts ...crypto.VaultOption) *crypto.Vault {
 	t.Helper()
 
 	uri := "testing://" + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x2a}, 32))
@@ -310,9 +370,7 @@ func realVault(t *testing.T, mode crypto.BindingMode) *crypto.Vault {
 	reg, err := crypto.NewKEKRegistry(crypto.WithDefaultKey(kek))
 	require.NoError(t, err)
 
-	v, err := crypto.NewVault(reg,
-		crypto.WithDefaultKeyConfig(crypto.KeyConfig{Duration: time.Hour}),
-		crypto.WithBindingMode(mode))
+	v, err := crypto.NewVault(reg, append(opts, crypto.WithBindingMode(mode))...)
 	require.NoError(t, err)
 
 	return v

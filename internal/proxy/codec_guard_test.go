@@ -53,7 +53,7 @@ func TestCodecsMatchInterceptor(t *testing.T) {
 		direct, err := proxy.NewCodecs(codecOpts(t))
 		require.NoError(t, err)
 
-		viaDirect, err := direct.Encode(ctx, ns, clone(original))
+		viaDirect, err := direct.Encode(ctx, ns, ns, clone(original))
 		require.NoError(t, err)
 
 		requirePayloadsEqual(t, viaInterceptor, viaDirect)
@@ -86,7 +86,7 @@ func TestCodecsMatchInterceptor(t *testing.T) {
 		direct, err := proxy.NewCodecs(proxy.CodecOptions{Vault: &fakeVault{}, Reporter: newTestReporter(t)})
 		require.NoError(t, err)
 
-		viaDirect, err := direct.Decode(ctx, ns, clone(sealed))
+		viaDirect, err := direct.Decode(ctx, ns, ns, clone(sealed))
 		require.NoError(t, err)
 
 		requirePayloadsEqual(t, viaInterceptor, viaDirect)
@@ -106,7 +106,7 @@ func TestCodecsMatchInterceptor(t *testing.T) {
 
 		ctx := meta.WithNamespace(t.Context(), ns)
 
-		encoded, err := codecs.Encode(ctx, ns, clone(original))
+		encoded, err := codecs.Encode(ctx, ns, ns, clone(original))
 		require.NoError(t, err)
 		requirePayloadsEqual(t, original, encoded)
 
@@ -115,7 +115,7 @@ func TestCodecsMatchInterceptor(t *testing.T) {
 			sealedPayload(t, original[1]),
 		}
 
-		opened, err := codecs.Decode(ctx, ns, clone(sealed))
+		opened, err := codecs.Decode(ctx, ns, ns, clone(sealed))
 		require.NoError(t, err)
 		requirePayloadsEqual(t, original, opened)
 	})

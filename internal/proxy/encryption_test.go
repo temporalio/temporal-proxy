@@ -483,7 +483,7 @@ func TestCodecsEncodeSkipsListedEncodings(t *testing.T) {
 	require.NoError(t, err)
 
 	p := testPayload("acme/aes-gcm", "ciphertext-from-a-worker")
-	got, err := c.Encode(t.Context(), "ns1", []*common.Payload{p})
+	got, err := c.Encode(t.Context(), "ns1", "ns1", []*common.Payload{p})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.Same(t, p, got[0])

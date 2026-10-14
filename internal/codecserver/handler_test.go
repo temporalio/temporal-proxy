@@ -30,6 +30,7 @@ type (
 	// test can tell an encode from a decode without any real codec.
 	fakeCodecs struct {
 		namespaces []string
+		remotes    []string // remote names it was handed, in call order
 		err        error
 	}
 
@@ -46,16 +47,17 @@ type (
 	}
 )
 
-func (f *fakeCodecs) Decode(_ context.Context, ns string, ps []*common.Payload) ([]*common.Payload, error) {
-	return f.mark(ns, ps, "decoded:")
+func (f *fakeCodecs) Decode(_ context.Context, ns, remote string, ps []*common.Payload) ([]*common.Payload, error) {
+	return f.mark(ns, remote, ps, "decoded:")
 }
 
-func (f *fakeCodecs) Encode(_ context.Context, ns string, ps []*common.Payload) ([]*common.Payload, error) {
-	return f.mark(ns, ps, "encoded:")
+func (f *fakeCodecs) Encode(_ context.Context, ns, remote string, ps []*common.Payload) ([]*common.Payload, error) {
+	return f.mark(ns, remote, ps, "encoded:")
 }
 
-func (f *fakeCodecs) mark(ns string, ps []*common.Payload, prefix string) ([]*common.Payload, error) {
+func (f *fakeCodecs) mark(ns, remote string, ps []*common.Payload, prefix string) ([]*common.Payload, error) {
 	f.namespaces = append(f.namespaces, ns)
+	f.remotes = append(f.remotes, remote)
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -252,6 +254,50 @@ func TestHandlerRoutes(t *testing.T) {
 	}
 }
 
+// TestHandlerPassesTheSentAndLocalNames pins that the codecs get both names: the
+// local one for the key policy and the one the caller sent for the binding.
+// Passing the local name as remote fails the translated rows; letting the header
+// win over the path fails the disagreeing row.
+func TestHandlerPassesTheSentAndLocalNames(t *testing.T) {
+	t.Parallel()
+
+	raw, err := protojson.Marshal(&common.Payloads{Payloads: []*common.Payload{{Data: []byte("x")}}})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name       string
+		path       string
+		header     string
+		wantLocal  string
+		wantRemote string
+	}{
+		{name: "path, translated", path: "/orders.acct/decode", wantLocal: "orders", wantRemote: "orders.acct"},
+		{name: "header, translated", path: "/encode", header: "orders.acct", wantLocal: "orders", wantRemote: "orders.acct"},
+		{name: "untranslated", path: "/decode", header: "billing", wantLocal: "billing", wantRemote: "billing"},
+		{name: "path wins over header", path: "/orders.acct/decode", header: "billing", wantLocal: "orders", wantRemote: "orders.acct"},
+		{name: "unnamed", path: "/decode"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			codecs := &fakeCodecs{}
+			h := codecserver.Handler(codecs, fakeNamespaces{"orders.acct": "orders"}, testReporter(t))
+
+			headers := map[string]string{"Content-Type": "application/json"}
+			if tc.header != "" {
+				headers["X-Namespace"] = tc.header
+			}
+
+			rec := serve(t, h, http.MethodPost, tc.path, string(raw), headers)
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.Equal(t, []string{tc.wantLocal}, codecs.namespaces)
+			require.Equal(t, []string{tc.wantRemote}, codecs.remotes)
+		})
+	}
+}
+
 func TestHandlerPreservesPayloadCountAndOrder(t *testing.T) {
 	t.Parallel()
 
@@ -301,6 +347,53 @@ func TestHandlerNamespaceRequiredForEncode(t *testing.T) {
 			map[string]string{"Content-Type": "application/json"})
 		require.Equal(t, http.StatusOK, rec.Code)
 	})
+}
+
+// TestHandlerNamespaceRequiredForDecode pins the strict requirement on /decode.
+// Not wiring the option into the decode route fails the required rows; checking
+// after the body is read fails the malformed-body row, which would answer the
+// parse error instead.
+func TestHandlerNamespaceRequiredForDecode(t *testing.T) {
+	t.Parallel()
+
+	raw, err := protojson.Marshal(&common.Payloads{Payloads: []*common.Payload{{Data: []byte("x")}}})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		required bool
+		body     string
+		header   string
+		wantCode int
+	}{
+		{name: "required, unnamed", required: true, body: string(raw), wantCode: http.StatusBadRequest},
+		{name: "required, unnamed, empty payloads", required: true, body: `{"payloads":[]}`, wantCode: http.StatusBadRequest},
+		{name: "required, unnamed, malformed body", required: true, body: "not json", wantCode: http.StatusBadRequest},
+		{name: "required, named", required: true, body: string(raw), header: "orders", wantCode: http.StatusOK},
+		{name: "not required, unnamed", body: string(raw), wantCode: http.StatusOK},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			codecs := &fakeCodecs{}
+			h := codecserver.Handler(codecs, fakeNamespaces{}, testReporter(t),
+				codecserver.WithDecodeNamespaceRequired(tc.required))
+
+			headers := map[string]string{"Content-Type": "application/json"}
+			if tc.header != "" {
+				headers["X-Namespace"] = tc.header
+			}
+
+			rec := serve(t, h, http.MethodPost, "/decode", tc.body, headers)
+			require.Equal(t, tc.wantCode, rec.Code)
+			if tc.wantCode == http.StatusBadRequest {
+				require.Contains(t, rec.Body.String(), "a namespace is required")
+				require.Empty(t, codecs.namespaces, "the codecs must not run")
+			}
+		})
+	}
 }
 
 func TestHandlerAuth(t *testing.T) {

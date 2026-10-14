@@ -426,3 +426,101 @@ func TestCodecServerStrictRefusesUnboundPayloads(t *testing.T) {
 
 	requireLabel(t, f, "test_encryption_vault_ops_total", "result", "unbound")
 }
+
+// TestCodecServerComparesTheNamedNamespace seals a payload in ns-a through the
+// gateway and posts it to the codec server under strict. Not passing the sent
+// name to Decode fails the other-namespace row; leaking the label in the
+// response fails its body check.
+func TestCodecServerComparesTheNamedNamespace(t *testing.T) {
+	t.Parallel()
+
+	up := dataplanetest.NewUpstream(t)
+	cfg := dataplanetest.Config(up)
+	cfg.Metrics.Labels.Namespace = true
+	cfg.Encryption = config.Encryption{
+		Enabled:          true,
+		NamespaceBinding: config.NamespaceBindingStrict,
+		Default:          &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
+	}
+	cfg.HTTP = config.HTTP{
+		Listen:      config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
+		CodecServer: config.CodecServer{Enabled: true},
+	}
+	f := dataplanetest.StartApp(t, cfg)
+
+	secret := &common.Payload{
+		Metadata: map[string][]byte{wireEncoding: []byte("json/plain")},
+		Data:     []byte(`"the-answer-is-42"`),
+	}
+	_, err := f.Client().QueryWorkflow(f.Context(), queryIn("ns-a", secret), grpc.WaitForReady(true))
+	require.NoError(t, err)
+
+	reqs := up.Requests()
+	require.Len(t, reqs, 1)
+	sealed := reqs[0].(*workflowservice.QueryWorkflowRequest).GetQuery().GetQueryArgs()
+	require.Equal(t, "ns-a", string(sealed.GetPayloads()[0].GetMetadata()[wireNamespace]))
+
+	t.Run("its own namespace decodes", func(t *testing.T) {
+		opened := decodeThroughCodecServer(t, f, sealed.GetPayloads(), "ns-a")
+		require.True(t, proto.Equal(secret, opened[0]))
+	})
+
+	t.Run("another namespace is refused without saying why", func(t *testing.T) {
+		body, err := protojson.Marshal(sealed)
+		require.NoError(t, err)
+
+		res := postCodecServer(t, f, "/ns-b/decode", string(body), nil)
+		raw, err := io.ReadAll(res.Body)
+		require.NoError(t, err)
+
+		require.Equal(t, http.StatusBadRequest, res.StatusCode, "response body: %s", raw)
+		require.Equal(t, "failed to transform payloads\n", string(raw))
+		requireLabel(t, f, "test_encryption_vault_ops_total", "result", "mismatch")
+	})
+
+	t.Run("no namespace is refused", func(t *testing.T) {
+		res := postCodecServer(t, f, "/decode", `{"payloads":[]}`, nil)
+		raw, err := io.ReadAll(res.Body)
+		require.NoError(t, err)
+
+		require.Equal(t, http.StatusBadRequest, res.StatusCode)
+		require.Contains(t, string(raw), "a namespace is required")
+	})
+}
+
+// TestCodecServerEncodeLabelsTheRemoteName seals through /encode under a
+// translating upstream and reads the result back through the gateway under
+// strict. Labeling with the local name fails both checks.
+func TestCodecServerEncodeLabelsTheRemoteName(t *testing.T) {
+	t.Parallel()
+
+	up := dataplanetest.NewUpstream(t)
+	cfg := dataplanetest.Config(up)
+	cfg.Upstreams[0].Namespaces.Rules.Suffix = ".a8x72"
+	cfg.Encryption = config.Encryption{
+		Enabled:          true,
+		NamespaceBinding: config.NamespaceBindingStrict,
+		Default:          &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
+	}
+	cfg.HTTP = config.HTTP{
+		Listen:      config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
+		CodecServer: config.CodecServer{Enabled: true},
+	}
+	f := dataplanetest.StartApp(t, cfg)
+
+	secret := &common.Payload{
+		Metadata: map[string][]byte{wireEncoding: []byte("json/plain")},
+		Data:     []byte(`"sealed for the remote name"`),
+	}
+
+	sealed := encodeThroughCodecServer(t, f, []*common.Payload{secret}, "ns1.a8x72")
+	require.Equal(t, "ns1.a8x72", string(sealed[0].GetMetadata()[wireNamespace]))
+
+	up.SetQueryResult(&common.Payloads{Payloads: sealed})
+	resp, err := f.Client().QueryWorkflow(f.Context(), queryIn("ns1", &common.Payload{
+		Metadata: map[string][]byte{wireEncoding: []byte("json/plain")},
+		Data:     []byte(`"q"`),
+	}), grpc.WaitForReady(true))
+	require.NoError(t, err)
+	require.True(t, proto.Equal(secret, resp.GetQueryResult().GetPayloads()[0]))
+}

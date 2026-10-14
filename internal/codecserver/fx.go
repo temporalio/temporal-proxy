@@ -35,8 +35,9 @@ type Params struct {
 // root, or returns none when the codec server is disabled. It warns rather than
 // fails for the two configurations that are legal but probably unintended: no
 // authentication, which config only permits on a loopback bind, and no
-// encryption keys, which makes both routes identity transforms. Returns an
-// error when the namespace override mapping is ambiguous or when the
+// encryption keys, which makes both routes identity transforms. Under a strict
+// namespace binding both routes require the request to name a namespace.
+// Returns an error when the namespace override mapping is ambiguous or when the
 // authenticator cannot be built.
 func newFromParams(p Params) ([]httpserver.Route, error) {
 	cfg := &p.Config.HTTP.CodecServer
@@ -51,13 +52,19 @@ func newFromParams(p Params) ([]httpserver.Route, error) {
 		return nil, err
 	}
 
+	strict := p.Config.Encryption.NamespaceBinding == config.NamespaceBindingStrict
+
 	opts := []Option{
 		WithCORS(cfg.CORS.Origins, cfg.CORS.Credentials),
 		WithLogger(log),
 		// A per-namespace key policy means a payload that cannot be attributed to
 		// a namespace must not be sealed at all: it would silently take the
-		// default policy rather than the one the operator wrote for it.
-		WithNamespaceRequired(len(p.Config.Encryption.Overrides) > 0),
+		// default policy rather than the one the operator wrote for it. Under a
+		// strict binding neither route can act without one: a payload sealed
+		// unnamed is refused everywhere, and an opened one has nothing to be
+		// compared with.
+		WithNamespaceRequired(len(p.Config.Encryption.Overrides) > 0 || strict),
+		WithDecodeNamespaceRequired(strict),
 	}
 
 	if cfg.Auth != nil {

@@ -95,17 +95,20 @@ temporal workflow show --address 127.0.0.1:7233 --namespace default --workflow-i
 ```
 
 ```text
-input.payloads[0].data: n9hR8BKIw9ukXsjUCjacNOCcJzCwp2sBLLwgGaKZgOol9ghQFoXIvXmHa1UvK3OU1PTMh2a+CWlmFCZX/vPgJf1W1qL8O6rl
+input.payloads[0].data: skNN+1x0Vokc/J/Q5p51/YQcjn8QWxe6Qrbr0cxYFYqho/abr9nMl+l+Mh6rgNYzU+A0ZDTk/wiVXBPNv8aM2T3G6OhFg7R6
 input.payloads[0].metadata.encoding: YmluYXJ5L2VuY3J5cHRlZA==
-input.payloads[0].metadata.encryption-dek: SktMN3c3b0RneUFubENoNkxOSFg4aHNOVDhZRUFOemphUWMwWTA3YkRacEdmMjBRaEJxd3RiM0h2bTV6ZmNDOVYrYjltN1F6UTNvWldpdnVMS0FTRDhkeHVtV09GSWtq
+input.payloads[0].metadata.encryption-dek: cEUwd3pQVmNsQW1WZGVOVzVNb0dsWFMvM1ZBWVV0OWo1eWQ2QTRlbDYvRVlmdjBxVC9zN3IzbDh1YmZPdE9kNElOc1BDR255OUNuVEpxRnZIWjdlUUt6QnFkd2VRcUFE
 input.payloads[0].metadata.encryption-key-id: YmFzZTY0a2V5Oi8vSFlPa0NGM3RCQk1xVGp6cWxEYVR4RWUxeDhwUWpQUFVOUTI3RlhJTi0yND0=
+input.payloads[0].metadata.encryption-namespace: ZGVmYXVsdA==
 ```
 
 The encoding decodes to `binary/encrypted`. The key ID decodes to `base64key://` followed by the key itself, since the
 proxy opens `testing://` keys with gocloud's `base64key` keeper; that is one of the reasons the scheme is for local runs
-only.
+only. The `encryption-namespace` entry decodes to `default`, the Namespace the payload is bound to.
 
-Point the same command at the codec server and the CLI hands each payload to `/decode` before printing it:
+Point the same command at the codec server and the CLI hands each payload to `/decode` before printing it. The CLI
+tells the codec server which Namespace it is reading by sending `X-Namespace` from `--namespace`;
+`--codec-endpoint 'http://127.0.0.1:8081/{namespace}'` works too. The example runs under `strict`, which requires one.
 
 ```bash
 temporal workflow show --address 127.0.0.1:7233 --namespace default --workflow-id codec-demo --detailed \
