@@ -1,7 +1,17 @@
 version: 2
 updates:
   - package-ecosystem: gomod
-    directory: /
+    # examples replaces the root module with ../, so a root bump that leaves
+    # examples/go.mod behind breaks `mise run build`. Group by dependency name so
+    # each bump lands in both modules in one PR.
+    directories:
+      - /
+      - /examples
+    groups:
+      go-modules:
+        group-by: dependency-name
+        patterns:
+          - "*"
     schedule:
       interval: weekly
     ignore:
