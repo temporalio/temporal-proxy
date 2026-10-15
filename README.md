@@ -1,4 +1,4 @@
-# Temporal Proxy ([Pre-release])
+# Temporal Proxy ([Public Preview])
 
 [![ci](https://github.com/temporalio/temporal-proxy/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/temporalio/temporal-proxy/actions/workflows/ci.yaml)
 [![codecov](https://codecov.io/gh/temporalio/temporal-proxy/branch/main/graph/badge.svg)](https://codecov.io/gh/temporalio/temporal-proxy)
@@ -7,15 +7,17 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/temporalio/temporal-proxy.svg)](https://pkg.go.dev/github.com/temporalio/temporal-proxy)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+> [!NOTE]
+>
+> **[Public Preview]:** Starting with version 1.0, Temporal Proxy is suitable for production use cases.
+> Breaking changes between minor releases are possible but will be kept to a minimum.
+> Minor bug fixes are generally applied only to the latest release. Critical fixes and patches will be applied to the
+> latest release and the two most recent previous releases, provided each is version 1.0 or later.
+
 A gRPC proxy that sits between Temporal SDK Clients, Workers, and the Temporal UI on one side and one or more upstream
 Temporal Services on the other. It handles Namespace translation, TLS termination, and payload encryption so
 applications can target a single local endpoint while the proxy fans requests out to the right upstream (a local dev
 Temporal Service, a self-hosted deployment, Temporal Cloud, or some mix).
-
-> [!NOTE]
->
-> **Pre-release:** This project is under active development and evolving quickly. It is not ready for production use.
-> Open a GitHub issue if you have questions or want to follow along.
 
 ## Why
 
@@ -433,4 +435,4 @@ See [`SECURITY.md`](SECURITY.md) for how to report vulnerabilities.
 
 MIT, see [`LICENSE`](LICENSE).
 
-[Pre-release]: https://docs.temporal.io/evaluate/development-production-features/release-stages
+[Public Preview]: https://docs.temporal.io/evaluate/product-release-stages#public-preview
