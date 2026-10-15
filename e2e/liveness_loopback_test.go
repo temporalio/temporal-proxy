@@ -55,7 +55,10 @@ func TestEndToEndLivenessFlipsWhenTheStreamChainWedges(t *testing.T) {
 	t.Parallel()
 
 	cfg := dataplanetest.Config(dataplanetest.NewUpstream(t))
-	cfg.Health = config.Health{Interval: 100 * time.Millisecond, Timeout: 50 * time.Millisecond}
+	// Each run dials, handshakes, and runs the chain from scratch, which under
+	// -race on a busy runner can take a few hundred milliseconds. The timeout
+	// leaves room for that so only the wedge can trip it.
+	cfg.Health = config.Health{Interval: 1500 * time.Millisecond, Timeout: time.Second}
 
 	blocker := &wedge{}
 	f := dataplanetest.Start(t, cfg, dataplanetest.WithAuth(blocker))
@@ -65,17 +68,17 @@ func TestEndToEndLivenessFlipsWhenTheStreamChainWedges(t *testing.T) {
 	// listener would have flipped the status by now.
 	require.Never(t, func() bool {
 		return status() != grpc_health_v1.HealthCheckResponse_SERVING
-	}, 500*time.Millisecond, 50*time.Millisecond, "a healthy gateway must keep reporting SERVING")
+	}, 4*time.Second, 50*time.Millisecond, "a healthy gateway must keep reporting SERVING")
 
 	blocker.armed.Store(true)
 	require.Eventually(t, func() bool {
 		return status() == grpc_health_v1.HealthCheckResponse_NOT_SERVING
-	}, 5*time.Second, 50*time.Millisecond, "a wedged stream chain must be reported as NOT_SERVING")
+	}, 10*time.Second, 50*time.Millisecond, "a wedged stream chain must be reported as NOT_SERVING")
 
 	blocker.armed.Store(false)
 	require.Eventually(t, func() bool {
 		return status() == grpc_health_v1.HealthCheckResponse_SERVING
-	}, 5*time.Second, 50*time.Millisecond, "the status must recover once the chain answers again")
+	}, 10*time.Second, 50*time.Millisecond, "the status must recover once the chain answers again")
 }
 
 // servingStatus reads the gateway's process-wide serving status the way a
