@@ -105,6 +105,25 @@ func (e *Encryption) Validate() error {
 	return validation.Validate("", rules...)
 }
 
+// RequireKey fails unless a Default key policy is configured. It is the check
+// behind a deployment that must never run without a key, and is kept out of
+// Validate because the YAML alone must not be able to opt out of it. It checks
+// for a key rather than Enabled: a key with Enabled false is a decrypt-only
+// proxy, which still reads sealed payloads and is a deliberate way to wind
+// encryption down.
+func (e *Encryption) RequireKey() error {
+	return validation.Validate(
+		"encryption",
+		validation.Field("default", e.Default, func(p *KeyPolicy) error {
+			if p == nil {
+				return errors.New("a key is required when encryption is required")
+			}
+
+			return nil
+		}),
+	)
+}
+
 // Validate requires a valid primary and decrypt key URIs, a positive Duration,
 // and a RenewBefore in [0, Duration) so rotation is scheduled strictly before a
 // DEK expires. The upper bound mirrors the crypto vault's own invariant.
