@@ -191,8 +191,8 @@ func (c *Codecs) Interceptor(opts ...InterceptorOption) (grpc.UnaryClientInterce
 	}
 
 	failures, err := proxy.NewFailureVisitorInterceptor(proxy.FailureVisitorInterceptorOptions{
-		Inbound:  visitFailures(c.restoreFailures, restoreFailure),
-		Outbound: visitFailures(c.encodeFailures, encodeFailure),
+		Inbound:  visitFailures(c.restoreFailures, codec.RestoreFailure),
+		Outbound: visitFailures(c.encodeFailures, codec.EncodeFailure),
 	})
 	if err != nil {
 		return nil, err
@@ -361,15 +361,14 @@ func crossingOf(m proto.Message) []proto.Message {
 	}
 }
 
-// visitFailures returns the options that apply visitor to every failure, or nil
+// visitFailures returns the options that apply fn to every failure, or nil
 // when on is false so that direction is left alone.
-func visitFailures(
-	on bool,
-	visitor func(*proxy.VisitFailuresContext, *failure.Failure) error,
-) *proxy.VisitFailuresOptions {
+func visitFailures(on bool, fn func(*failure.Failure) error) *proxy.VisitFailuresOptions {
 	if !on {
 		return nil
 	}
 
-	return &proxy.VisitFailuresOptions{Visitor: visitor}
+	return &proxy.VisitFailuresOptions{
+		Visitor: func(_ *proxy.VisitFailuresContext, f *failure.Failure) error { return fn(f) },
+	}
 }
