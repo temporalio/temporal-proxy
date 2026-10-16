@@ -19,21 +19,42 @@ on:
 permissions:
   contents: write
 
+# One release at a time across all branches. Whether a release is marked latest
+# depends on every other tag, so two lines releasing at once could both claim it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      # main cuts minor and major releases; releases/vX.Y.x cuts patches for that
+      # line. line is empty on main and vX.Y on a release branch.
       - name: Guard branch
-        if: github.ref != 'refs/heads/main'
+        id: line
         env:
           REF: ${{ github.ref }}
         run: |
-          echo "::error::Releases can only be run from main (got ${REF})"
-          exit 1
+          set -euo pipefail
+          case "${REF}" in
+            refs/heads/main)
+              line=""
+              ;;
+            refs/heads/releases/v*.x)
+              line="${REF#refs/heads/releases/}"
+              line="${line%.x}"
+              if ! echo "${line}" | grep -Eq '^v[0-9]+\.[0-9]+$'; then
+                echo "::error::Release branches must be named releases/vX.Y.x (got ${REF})"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Releases can only be run from main or releases/vX.Y.x (got ${REF})"
+              exit 1
+              ;;
+          esac
+          echo "line=${line}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,6 +67,7 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_BUMP: ${{ inputs.bump }}
+          LINE: ${{ steps.line.outputs.line }}
         run: |
           set -euo pipefail
           if [ -n "${INPUT_VERSION}" ]; then
@@ -54,7 +76,22 @@ jobs:
               echo "::error::Invalid version '${INPUT_VERSION}'. Expected semver like 1.2.3 or v1.2.3-rc1 (build metadata '+...' is not supported)"
               exit 1
             fi
+            if [ -n "${LINE}" ] && [ "${tag#"${LINE}".}" = "${tag}" ]; then
+              echo "::error::Version ${tag} does not belong on releases/${LINE}.x"
+              exit 1
+            fi
+          elif [ -n "${LINE}" ]; then
+            if [ "${INPUT_BUMP}" != "patch" ]; then
+              echo "::error::Release branches only cut patch releases (got '${INPUT_BUMP}'); run minor and major bumps from main"
+              exit 1
+            fi
+            # svu picks the highest tag in the repo, so scope it to this line.
+            tag="$(svu patch --tag.pattern "${LINE}.*")"
           else
+            if [ "${INPUT_BUMP}" = "patch" ]; then
+              echo "::error::Patch releases are cut from their releases/vX.Y.x branch, not main"
+              exit 1
+            fi
             tag="$(svu "${INPUT_BUMP}")"
           fi
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
@@ -79,6 +116,35 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "${TAG}" -m "Release ${TAG}"
           git push origin "${TAG}"
+
+      - name: Create release branch
+        if: steps.line.outputs.line == ''
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! echo "${TAG}" | grep -Eq '^v[0-9]+\.[0-9]+\.0$'; then
+            exit 0
+          fi
+          branch="releases/${TAG%.0}.x"
+          git push origin "${TAG}^{commit}:refs/heads/${branch}"
+          echo "Created ${branch} from ${TAG}"
+
+      # Only the highest stable version is latest, so a patch to an older line
+      # doesn't take latest from a newer one. goreleaser reads MAKE_LATEST.
+      - name: Resolve latest
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          highest="$(git tag -l 'v*' --sort=-v:refname | grep -v -- '-' | head -n1)"
+          if [ "${TAG}" = "${highest}" ]; then
+            latest=true
+          else
+            latest=false
+          fi
+          echo "MAKE_LATEST=${latest}" >> "$GITHUB_ENV"
+          echo "Latest: ${latest} (highest stable tag is ${highest})"
 
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1

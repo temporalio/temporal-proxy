@@ -33,7 +33,7 @@ dockers_v2:
     tags:
       - "v{{.Version }}"
       - "{{ if .IsNightly }}nightly{{ end }}"
-      - "{{ if not .IsNightly }}latest{{ end }}"
+      - '{{ if eq (envOrDefault "MAKE_LATEST" "false") "true" }}latest{{ end }}'
 
     labels:
       "org.opencontainers.image.title": "{{ .ProjectName }}"
@@ -79,6 +79,8 @@ release:
     name: temporal-proxy
   draft: false
   prerelease: auto
+  # Set by the release workflow; only the highest stable version is latest.
+  make_latest: '{{ envOrDefault "MAKE_LATEST" "false" }}'
   name_template: "{{ .Version }} Release"
   header: |
     ## Temporal Proxy {{ .Version }}

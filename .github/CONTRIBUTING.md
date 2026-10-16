@@ -114,16 +114,39 @@ buf curl --protocol grpc --http2-prior-knowledge \
 
 ## Releases
 
+We support the current minor release and the two before it (for example, `v1.0`, `v0.9`, and `v0.8`). Each minor
+version has a `releases/vX.Y.x` branch, and patches for that line are cut from it. New minor and major releases are cut
+from `main`.
+
 Releases are cut from the [release workflow](workflows/release.yaml) via manual dispatch; you'll need write access to
 the repository. The workflow computes the version, creates and pushes the tag, then runs goreleaser to publish the
 binaries, container image, and GitHub release.
 
-To cut a release, open **Actions -> release -> Run workflow** in the GitHub UI, select `main` as the branch, and choose
-either:
+To cut a release, open **Actions -> release -> Run workflow** in the GitHub UI, pick the branch, and choose either:
 
-- a **bump** (`patch`, `minor`, or `major`); the next version is computed from the latest tag with `svu`, or
+- a **bump**; the next version is computed from the latest tag with `svu`. Use `minor` or `major` from `main`, and
+  `patch` from a release branch (scoped to that line's tags), or
 - an explicit **version** (with or without a leading `v`, e.g. `1.4.0` or `v0.2.0-alpha.20260722`), which overrides the
-  bump.
+  bump. On a release branch it must belong to that line.
 
-The run fails fast, without creating a tag, if it is dispatched from a branch other than `main`, if an explicit version
-is not valid semver, or if the resolved tag already exists.
+Releasing `vX.Y.0` from `main` also creates the `releases/vX.Y.x` branch from the new tag.
+
+The release is marked latest on GitHub, and the container image is tagged `latest`, only when it is the highest stable
+version. A patch to an older line (say `v0.9.1` after `v1.0.1`) is published without touching `latest`.
+
+The run fails fast, without creating a tag, if it is dispatched from a branch other than `main` or `releases/vX.Y.x`,
+if the bump doesn't match the branch, if an explicit version is not valid semver or doesn't belong to the release
+branch, or if the resolved tag already exists. Only one release runs at a time.
+
+### Backporting fixes
+
+Fixes usually land on `main` first. To ship one on a supported line, open a PR against its `releases/vX.Y.x` branch:
+
+- If the fix applies cleanly, cherry-pick it with `git cherry-pick -x <sha>`.
+- If it doesn't (for example, the code it touches doesn't exist on that line), adapt it by hand.
+
+Either way, link the corresponding `main` commit in the PR description. A fix that only applies to an older line is
+fine too; say why there's no `main` counterpart. Once merged, run the release workflow from the release branch with a
+`patch` bump.
+
+Release branches for lines that fall out of the support window can be deleted by hand.
