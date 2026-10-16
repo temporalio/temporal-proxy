@@ -12,8 +12,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/dataplane/dataplanetest"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/dataplane/dataplanetest"
 )
 
 func TestStartForwardsToTheFakeUpstream(t *testing.T) {

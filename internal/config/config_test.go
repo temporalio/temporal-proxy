@@ -11,9 +11,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/services"
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/services"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 // upstreamYAML is the smallest upstreams block that passes validation.

@@ -8,11 +8,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
 
-	"github.com/temporalio/temporal-proxy/internal/auth"
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/dataplane"
-	"github.com/temporalio/temporal-proxy/internal/services"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"go.temporal.io/proxy/internal/auth"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/dataplane"
+	"go.temporal.io/proxy/internal/services"
+	"go.temporal.io/proxy/pkg/logger"
 )
 
 func TestModuleStartsAndStops(t *testing.T) {

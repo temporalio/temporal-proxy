@@ -10,12 +10,12 @@ import (
 
 	"go.uber.org/fx"
 
-	"github.com/temporalio/temporal-proxy/internal/api"
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/metrics"
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/internal/api"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/metrics"
+	"go.temporal.io/proxy/pkg/crypto"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 const (

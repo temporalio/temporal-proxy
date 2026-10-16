@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/pkg/api/ext/v1"
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"go.temporal.io/proxy/pkg/api/ext/v1"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 func TestKeyMaterial_MarshalRoundTrip(t *testing.T) {

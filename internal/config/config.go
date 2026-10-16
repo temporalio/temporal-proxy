@@ -10,7 +10,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 type (

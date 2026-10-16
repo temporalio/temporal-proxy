@@ -12,9 +12,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/internal/auth"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"go.temporal.io/proxy/internal/auth"
+	"go.temporal.io/proxy/internal/transport/meta"
+	"go.temporal.io/proxy/pkg/logger"
 )
 
 type (

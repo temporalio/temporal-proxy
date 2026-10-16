@@ -5,8 +5,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 func TestNoopLogger(t *testing.T) {

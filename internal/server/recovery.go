@@ -7,9 +7,9 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/temporalio/temporal-proxy/internal/rpc"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/internal/rpc"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 // RecoveryHandler is told of each panic [WithRecoveryHandler] recovers, after it

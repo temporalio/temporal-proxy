@@ -17,9 +17,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/pkg/testutil"
-	"github.com/temporalio/temporal-proxy/pkg/validation"
-	"github.com/temporalio/temporal-proxy/pkg/validation/certs"
+	"go.temporal.io/proxy/pkg/testutil"
+	"go.temporal.io/proxy/pkg/validation"
+	"go.temporal.io/proxy/pkg/validation/certs"
 )
 
 func TestValidatePEM_NoChecks(t *testing.T) {

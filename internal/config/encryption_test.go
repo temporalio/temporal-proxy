@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/pkg/crypto"
 )
 
 // TestEncryption_DEKCacheSize covers what an absent cacheSize means. The field is

@@ -23,11 +23,11 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
-	"github.com/temporalio/temporal-proxy/internal/metrics"
-	"github.com/temporalio/temporal-proxy/internal/proxy"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
-	"github.com/temporalio/temporal-proxy/pkg/codec"
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
+	"go.temporal.io/proxy/internal/metrics"
+	"go.temporal.io/proxy/internal/proxy"
+	"go.temporal.io/proxy/internal/transport/meta"
+	"go.temporal.io/proxy/pkg/codec"
+	"go.temporal.io/proxy/pkg/crypto"
 )
 
 // TestEncryptionSealsUnderTheRemoteNamespace pins the label a sealed payload

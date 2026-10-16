@@ -11,9 +11,9 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/dataplane/dataplanetest"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/dataplane/dataplanetest"
+	"go.temporal.io/proxy/internal/transport/meta"
 )
 
 // wedge is an Authenticator that admits every caller until it is armed, after

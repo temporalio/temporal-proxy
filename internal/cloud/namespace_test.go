@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/cloud"
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"go.temporal.io/proxy/internal/cloud"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 const (

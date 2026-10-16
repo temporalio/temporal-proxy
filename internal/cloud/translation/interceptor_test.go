@@ -15,7 +15,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/internal/cloud/translation"
+	"go.temporal.io/proxy/internal/cloud/translation"
 )
 
 // systemInfoService is a fake upstream serving the method the test translation

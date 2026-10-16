@@ -13,7 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
+	"go.temporal.io/proxy/pkg/crypto"
 )
 
 // countingKEK is an identity KEK (ciphertext == plaintext) that counts calls.

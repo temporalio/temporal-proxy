@@ -1,4 +1,4 @@
-module github.com/temporalio/temporal-proxy/examples
+module go.temporal.io/proxy/examples
 
 go 1.26.0
 
@@ -7,11 +7,11 @@ toolchain go1.27.1
 // The examples build against this working tree because pkg/api/kms/v1, which the
 // kms example serves, is not in a released tag yet. Outside this repository, drop
 // this line and require a released version of the proxy instead.
-replace github.com/temporalio/temporal-proxy => ../
+replace go.temporal.io/proxy => ../
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/temporalio/temporal-proxy v0.4.0
+	go.temporal.io/proxy v0.4.0
 	go.temporal.io/sdk v1.49.0
 	google.golang.org/grpc v1.84.0
 )

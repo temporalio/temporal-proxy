@@ -3,7 +3,7 @@ package config
 import (
 	"errors"
 
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 type (

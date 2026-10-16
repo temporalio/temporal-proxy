@@ -17,9 +17,9 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/test/bufconn"
 
-	"github.com/temporalio/temporal-proxy/internal/transport/creds"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/internal/transport/creds"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 const (

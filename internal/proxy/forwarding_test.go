@@ -21,8 +21,8 @@ import (
 	"google.golang.org/grpc/reflection/grpc_reflection_v1"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/internal/proxy"
-	"github.com/temporalio/temporal-proxy/internal/services"
+	"go.temporal.io/proxy/internal/proxy"
+	"go.temporal.io/proxy/internal/services"
 )
 
 // metadataStampingService is a fake WorkflowService upstream that sets a response

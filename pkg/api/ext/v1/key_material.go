@@ -9,7 +9,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 // UnmarshalKeyMaterial decodes key material produced by [KeyMaterial.Marshal].

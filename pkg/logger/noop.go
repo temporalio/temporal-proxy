@@ -1,6 +1,6 @@
 package logger
 
-import "github.com/temporalio/temporal-proxy/pkg/logger/tag"
+import "go.temporal.io/proxy/pkg/logger/tag"
 
 type (
 	// NoopLogger is a [Logger] that discards every entry. It is useful in tests

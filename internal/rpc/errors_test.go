@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/internal/rpc"
+	"go.temporal.io/proxy/internal/rpc"
 )
 
 func TestReject(t *testing.T) {

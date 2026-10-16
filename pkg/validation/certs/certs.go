@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 const (

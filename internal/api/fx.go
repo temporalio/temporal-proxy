@@ -7,9 +7,9 @@ import (
 	"go.uber.org/fx"
 	"google.golang.org/grpc"
 
-	"github.com/temporalio/temporal-proxy/internal/auth/outbound"
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/transport/connect"
+	"go.temporal.io/proxy/internal/auth/outbound"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/transport/connect"
 )
 
 // extensionKeyPrefix namespaces extension-server entries in the shared

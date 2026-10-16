@@ -3,8 +3,8 @@ package auth
 import (
 	"fmt"
 
-	"github.com/temporalio/temporal-proxy/internal/api"
-	"github.com/temporalio/temporal-proxy/internal/config"
+	"go.temporal.io/proxy/internal/api"
+	"go.temporal.io/proxy/internal/config"
 )
 
 // For selects the Authenticator ac describes, admitting everything when ac is

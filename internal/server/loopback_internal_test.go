@@ -14,9 +14,9 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/internal/transport/creds"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/testutil"
+	"go.temporal.io/proxy/internal/transport/creds"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/testutil"
 )
 
 // fakeHealthClient implements only Watch. The embedded interface leaves every

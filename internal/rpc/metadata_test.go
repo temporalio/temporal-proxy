@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/temporalio/temporal-proxy/internal/rpc"
+	"go.temporal.io/proxy/internal/rpc"
 )
 
 func TestWithOutgoingLeavesTheCallersMetadataAlone(t *testing.T) {

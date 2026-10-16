@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/temporalio/temporal-proxy/internal/dataplane/dataplanetest"
+	"go.temporal.io/proxy/internal/dataplane/dataplanetest"
 )
 
 // TestTLSUpstreamIsReachableWithItsOwnTLSConfig proves the config the fake

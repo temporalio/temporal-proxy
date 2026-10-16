@@ -18,12 +18,12 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/metrics"
-	"github.com/temporalio/temporal-proxy/internal/proxy"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
-	"github.com/temporalio/temporal-proxy/pkg/codec"
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/metrics"
+	"go.temporal.io/proxy/internal/proxy"
+	"go.temporal.io/proxy/internal/transport/meta"
+	"go.temporal.io/proxy/pkg/codec"
+	"go.temporal.io/proxy/pkg/crypto"
 )
 
 const (

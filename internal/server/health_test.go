@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
-	"github.com/temporalio/temporal-proxy/internal/server"
+	"go.temporal.io/proxy/internal/server"
 )
 
 func TestHealthCheckFunc(t *testing.T) {

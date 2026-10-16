@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/serviceconfig"
 
-	"github.com/temporalio/temporal-proxy/internal/transport/resolve"
+	"go.temporal.io/proxy/internal/transport/resolve"
 )
 
 const (

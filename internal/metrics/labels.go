@@ -9,7 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
+	"go.temporal.io/proxy/internal/config"
 )
 
 // maxLabelValueLen bounds a metadata label's value in bytes. The value is

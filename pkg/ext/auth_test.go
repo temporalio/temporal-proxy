@@ -12,9 +12,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/pkg/api/auth/v1"
-	"github.com/temporalio/temporal-proxy/pkg/api/kms/v1"
-	"github.com/temporalio/temporal-proxy/pkg/ext"
+	"go.temporal.io/proxy/pkg/api/auth/v1"
+	"go.temporal.io/proxy/pkg/api/kms/v1"
+	"go.temporal.io/proxy/pkg/ext"
 )
 
 // stubAuth records what the service handed it and answers with a fixed response

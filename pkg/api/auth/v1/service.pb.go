@@ -26,8 +26,8 @@ const file_api_auth_v1_service_proto_rawDesc = "" +
 	"\n" +
 	"\x19api/auth/v1/service.proto\x12\vapi.auth.v1\x1a\x16api/auth/v1/auth.proto2L\n" +
 	"\vAuthService\x12=\n" +
-	"\x04Auth\x12\x18.api.auth.v1.AuthRequest\x1a\x19.api.auth.v1.AuthResponse\"\x00B\xa8\x01\n" +
-	"\x0fcom.api.auth.v1B\fServiceProtoP\x01Z9github.com/temporalio/temporal-proxy/pkg/api/auth/v1;auth\xa2\x02\x03AAX\xaa\x02\vApi.Auth.V1\xca\x02\vApi\\Auth\\V1\xe2\x02\x17Api\\Auth\\V1\\GPBMetadata\xea\x02\rApi::Auth::V1b\x06proto3"
+	"\x04Auth\x12\x18.api.auth.v1.AuthRequest\x1a\x19.api.auth.v1.AuthResponse\"\x00B\x98\x01\n" +
+	"\x0fcom.api.auth.v1B\fServiceProtoP\x01Z)go.temporal.io/proxy/pkg/api/auth/v1;auth\xa2\x02\x03AAX\xaa\x02\vApi.Auth.V1\xca\x02\vApi\\Auth\\V1\xe2\x02\x17Api\\Auth\\V1\\GPBMetadata\xea\x02\rApi::Auth::V1b\x06proto3"
 
 var file_api_auth_v1_service_proto_goTypes = []any{
 	(*AuthRequest)(nil),  // 0: api.auth.v1.AuthRequest

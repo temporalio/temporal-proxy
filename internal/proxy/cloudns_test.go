@@ -11,11 +11,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/temporalio/temporal-proxy/internal/cloud"
-	"github.com/temporalio/temporal-proxy/internal/proxy"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/internal/cloud"
+	"go.temporal.io/proxy/internal/proxy"
+	"go.temporal.io/proxy/internal/transport/meta"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 // invalidNSMsg is the entry the cloud namespace check emits.

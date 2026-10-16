@@ -6,8 +6,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/proxy"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/proxy"
 )
 
 func TestResolverForStatic(t *testing.T) {

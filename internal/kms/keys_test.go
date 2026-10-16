@@ -11,11 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
-	"github.com/temporalio/temporal-proxy/internal/api"
-	"github.com/temporalio/temporal-proxy/internal/kms"
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/internal/api"
+	"go.temporal.io/proxy/internal/kms"
+	"go.temporal.io/proxy/pkg/crypto"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 type (

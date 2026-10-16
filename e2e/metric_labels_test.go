@@ -12,8 +12,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/dataplane/dataplanetest"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/dataplane/dataplanetest"
 )
 
 // TestEndToEndMetadataLabels drives a payload-carrying call through the full

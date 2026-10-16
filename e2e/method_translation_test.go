@@ -17,8 +17,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/dataplane/dataplanetest"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/dataplane/dataplanetest"
 )
 
 // cloudUpstream is a fake Temporal Cloud control plane. It serves CloudService

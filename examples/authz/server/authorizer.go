@@ -8,10 +8,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/pkg/api/auth/v1"
-	"github.com/temporalio/temporal-proxy/pkg/ext"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/pkg/api/auth/v1"
+	"go.temporal.io/proxy/pkg/ext"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 const (

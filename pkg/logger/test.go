@@ -3,7 +3,7 @@ package logger
 import (
 	"sync"
 
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 type (

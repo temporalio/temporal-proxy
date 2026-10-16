@@ -13,15 +13,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
-	"github.com/temporalio/temporal-proxy/internal/auth"
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/dataplane"
-	"github.com/temporalio/temporal-proxy/internal/metrics"
-	"github.com/temporalio/temporal-proxy/internal/protoutil"
-	"github.com/temporalio/temporal-proxy/internal/services"
-	"github.com/temporalio/temporal-proxy/internal/transport/connect"
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"go.temporal.io/proxy/internal/auth"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/dataplane"
+	"go.temporal.io/proxy/internal/metrics"
+	"go.temporal.io/proxy/internal/protoutil"
+	"go.temporal.io/proxy/internal/services"
+	"go.temporal.io/proxy/internal/transport/connect"
+	"go.temporal.io/proxy/pkg/crypto"
+	"go.temporal.io/proxy/pkg/logger"
 )
 
 // testDeps are the collaborators a [dataplane.Dataplane] is built from, held as

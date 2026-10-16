@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger"
 )
 
 // These tests stay in package kms because they are the only ones that cannot be

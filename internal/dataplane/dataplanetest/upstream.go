@@ -17,8 +17,8 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/pkg/testutil"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/pkg/testutil"
 )
 
 // Upstream is a fake Temporal frontend standing in for the service a

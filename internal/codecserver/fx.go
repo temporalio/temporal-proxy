@@ -3,14 +3,14 @@ package codecserver
 import (
 	"go.uber.org/fx"
 
-	"github.com/temporalio/temporal-proxy/internal/api"
-	"github.com/temporalio/temporal-proxy/internal/auth"
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/httpserver"
-	"github.com/temporalio/temporal-proxy/internal/metrics"
-	"github.com/temporalio/temporal-proxy/internal/proxy"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/internal/api"
+	"go.temporal.io/proxy/internal/auth"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/httpserver"
+	"go.temporal.io/proxy/internal/metrics"
+	"go.temporal.io/proxy/internal/proxy"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 // Module contributes the codec server routes to the shared HTTP server in

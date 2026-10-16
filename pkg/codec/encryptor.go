@@ -6,7 +6,7 @@ import (
 
 	"go.temporal.io/api/common/v1"
 
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
+	"go.temporal.io/proxy/pkg/crypto"
 )
 
 // These keys form the on-the-wire contract for a sealed payload: the encoding

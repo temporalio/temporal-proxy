@@ -11,9 +11,9 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/kms"
-	"github.com/temporalio/temporal-proxy/internal/metrics"
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
+	"go.temporal.io/proxy/internal/kms"
+	"go.temporal.io/proxy/internal/metrics"
+	"go.temporal.io/proxy/pkg/crypto"
 )
 
 func TestReporterKEKOp(t *testing.T) {

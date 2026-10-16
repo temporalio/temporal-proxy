@@ -8,9 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/metrics"
-	"github.com/temporalio/temporal-proxy/internal/router"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/metrics"
+	"go.temporal.io/proxy/internal/router"
 )
 
 func TestReporter(t *testing.T) {

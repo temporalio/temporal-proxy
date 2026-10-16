@@ -5,8 +5,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/pkg/testutil"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/pkg/testutil"
 )
 
 func TestExtensionServer_Validate(t *testing.T) {

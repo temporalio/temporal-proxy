@@ -4,7 +4,7 @@
 [![codecov](https://codecov.io/gh/temporalio/temporal-proxy/branch/main/graph/badge.svg)](https://codecov.io/gh/temporalio/temporal-proxy)
 [![release](https://img.shields.io/github/v/release/temporalio/temporal-proxy)](https://github.com/temporalio/temporal-proxy/releases)
 [![Docs](https://img.shields.io/badge/proxy-docs-blue)](https://docs.temporal.io/production-deployment/temporal-proxy/)
-[![Go Reference](https://pkg.go.dev/badge/github.com/temporalio/temporal-proxy.svg)](https://pkg.go.dev/github.com/temporalio/temporal-proxy)
+[![Go Reference](https://pkg.go.dev/badge/go.temporal.io/proxy.svg)](https://pkg.go.dev/go.temporal.io/proxy)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A gRPC proxy that sits between Temporal SDK Clients, Workers, and the Temporal UI on one side and one or more upstream
@@ -112,14 +112,14 @@ reaches a different upstream with no change to the Worker.
 Install the `proxy` binary into your `$GOBIN` with `go install`:
 
 ```bash
-go install github.com/temporalio/temporal-proxy/cmd/proxy@latest
+go install go.temporal.io/proxy/cmd/proxy@latest
 ```
 
 `@latest` resolves to the newest stable release. Pin an explicit version from the
 [releases page](https://github.com/temporalio/temporal-proxy/releases) if you prefer:
 
 ```bash
-go install github.com/temporalio/temporal-proxy/cmd/proxy@vX.Y.Z
+go install go.temporal.io/proxy/cmd/proxy@vX.Y.Z
 ```
 
 ### Container image

@@ -16,8 +16,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
-	"github.com/temporalio/temporal-proxy/pkg/codec"
+	"go.temporal.io/proxy/internal/transport/meta"
+	"go.temporal.io/proxy/pkg/codec"
 )
 
 type (

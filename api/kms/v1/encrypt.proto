@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package api.kms.v1;
 
-option go_package = "github.com/temporalio/temporal-proxy/pkg/api/kms/v1;kms";
+option go_package = "go.temporal.io/proxy/pkg/api/kms/v1;kms";
 
 // EncryptRequest asks the provider to wrap key material under the key selected
 // for the given namespace.

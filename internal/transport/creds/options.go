@@ -1,6 +1,6 @@
 package creds
 
-import "github.com/temporalio/temporal-proxy/pkg/validation"
+import "go.temporal.io/proxy/pkg/validation"
 
 var errKeyAndCertRequired = validation.Error{Field: "cert", Message: "certificate and key must be set together"}
 

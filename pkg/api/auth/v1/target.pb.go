@@ -241,8 +241,8 @@ const file_api_auth_v1_target_proto_rawDesc = "" +
 	"\x05Group\x12\x15\n" +
 	"\x11GROUP_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12GROUP_CODEC_SERVER\x10\x01\x12\x0f\n" +
-	"\vGROUP_PPROF\x10\x02B\xa7\x01\n" +
-	"\x0fcom.api.auth.v1B\vTargetProtoP\x01Z9github.com/temporalio/temporal-proxy/pkg/api/auth/v1;auth\xa2\x02\x03AAX\xaa\x02\vApi.Auth.V1\xca\x02\vApi\\Auth\\V1\xe2\x02\x17Api\\Auth\\V1\\GPBMetadata\xea\x02\rApi::Auth::V1b\x06proto3"
+	"\vGROUP_PPROF\x10\x02B\x97\x01\n" +
+	"\x0fcom.api.auth.v1B\vTargetProtoP\x01Z)go.temporal.io/proxy/pkg/api/auth/v1;auth\xa2\x02\x03AAX\xaa\x02\vApi.Auth.V1\xca\x02\vApi\\Auth\\V1\xe2\x02\x17Api\\Auth\\V1\\GPBMetadata\xea\x02\rApi::Auth::V1b\x06proto3"
 
 var (
 	file_api_auth_v1_target_proto_rawDescOnce sync.Once

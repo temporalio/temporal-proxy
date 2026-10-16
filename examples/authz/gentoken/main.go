@@ -25,7 +25,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/temporalio/temporal-proxy/examples/authz"
+	"go.temporal.io/proxy/examples/authz"
 )
 
 // namespaceRoles collects repeated -ns flags, one per namespace.

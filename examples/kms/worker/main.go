@@ -9,7 +9,7 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
-	"github.com/temporalio/temporal-proxy/examples/kms"
+	"go.temporal.io/proxy/examples/kms"
 )
 
 func main() {

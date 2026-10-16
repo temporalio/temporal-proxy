@@ -3,8 +3,8 @@ package auth
 import (
 	"go.uber.org/fx"
 
-	"github.com/temporalio/temporal-proxy/internal/api"
-	"github.com/temporalio/temporal-proxy/internal/config"
+	"go.temporal.io/proxy/internal/api"
+	"go.temporal.io/proxy/internal/config"
 )
 
 // Module provides the inbound Authenticator the gateway's auth block selects.

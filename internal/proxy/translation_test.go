@@ -18,7 +18,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
-	"github.com/temporalio/temporal-proxy/internal/protoutil"
+	"go.temporal.io/proxy/internal/protoutil"
 )
 
 type (

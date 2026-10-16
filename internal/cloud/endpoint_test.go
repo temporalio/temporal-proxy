@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/cloud"
+	"go.temporal.io/proxy/internal/cloud"
 )
 
 func TestIsEndpoint(t *testing.T) {

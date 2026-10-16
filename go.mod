@@ -1,4 +1,4 @@
-module github.com/temporalio/temporal-proxy
+module go.temporal.io/proxy
 
 go 1.26.0
 

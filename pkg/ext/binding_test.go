@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/pkg/ext"
+	"go.temporal.io/proxy/pkg/ext"
 )
 
 // TestBindingContextEncoding pins the bytes. They are permanent: every payload

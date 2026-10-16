@@ -127,8 +127,8 @@ const file_api_kms_v1_decrypt_proto_rawDesc = "" +
 	"ciphertext\x18\x01 \x01(\fR\n" +
 	"ciphertext\"/\n" +
 	"\x0fDecryptResponse\x12\x1c\n" +
-	"\tplaintext\x18\x01 \x01(\fR\tplaintextB\xa1\x01\n" +
-	"\x0ecom.api.kms.v1B\fDecryptProtoP\x01Z7github.com/temporalio/temporal-proxy/pkg/api/kms/v1;kms\xa2\x02\x03AKX\xaa\x02\n" +
+	"\tplaintext\x18\x01 \x01(\fR\tplaintextB\x91\x01\n" +
+	"\x0ecom.api.kms.v1B\fDecryptProtoP\x01Z'go.temporal.io/proxy/pkg/api/kms/v1;kms\xa2\x02\x03AKX\xaa\x02\n" +
 	"Api.Kms.V1\xca\x02\n" +
 	"Api\\Kms\\V1\xe2\x02\x16Api\\Kms\\V1\\GPBMetadata\xea\x02\fApi::Kms::V1b\x06proto3"
 

@@ -15,10 +15,10 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
 
-	"github.com/temporalio/temporal-proxy/pkg/api/auth/v1"
-	"github.com/temporalio/temporal-proxy/pkg/api/kms/v1"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/pkg/api/auth/v1"
+	"go.temporal.io/proxy/pkg/api/kms/v1"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 // signals are the signals [Serve] shuts down on. SIGINT arrives as

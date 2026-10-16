@@ -9,8 +9,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/temporalio/temporal-proxy/internal/proxy"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
+	"go.temporal.io/proxy/internal/proxy"
+	"go.temporal.io/proxy/internal/transport/meta"
 )
 
 func TestVersionDialOptionsUnary(t *testing.T) {

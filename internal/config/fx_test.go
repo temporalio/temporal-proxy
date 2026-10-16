@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/services"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/services"
 )
 
 func TestModule_ProvidesConfig(t *testing.T) {

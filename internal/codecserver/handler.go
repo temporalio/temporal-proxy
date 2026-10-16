@@ -12,10 +12,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/temporalio/temporal-proxy/internal/auth"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/internal/auth"
+	"go.temporal.io/proxy/internal/transport/meta"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 // This file implements the codec server's HTTP routes and the order the checks
@@ -51,7 +51,7 @@ const (
 
 type (
 	// Codecs transforms payloads on their way to and from an upstream. It is the
-	// subset of [github.com/temporalio/temporal-proxy/internal/proxy.Codecs] the
+	// subset of [go.temporal.io/proxy/internal/proxy.Codecs] the
 	// handler needs, and an implementation must be the same value the upstream
 	// forwarders apply, or a payload will transform differently depending on
 	// which path it travelled.

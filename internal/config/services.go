@@ -5,8 +5,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/temporalio/temporal-proxy/internal/services"
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"go.temporal.io/proxy/internal/services"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 // Services is the set of gRPC services the proxy is allowed to forward, each

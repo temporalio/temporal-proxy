@@ -24,11 +24,11 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/temporalio/temporal-proxy/internal/metrics"
-	"github.com/temporalio/temporal-proxy/internal/router"
-	"github.com/temporalio/temporal-proxy/internal/server"
-	"github.com/temporalio/temporal-proxy/internal/services"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
+	"go.temporal.io/proxy/internal/metrics"
+	"go.temporal.io/proxy/internal/router"
+	"go.temporal.io/proxy/internal/server"
+	"go.temporal.io/proxy/internal/services"
+	"go.temporal.io/proxy/internal/transport/meta"
 )
 
 type (

@@ -13,7 +13,7 @@ import (
 	"go.temporal.io/cloud-sdk/cloudclient"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/temporalio/temporal-proxy/internal/services"
+	"go.temporal.io/proxy/internal/services"
 )
 
 const (

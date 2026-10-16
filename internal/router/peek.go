@@ -10,9 +10,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/temporalio/temporal-proxy/internal/rpc"
-	"github.com/temporalio/temporal-proxy/internal/services"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
+	"go.temporal.io/proxy/internal/rpc"
+	"go.temporal.io/proxy/internal/services"
+	"go.temporal.io/proxy/internal/transport/meta"
 )
 
 type (

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/temporalio/temporal-proxy/internal/api"
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
+	"go.temporal.io/proxy/internal/api"
+	"go.temporal.io/proxy/pkg/crypto"
 )
 
 // ExtensionScheme addresses a key served by a configured extension server, as

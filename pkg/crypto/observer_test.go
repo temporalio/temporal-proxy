@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
+	"go.temporal.io/proxy/pkg/crypto"
 )
 
 // reentrancyDeadline bounds how long a reentrant Seal is allowed to take.

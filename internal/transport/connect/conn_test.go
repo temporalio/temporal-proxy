@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/temporalio/temporal-proxy/internal/transport/connect"
+	"go.temporal.io/proxy/internal/transport/connect"
 )
 
 type (

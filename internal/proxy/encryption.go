@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
+	"go.temporal.io/proxy/pkg/crypto"
 )
 
 type (

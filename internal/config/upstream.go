@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/temporalio/temporal-proxy/internal/cloud"
-	"github.com/temporalio/temporal-proxy/internal/template"
-	"github.com/temporalio/temporal-proxy/internal/transport/resolve"
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"go.temporal.io/proxy/internal/cloud"
+	"go.temporal.io/proxy/internal/template"
+	"go.temporal.io/proxy/internal/transport/resolve"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 type (

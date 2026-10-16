@@ -13,9 +13,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/temporalio/temporal-proxy/internal/api"
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/transport/connect"
+	"go.temporal.io/proxy/internal/api"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/transport/connect"
 )
 
 // buildModule wires api.Module against the supplied config and pool, returning

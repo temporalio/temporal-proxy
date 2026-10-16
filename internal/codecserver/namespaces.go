@@ -5,7 +5,7 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
+	"go.temporal.io/proxy/internal/config"
 )
 
 // OverrideMap maps a remote namespace name to the local name a per-namespace

@@ -4,7 +4,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
+	"go.temporal.io/proxy/internal/config"
 )
 
 // ConnectionDialOptions returns the dial options that apply an upstream's

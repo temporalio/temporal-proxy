@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/temporalio/temporal-proxy/internal/transport/connect"
+	"go.temporal.io/proxy/internal/transport/connect"
 )
 
 func TestPoolConn(t *testing.T) {

@@ -1,7 +1,7 @@
 package config
 
 import (
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 // PProf configures the pprof routes, which serve the runtime's profiles on

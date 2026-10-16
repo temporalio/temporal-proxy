@@ -15,8 +15,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/temporalio/temporal-proxy/internal/rpc"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
+	"go.temporal.io/proxy/internal/rpc"
+	"go.temporal.io/proxy/internal/transport/meta"
 )
 
 const (

@@ -4,7 +4,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 const (

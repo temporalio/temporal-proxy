@@ -11,8 +11,8 @@ import (
 	// a transitive dependency.
 	_ "google.golang.org/grpc/health/grpc_health_v1"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/services"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/services"
 )
 
 func TestServices_Validate(t *testing.T) {

@@ -5,9 +5,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/api"
-	"github.com/temporalio/temporal-proxy/internal/auth"
-	"github.com/temporalio/temporal-proxy/internal/config"
+	"go.temporal.io/proxy/internal/api"
+	"go.temporal.io/proxy/internal/auth"
+	"go.temporal.io/proxy/internal/config"
 )
 
 func TestFor(t *testing.T) {

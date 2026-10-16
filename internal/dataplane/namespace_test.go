@@ -7,8 +7,8 @@ import (
 	"go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/temporalio/temporal-proxy/internal/dataplane/dataplanetest"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
+	"go.temporal.io/proxy/internal/dataplane/dataplanetest"
+	"go.temporal.io/proxy/internal/transport/meta"
 )
 
 func TestGatewayOverridesAClientSuppliedNamespaceHeader(t *testing.T) {

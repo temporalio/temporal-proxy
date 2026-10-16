@@ -37,7 +37,7 @@
 // # Codec Identity
 //
 // The handler applies a [Codecs], in practice
-// [github.com/temporalio/temporal-proxy/internal/proxy.Codecs], which is the
+// [go.temporal.io/proxy/internal/proxy.Codecs], which is the
 // same value each upstream's forwarder installs as a gRPC client interceptor. A
 // payload therefore transforms identically whichever path it travelled,
 // because the chain has one construction site rather than two free to drift

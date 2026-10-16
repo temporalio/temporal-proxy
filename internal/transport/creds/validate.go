@@ -3,8 +3,8 @@ package creds
 import (
 	"crypto/tls"
 
-	"github.com/temporalio/temporal-proxy/pkg/validation"
-	"github.com/temporalio/temporal-proxy/pkg/validation/certs"
+	"go.temporal.io/proxy/pkg/validation"
+	"go.temporal.io/proxy/pkg/validation/certs"
 )
 
 // minTLSVersion is the minimum TLS version accepted on both client and server

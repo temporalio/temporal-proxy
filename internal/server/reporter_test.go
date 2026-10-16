@@ -17,9 +17,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/metrics"
-	"github.com/temporalio/temporal-proxy/internal/server"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/metrics"
+	"go.temporal.io/proxy/internal/server"
 )
 
 func TestReporterObserve(t *testing.T) {

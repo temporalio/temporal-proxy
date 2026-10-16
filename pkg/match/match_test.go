@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/pkg/match"
+	"go.temporal.io/proxy/pkg/match"
 )
 
 func TestMatcher(t *testing.T) {

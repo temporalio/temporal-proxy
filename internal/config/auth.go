@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/url"
 
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 type (

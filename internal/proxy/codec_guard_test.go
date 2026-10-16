@@ -10,8 +10,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/temporalio/temporal-proxy/internal/proxy"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
+	"go.temporal.io/proxy/internal/proxy"
+	"go.temporal.io/proxy/internal/transport/meta"
 )
 
 // TestCodecsMatchInterceptor is the guarantee behind reusing the proxy's codec

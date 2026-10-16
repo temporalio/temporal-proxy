@@ -10,7 +10,7 @@
 // Only the provider itself lives here, in keyring.go, and it is one method:
 // answer which key a request names, deriving it and reporting its version.
 // Everything else comes from
-// [github.com/temporalio/temporal-proxy/pkg/ext]. [ext.NewKeyWrapper] turns
+// [go.temporal.io/proxy/pkg/ext]. [ext.NewKeyWrapper] turns
 // that into an [ext.KMS], sealing DEKs with AES-256-GCM and framing them as
 // api.ext.v1.KeyMaterial, and [ext.Serve] registers it, checks the bearer token,
 // serves TLS, and shuts down on a signal. That split is the point of the
@@ -33,9 +33,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/temporalio/temporal-proxy/pkg/ext"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/pkg/ext"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 func main() {

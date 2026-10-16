@@ -3,7 +3,7 @@ package translation
 import (
 	"google.golang.org/protobuf/proto"
 
-	"github.com/temporalio/temporal-proxy/internal/services"
+	"go.temporal.io/proxy/internal/services"
 )
 
 // getClusterInfoMethod is the WorkflowService method that describes the Temporal
