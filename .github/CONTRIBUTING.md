@@ -114,7 +114,7 @@ buf curl --protocol grpc --http2-prior-knowledge \
 
 ## Releases
 
-We support the current minor release and the two before it (for example, `v1.0`, `v0.9`, and `v0.8`). Each minor
+We support the current minor release and the two before it (for example, `v1.0`, `v0.10`, and `v0.9`). Each minor
 version has a `releases/vX.Y.x` branch, and patches for that line are cut from it. New minor and major releases are cut
 from `main`.
 

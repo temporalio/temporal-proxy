@@ -12,7 +12,7 @@
 > **[Public Preview]:** Starting with version 1.0, Temporal Proxy is suitable for production use cases.
 > Breaking changes between minor releases are possible but will be kept to a minimum.
 > Minor bug fixes are generally applied only to the latest release. Critical fixes and patches will be applied to the
-> latest release and the two most recent previous releases, provided each is version 1.0 or later.
+> latest minor release and the two before it (for example, `v1.0`, `v0.10`, and `v0.9`).
 
 A gRPC proxy that sits between Temporal SDK Clients, Workers, and the Temporal UI on one side and one or more upstream
 Temporal Services on the other. It handles Namespace translation, TLS termination, and payload encryption so
