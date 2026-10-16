@@ -41,8 +41,15 @@ type (
 	UpstreamList []Upstream
 
 	// NamespaceConfig groups the namespace translation rules for an upstream.
+	//
+	// BindingLabelsFrom names another upstream whose rules derive the label
+	// sealed payloads are bound to, in place of this upstream's own. Requests
+	// are still translated with Rules. Set it on an upstream whose namespaces
+	// are moving to the named one, so payloads sealed before the move carry
+	// the label they are checked against after it.
 	NamespaceConfig struct {
-		Rules NamespaceRules `yaml:"rules"`
+		Rules             NamespaceRules `yaml:"rules"`
+		BindingLabelsFrom string         `yaml:"bindingLabelsFrom"`
 	}
 
 	// NamespaceRules translates namespace names between the local view that
@@ -227,14 +234,17 @@ func (u *Upstream) hasLiteralHostPort() bool {
 	return err == nil && host.IsLiteral()
 }
 
-// Validate checks every upstream and requires names and hostPorts to be unique
-// across the list.
+// Validate checks every upstream, requires names and hostPorts to be unique
+// across the list, and requires each bindingLabelsFrom to name another
+// upstream.
 func (ul UpstreamList) Validate() error {
 	names := make([]string, len(ul))
 	hostPorts := make([]string, len(ul))
+	known := make(map[string]struct{}, len(ul))
 	for i, s := range ul {
 		names[i] = s.Name
 		hostPorts[i] = s.Listen.HostPort
+		known[s.Name] = struct{}{}
 	}
 
 	return validation.Validate(
@@ -244,7 +254,65 @@ func (ul UpstreamList) Validate() error {
 		validation.Children("", ul, func(u *Upstream) error {
 			return u.Validate()
 		}),
+		ul.bindingLabelsRule(known),
 	)
+}
+
+// BindingRules returns the rules that derive the binding label for payloads
+// sealed or opened through u: those of the upstream its bindingLabelsFrom
+// names, or u's own when it names none. Validation guarantees the named
+// upstream exists.
+func (ul UpstreamList) BindingRules(u *Upstream) *NamespaceRules {
+	if from := u.Namespaces.BindingLabelsFrom; from != "" {
+		for i := range ul {
+			if ul[i].Name == from {
+				return &ul[i].Namespaces.Rules
+			}
+		}
+	}
+
+	return &u.Namespaces.Rules
+}
+
+// bindingLabelsRule requires every bindingLabelsFrom to name another upstream in
+// known that does not set one itself, so a label is always one hop away. It
+// lives on the list because a single upstream cannot see the others.
+func (ul UpstreamList) bindingLabelsRule(known map[string]struct{}) validation.Rule {
+	check := knownUpstream(known)
+
+	return func() validation.Errors {
+		sets := make(map[string]bool, len(ul))
+		for i := range ul {
+			sets[ul[i].Name] = ul[i].Namespaces.BindingLabelsFrom != ""
+		}
+
+		var errs validation.Errors
+		for i := range ul {
+			from := ul[i].Namespaces.BindingLabelsFrom
+			if from == "" {
+				continue
+			}
+
+			var msg string
+			if err := check(from); err != nil {
+				msg = err.Error()
+			} else if from == ul[i].Name {
+				msg = "must name another upstream, not this one"
+			} else if sets[from] {
+				msg = fmt.Sprintf("references upstream %q, which sets bindingLabelsFrom itself", from)
+			}
+
+			if msg != "" {
+				errs = append(errs, validation.Error{
+					Subject: fmt.Sprintf("[%d].namespaces", i),
+					Field:   "bindingLabelsFrom",
+					Message: msg,
+				})
+			}
+		}
+
+		return errs
+	}
 }
 
 // Validate checks the namespace translation rules.

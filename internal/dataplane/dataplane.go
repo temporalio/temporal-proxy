@@ -369,9 +369,11 @@ func newUpstreamForwarder(
 	// outbound payloads last and decoding inbound payloads first.
 	// Payloads are bound to the namespace the upstream knows, so a local rename
 	// leaves them readable and two proxies naming one namespace differently agree.
+	// An upstream with bindingLabelsFrom takes the label from the named upstream's
+	// rules instead, while its requests are still translated with its own.
 	var codecOpts []proxy.InterceptorOption
-	if rules.Configured() {
-		codecOpts = append(codecOpts, proxy.WithRemoteNamespace(rules.Remote))
+	if labels := cfg.Upstreams.BindingRules(up); labels.Configured() {
+		codecOpts = append(codecOpts, proxy.WithRemoteNamespace(labels.Remote))
 	}
 
 	cdc, err := codecs.Interceptor(codecOpts...)

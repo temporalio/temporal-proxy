@@ -298,6 +298,44 @@ labeled payload unreadable to it.
 On a chained proxy under `strict`, an unlabeled or mislabeled payload sealed under a key it doesn't hold still passes
 through when `binary/encrypted` is listed in `skipEncodings`, and still counts toward the counters above.
 
+### Moving a Namespace between upstreams
+
+The label follows the routed upstream's translation, so it can disagree with another proxy that labels the same
+Namespace by a different translation. A common case is migrating to Temporal Cloud: each Namespace is routed to an
+on-premises upstream with no translation until handoff, then falls through to a Cloud upstream with `suffix: .acct`.
+Before handoff the proxy sends `ns1` to the on-premises Temporal Service, while s2s-proxy replicates that history to
+Cloud and translates `ns1` to `ns1.acct` on the way. Both have to label payloads `ns1.acct` for `strict` to hold on
+either side of the migration, but by default this proxy labels them `ns1`.
+
+Set `namespaces.bindingLabelsFrom` on the upstream Namespaces are leaving, naming the upstream they are moving to:
+
+```yaml
+upstreams:
+  - name: local
+    hostPort: temporal.internal:7233
+    namespaces:
+      bindingLabelsFrom: cloud # label payloads with cloud's name for each Namespace
+  - name: cloud
+    hostPort: my-region.tmprl.cloud:7233
+    namespaces:
+      rules:
+        suffix: .acct
+```
+
+Payloads sealed or opened through `local` are then labeled with the name `cloud`'s translation gives the Namespace
+(`ns1.acct`), so they open under `strict` on either side of the handoff. Requests to `local` still use `local`'s own
+translation, and keys are still chosen by the local Namespace name. The setting is per upstream, must name another
+upstream, and that upstream may not set it too. Once every Namespace routes to `cloud`, removing the setting, or
+`local` itself, leaves every label unchanged.
+
+Turning the setting on, or changing it, changes the label for every Namespace routed through that upstream, the same as
+changing a translation rule would. On a deployment that already labels, switch to `permissive` first and watch
+`vault_namespace_mismatches_total` as described above.
+
+The codec server has no upstream to consult: it compares payloads with the Namespace the request names. A Web UI or CLI
+pointed at the on-premises Temporal Service names `ns1`, so under `strict` it cannot open payloads labeled `ns1.acct`
+until it is pointed at Cloud. Use `permissive` during the migration if that view needs to decode.
+
 ## Profiling
 
 The proxy serves the runtime's standard pprof endpoints under `/debug/pprof/` on the HTTP listener, off unless

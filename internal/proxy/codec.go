@@ -155,8 +155,10 @@ func CodecInterceptor(opts CodecOptions, iopts ...InterceptorOption) (grpc.Unary
 }
 
 // WithRemoteNamespace sets how the interceptor maps a request's local namespace
-// to the one its upstream knows. Sealed payloads are bound to that name and
-// opened payloads must be bound to it. Without it the two names are the same.
+// to the name payloads are bound to, usually the one its upstream knows. Sealed
+// payloads are bound to that name and opened payloads must be bound to it. It
+// only sets the label; the request's namespace is translated elsewhere. Without
+// it the two names are the same.
 func WithRemoteNamespace(remote func(string) string) InterceptorOption {
 	return func(o *interceptorOptions) { o.remote = remote }
 }

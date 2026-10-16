@@ -438,3 +438,87 @@ func sealThroughIn(
 
 	return reqs[0].(*workflowservice.QueryWorkflowRequest).GetQuery().GetQueryArgs()
 }
+
+// TestEndToEndBindingLabelsFrom seals a payload through a writer whose default
+// route is an untranslated "local" upstream, then reads it back through a strict
+// reader on the "cloud" upstream it migrates to, as replication would carry it.
+// With bindingLabelsFrom the payload carries cloud's name and opens there, while
+// the request still reaches local under its own name; without it the payload
+// carries local's name and strict refuses it. Wiring the label from the routed
+// upstream's own rules fails the "set" row.
+func TestEndToEndBindingLabelsFrom(t *testing.T) {
+	t.Parallel()
+
+	acct := config.NamespaceRules{Suffix: ".acct"}
+
+	tests := []struct {
+		name      string
+		from      string
+		wantLabel string
+		wantErr   bool
+	}{
+		{name: "set", from: "cloud", wantLabel: "ns1.acct"},
+		{name: "unset", wantLabel: "ns1", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			key := testingKeyURI(t)
+			secret := &common.Payload{
+				Metadata: map[string][]byte{wireEncoding: []byte("json/plain")},
+				Data:     []byte(`"the-answer-is-42"`),
+			}
+
+			local := dataplanetest.NewUpstream(t)
+			wcfg := dataplanetest.Config(local)
+			wcfg.Upstreams[0].Namespaces.BindingLabelsFrom = tc.from
+			wcfg.Upstreams = append(wcfg.Upstreams, config.Upstream{
+				Name:       "cloud",
+				Listen:     dataplanetest.NewUpstream(t).Listen(),
+				Namespaces: config.NamespaceConfig{Rules: acct},
+			})
+			wcfg.Encryption = config.Encryption{
+				Enabled:          true,
+				NamespaceBinding: config.NamespaceBindingStrict,
+				Default:          &config.KeyPolicy{URI: key, Duration: time.Hour},
+			}
+			writer := dataplanetest.StartApp(t, wcfg)
+
+			_, err := writer.Client().QueryWorkflow(writer.Context(), queryIn("ns1", secret), grpc.WaitForReady(true))
+			require.NoError(t, err)
+
+			reqs := local.Requests()
+			require.Len(t, reqs, 1)
+
+			sent := reqs[0].(*workflowservice.QueryWorkflowRequest)
+			require.Equal(t, "ns1", sent.GetNamespace())
+
+			sealed := sent.GetQuery().GetQueryArgs()
+			require.Equal(t, tc.wantLabel, string(sealed.GetPayloads()[0].GetMetadata()[wireNamespace]))
+
+			rup := dataplanetest.NewUpstream(t)
+			rup.SetQueryResult(sealed)
+			rcfg := dataplanetest.Config(rup)
+			rcfg.Upstreams[0].Namespaces.Rules = acct
+			rcfg.Encryption = config.Encryption{
+				Enabled:          true,
+				NamespaceBinding: config.NamespaceBindingStrict,
+				Default:          &config.KeyPolicy{URI: key, Duration: time.Hour},
+			}
+			reader := dataplanetest.StartApp(t, rcfg)
+
+			plain := &common.Payload{Metadata: map[string][]byte{wireEncoding: []byte("json/plain")}, Data: []byte(`"q"`)}
+			resp, err := reader.Client().QueryWorkflow(reader.Context(), queryIn("ns1", plain), grpc.WaitForReady(true))
+			if tc.wantErr {
+				require.Error(t, err)
+				requireLabel(t, reader, "test_encryption_vault_ops_total", "result", "mismatch")
+				return
+			}
+
+			require.NoError(t, err)
+			require.True(t, proto.Equal(secret, resp.GetQueryResult().GetPayloads()[0]))
+		})
+	}
+}
