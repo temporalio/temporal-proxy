@@ -6,6 +6,7 @@ lockfile = true
 [tools]
 "github:mattn/goreman" = "latest"
 "github:temporalio/cli" = "latest"
+"go:golang.org/x/perf/cmd/benchstat" = "latest"
 buf = "1.72"
 go = "1.27"
 golangci-lint = "2.13"
@@ -119,15 +120,6 @@ run = ["buf format -w"]
 [tasks.test]
 description = "Run unit tests"
 run = "go test -race -covermode=atomic -coverprofile=coverage.out ./..."
-
-[tasks."test:bench"]
-description = "Run bench tests"
-usage = '''
-flag "-c --count <count>" default="3"
-flag "-t --time <time>" default="1s"
-flag "-p --packages <packages>" default="./..."
-'''
-run = "go test -run='^$' -bench=. -benchmem -count=${usage_count?} -benchtime=${usage_time?} ${usage_packages?}"
 
 ################################################################################
 # Code Gen Tasks

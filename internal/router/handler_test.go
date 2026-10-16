@@ -681,7 +681,7 @@ func capturingUpstream(t *testing.T) (*grpc.ClientConn, <-chan string) {
 	return dialBufconn(t, lis), got
 }
 
-func dialBufconn(t *testing.T, lis *bufconn.Listener) *grpc.ClientConn {
+func dialBufconn(t testing.TB, lis *bufconn.Listener) *grpc.ClientConn {
 	t.Helper()
 	conn, err := grpc.NewClient(
 		"passthrough:///bufnet",
@@ -695,7 +695,7 @@ func dialBufconn(t *testing.T, lis *bufconn.Listener) *grpc.ClientConn {
 	return conn
 }
 
-func serve(t *testing.T, srv *grpc.Server, lis *bufconn.Listener) {
+func serve(t testing.TB, srv *grpc.Server, lis *bufconn.Listener) {
 	t.Helper()
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
@@ -705,7 +705,7 @@ func serve(t *testing.T, srv *grpc.Server, lis *bufconn.Listener) {
 // production namespace and subsystem so emitted series match the
 // tmprl_proxy_router_* names, for tests that need to observe (or discard) what
 // the handler records.
-func newTestReporter(t *testing.T, upstreams ...string) (*router.Reporter, *prometheus.Registry) {
+func newTestReporter(t testing.TB, upstreams ...string) (*router.Reporter, *prometheus.Registry) {
 	t.Helper()
 	return newLabeledTestReporter(t, metrics.MetadataLabels{}, upstreams...)
 }
@@ -713,7 +713,7 @@ func newTestReporter(t *testing.T, upstreams ...string) (*router.Reporter, *prom
 // newLabeledTestReporter is newTestReporter for the cases that care what
 // metadata labels do to the label set and to pre-resolution.
 func newLabeledTestReporter(
-	t *testing.T,
+	t testing.TB,
 	labels metrics.MetadataLabels,
 	upstreams ...string,
 ) (*router.Reporter, *prometheus.Registry) {
@@ -726,7 +726,7 @@ func newLabeledTestReporter(
 // newRelayToUpstream stands up a fake upstream (configured by registerUpstream),
 // then a bare relay server that forwards all methods to it via router.Handler
 // using pass-through routing. Returns a client conn pointed at the relay.
-func newRelayToUpstream(t *testing.T, registerUpstream func(*grpc.Server)) *grpc.ClientConn {
+func newRelayToUpstream(t testing.TB, registerUpstream func(*grpc.Server)) *grpc.ClientConn {
 	t.Helper()
 
 	return newRelayWith(
@@ -740,7 +740,7 @@ func newRelayToUpstream(t *testing.T, registerUpstream func(*grpc.Server)) *grpc
 // Reflector, and Reporter, so tests can observe how the handler routes and what
 // it records. makeDirector receives the connection to the fake upstream.
 func newRelayWith(
-	t *testing.T,
+	t testing.TB,
 	registerUpstream func(*grpc.Server),
 	makeDirector func(cc *grpc.ClientConn) router.Director,
 	reflector router.Reflector,

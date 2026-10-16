@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+#MISE description="Run benchmarks, optionally comparing against another revision"
+#USAGE flag "-b --base <ref>" help="Compare the working tree against this revision with benchstat"
+#USAGE flag "-c --count <count>" default="10"
+#USAGE flag "-t --time <time>" default="1s"
+#USAGE flag "-p --packages <packages>" default="./..."
+set -euo pipefail
+
+bench() {
+  go test -run '^$' -bench . -benchmem -count="$1" -benchtime="$usage_time" $usage_packages
+}
+
+if [[ -z "${usage_base:-}" ]]; then
+  bench "$usage_count"
+  exit
+fi
+
+work="$(mktemp -d)"
+git worktree add --detach "$work/base" "$usage_base" >/dev/null
+trap 'git worktree remove --force "$work/base"; rm -rf "$work"' EXIT
+
+# Alternate one round at a time so noise lands evenly on both sides.
+for i in $(seq "$usage_count"); do
+  echo "round $i/$usage_count" >&2
+  (cd "$work/base" && bench 1) >>"$work/base.txt"
+  bench 1 >>"$work/cand.txt"
+done
+
+# A base revision from before the benchmark files landed produces no
+# Benchmark lines; say so instead of handing benchstat an empty side.
+grep -q '^Benchmark' "$work/base.txt" || {
+  echo "error: no benchmarks ran in $usage_base" >&2
+  exit 1
+}
+
+echo "base: $(git -C "$work/base" rev-parse --short HEAD)  cand: $(git rev-parse --short HEAD)" >&2
+# TODO: optionally tee to a gitignored file/dir in root for further analysis
+benchstat "$work/base.txt" "$work/cand.txt"
