@@ -1,8 +1,8 @@
 package config
 
 import (
-	"github.com/temporalio/temporal-proxy/internal/transport/creds"
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"go.temporal.io/proxy/internal/transport/creds"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 type (

@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/pkg/api/auth/v1"
+	"go.temporal.io/proxy/pkg/api/auth/v1"
 )
 
 // bearerScheme is the credential scheme [BearerToken] strips, matched

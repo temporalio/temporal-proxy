@@ -5,7 +5,7 @@ package api.auth.v1;
 import "api/auth/v1/credential.proto";
 import "api/auth/v1/target.proto";
 
-option go_package = "github.com/temporalio/temporal-proxy/pkg/api/auth/v1;auth";
+option go_package = "go.temporal.io/proxy/pkg/api/auth/v1;auth";
 
 // AuthRequest asks the provider whether the caller behind an inbound stream may
 // proceed. It carries both who the caller is and what the call is addressing, so

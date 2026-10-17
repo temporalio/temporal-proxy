@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/httpserver"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"go.temporal.io/proxy/internal/httpserver"
+	"go.temporal.io/proxy/pkg/logger"
 )
 
 // Real time and a real listener rather than testing/synctest: the bubble's

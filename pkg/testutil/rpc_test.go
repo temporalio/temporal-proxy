@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/temporalio/temporal-proxy/pkg/testutil"
+	"go.temporal.io/proxy/pkg/testutil"
 )
 
 func TestClientConnInvoke(t *testing.T) {

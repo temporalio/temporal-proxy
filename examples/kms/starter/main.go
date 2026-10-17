@@ -10,7 +10,7 @@ import (
 
 	"go.temporal.io/sdk/client"
 
-	"github.com/temporalio/temporal-proxy/examples/kms"
+	"go.temporal.io/proxy/examples/kms"
 )
 
 // workflowID is fixed so the README's "temporal workflow show" commands can name

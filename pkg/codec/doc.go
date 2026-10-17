@@ -11,6 +11,12 @@
 // order they have to be applied, so callers say what they want enabled rather
 // than what order it happens in.
 //
+// [EncodeFailure] and [RestoreFailure] move a failure's message and stack trace
+// into its encoded attributes and back, in the form the Temporal SDK's
+// EncodeCommonAttributes uses. They work on one failure at a time, so a caller
+// walks the failures itself, encoding before payloads are sealed and restoring
+// after they are opened, so the attributes travel sealed.
+//
 // A [Chain] satisfies the Temporal SDK's converter.PayloadCodec, so it can be
 // handed to converter.NewCodecDataConverter for an SDK client, with the SDK
 // imported at the call site rather than here. It also backs the proxy's own

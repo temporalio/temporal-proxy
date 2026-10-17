@@ -8,7 +8,7 @@ import (
 	"go.temporal.io/api/common/v1"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/temporalio/temporal-proxy/pkg/codec"
+	"go.temporal.io/proxy/pkg/codec"
 )
 
 func TestNewChainNoCodecs(t *testing.T) {

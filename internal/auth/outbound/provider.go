@@ -8,8 +8,8 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/rpc"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/rpc"
 )
 
 // CredentialProvider supplies per-RPC metadata for outbound calls to an

@@ -9,13 +9,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"go.temporal.io/proxy/pkg/crypto"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
-// extensionKeyScheme addresses a key served by a configured extension server,
-// as "extension://<server>/<key>". The host names an entry in ExtensionServers.
-const extensionKeyScheme = "extension"
+const (
+	// extensionKeyScheme addresses a key served by a configured extension server,
+	// as "extension://<server>/<key>". The host names an entry in ExtensionServers.
+	extensionKeyScheme = "extension"
+
+	// The encryption.namespaceBinding values, in rollout order.
+	NamespaceBindingOff        NamespaceBinding = "off"
+	NamespaceBindingPermissive NamespaceBinding = "permissive"
+	NamespaceBindingStrict     NamespaceBinding = "strict"
+)
 
 // validKeySchemes includes all built-in schemes and our extra extension one.
 var validKeySchemes = append(crypto.DefaultSchemes(), extensionKeyScheme)
@@ -30,15 +37,23 @@ type (
 	// request time. Failures also seals the message and stack trace of outbound
 	// failures, the way the Temporal SDK's EncodeCommonAttributes does; it requires
 	// Enabled. SkipEncodings lists payload encodings already encrypted before they
-	// reach the proxy, which are forwarded unsealed.
+	// reach the proxy, which are forwarded unsealed. NamespaceBinding selects how
+	// sealed payloads are bound to their namespace; it applies whether or not
+	// Enabled is set, since a decrypt-only proxy still opens payloads.
 	Encryption struct {
-		Enabled       bool                 `yaml:"enabled"`
-		Failures      bool                 `yaml:"failures"`
-		CacheSize     *int                 `yaml:"cacheSize"`
-		Default       *KeyPolicy           `yaml:"default"`
-		Overrides     map[string]KeyPolicy `yaml:"overrides"`
-		SkipEncodings []string             `yaml:"skipEncodings"`
+		Enabled          bool                 `yaml:"enabled"`
+		Failures         bool                 `yaml:"failures"`
+		CacheSize        *int                 `yaml:"cacheSize"`
+		Default          *KeyPolicy           `yaml:"default"`
+		Overrides        map[string]KeyPolicy `yaml:"overrides"`
+		SkipEncodings    []string             `yaml:"skipEncodings"`
+		NamespaceBinding NamespaceBinding     `yaml:"namespaceBinding"`
 	}
+
+	// NamespaceBinding is the encryption.namespaceBinding setting: "off",
+	// "permissive", or "strict", required whenever encryption keys are configured.
+	// See [crypto.BindingMode] for what each one seals and opens.
+	NamespaceBinding string
 
 	// KeyPolicy describes the KMS key backing a DEK and its rotation schedule.
 	// URI is the primary key used to wrap new DEKs; DecryptURIs are additional
@@ -64,15 +79,33 @@ func (e *Encryption) DEKCacheSize() int {
 	return *e.CacheSize
 }
 
-// Validate requires a non-negative cache size, a Default policy whenever
-// encryption is Enabled, and (when a Default is present at all) that the policy
-// itself is valid. Every Overrides entry needs a namespace and a valid policy.
+// Validate requires a non-negative cache size, a known namespaceBinding (set
+// whenever a Default is), a Default policy whenever encryption is Enabled, and
+// (when a Default is present
+// at all) that the policy itself is valid. Every Overrides entry needs a
+// namespace and a valid policy.
 func (e *Encryption) Validate() error {
 	rules := []validation.Rule{
 		// Checked through the accessor rather than the field, so an absent size is
 		// the default (which passes) while a negative one still fails, without
 		// dereferencing a pointer that may not be there.
 		validation.Field("cacheSize", e.DEKCacheSize(), validation.GTE(0)),
+		validation.Field("namespaceBinding", e.NamespaceBinding, func(b NamespaceBinding) error {
+			// Required wherever a vault is built, so an upgrade with legacy payloads
+			// fails here rather than at the first payload strict would refuse.
+			if b == "" {
+				if e.Default == nil {
+					return nil
+				}
+
+				return errors.New(`required when encryption keys are configured; set "off" if payloads ` +
+					`sealed by an earlier release may still be read, or "strict" for a new deployment ` +
+					`(see "Namespace binding" in the README)`)
+			}
+
+			_, err := b.Mode()
+			return err
+		}),
 		validation.WhenRules(
 			func() bool { return e.Enabled },
 			validation.Field("default", e.Default, validation.Required[*KeyPolicy]()),
@@ -118,6 +151,25 @@ func (e *Encryption) RequireKey() error {
 			return nil
 		}),
 	)
+}
+
+// Mode maps b to the vault's binding mode. An absent value is an error rather
+// than a default, since the right mode depends on whether earlier payloads exist.
+// It is the only place the spellings are known, so validation and vault
+// construction cannot disagree about them.
+func (b NamespaceBinding) Mode() (crypto.BindingMode, error) {
+	switch b {
+	case "":
+		return 0, errors.New("mode is not set, expected one of off, permissive, strict")
+	case NamespaceBindingOff:
+		return crypto.BindingOff, nil
+	case NamespaceBindingPermissive:
+		return crypto.BindingPermissive, nil
+	case NamespaceBindingStrict:
+		return crypto.BindingStrict, nil
+	}
+
+	return 0, fmt.Errorf("unknown mode %q, expected one of off, permissive, strict", string(b))
 }
 
 // Validate requires a valid primary and decrypt key URIs, a positive Duration,

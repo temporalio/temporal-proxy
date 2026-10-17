@@ -1,8 +1,8 @@
 package config
 
 import (
-	"github.com/temporalio/temporal-proxy/internal/cloud"
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"go.temporal.io/proxy/internal/cloud"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 // APITranslations configures rewriting a method an upstream does not serve into

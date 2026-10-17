@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 const (

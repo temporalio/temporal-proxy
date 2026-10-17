@@ -11,8 +11,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/internal/rpc"
-	"github.com/temporalio/temporal-proxy/pkg/testutil"
+	"go.temporal.io/proxy/internal/rpc"
+	"go.temporal.io/proxy/pkg/testutil"
 )
 
 type (

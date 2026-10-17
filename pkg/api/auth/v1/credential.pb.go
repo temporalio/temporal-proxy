@@ -88,8 +88,8 @@ const file_api_auth_v1_credential_proto_rawDesc = "" +
 	"\n" +
 	"Credential\x12\x16\n" +
 	"\x06header\x18\x01 \x01(\tR\x06header\x12\x16\n" +
-	"\x06values\x18\x02 \x03(\tR\x06valuesB\xab\x01\n" +
-	"\x0fcom.api.auth.v1B\x0fCredentialProtoP\x01Z9github.com/temporalio/temporal-proxy/pkg/api/auth/v1;auth\xa2\x02\x03AAX\xaa\x02\vApi.Auth.V1\xca\x02\vApi\\Auth\\V1\xe2\x02\x17Api\\Auth\\V1\\GPBMetadata\xea\x02\rApi::Auth::V1b\x06proto3"
+	"\x06values\x18\x02 \x03(\tR\x06valuesB\x9b\x01\n" +
+	"\x0fcom.api.auth.v1B\x0fCredentialProtoP\x01Z)go.temporal.io/proxy/pkg/api/auth/v1;auth\xa2\x02\x03AAX\xaa\x02\vApi.Auth.V1\xca\x02\vApi\\Auth\\V1\xe2\x02\x17Api\\Auth\\V1\\GPBMetadata\xea\x02\rApi::Auth::V1b\x06proto3"
 
 var (
 	file_api_auth_v1_credential_proto_rawDescOnce sync.Once

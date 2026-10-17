@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/template"
+	"go.temporal.io/proxy/internal/template"
 )
 
 func TestParseUpstream_Render(t *testing.T) {

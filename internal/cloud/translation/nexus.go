@@ -8,7 +8,7 @@ import (
 	"go.temporal.io/cloud-sdk/api/resource/v1"
 	"go.temporal.io/cloud-sdk/cloudclient"
 
-	"github.com/temporalio/temporal-proxy/internal/services"
+	"go.temporal.io/proxy/internal/services"
 )
 
 const (

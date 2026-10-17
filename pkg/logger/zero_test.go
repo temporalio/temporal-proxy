@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 func TestZeroLoggerLevels(t *testing.T) {
@@ -44,6 +44,40 @@ func TestZeroLoggerLevels(t *testing.T) {
 			entry := decode(t, buf.Bytes())
 			require.Equal(t, tt.level, entry["level"])
 			require.Equal(t, "m", entry["message"])
+		})
+	}
+}
+
+func TestZeroLoggerEnabled(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  logger.Level // configured level of the logger
+		ask  logger.Level // level being asked about
+		want bool
+	}{
+		{"debug config enables debug", logger.LevelDebug, logger.LevelDebug, true},
+		{"debug config enables error", logger.LevelDebug, logger.LevelError, true},
+		{"info config disables debug", logger.LevelInfo, logger.LevelDebug, false},
+		{"info config enables info", logger.LevelInfo, logger.LevelInfo, true},
+		{"warn config disables info", logger.LevelWarn, logger.LevelInfo, false},
+		{"warn config enables warn", logger.LevelWarn, logger.LevelWarn, true},
+		{"error config disables warn", logger.LevelError, logger.LevelWarn, false},
+		{"error config enables error", logger.LevelError, logger.LevelError, true},
+		// An unrecognized level is enabled at every configured level, so a
+		// bad value never hides logs.
+		{"unknown level is enabled at debug", logger.LevelDebug, logger.Level(42), true},
+		{"unknown level is enabled at info", logger.LevelInfo, logger.Level(42), true},
+		{"unknown level is enabled at error", logger.LevelError, logger.Level(42), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			l := logger.NewZeroLogger(&bytes.Buffer{}, tt.cfg)
+			require.Equal(t, tt.want, l.Enabled(tt.ask))
 		})
 	}
 }

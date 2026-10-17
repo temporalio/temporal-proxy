@@ -7,8 +7,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/fx"
 
-	"github.com/temporalio/temporal-proxy/internal/httpserver"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/internal/httpserver"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 // Server serves the Prometheus registry at /metrics on its own port, plaintext

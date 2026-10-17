@@ -11,7 +11,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/temporalio/temporal-proxy/internal/version"
+	"go.temporal.io/proxy/internal/version"
 )
 
 func main() {

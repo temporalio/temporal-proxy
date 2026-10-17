@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/auth/outbound"
+	"go.temporal.io/proxy/internal/auth/outbound"
 )
 
 func TestStaticCredentialProvider(t *testing.T) {

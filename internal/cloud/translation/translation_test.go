@@ -7,7 +7,7 @@ import (
 	namespacepb "go.temporal.io/api/namespace/v1"
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 
-	"github.com/temporalio/temporal-proxy/internal/cloud/translation"
+	"go.temporal.io/proxy/internal/cloud/translation"
 )
 
 // The mechanism is generic, so it is exercised with a made-up pairing rather than

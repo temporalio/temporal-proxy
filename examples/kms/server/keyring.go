@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/temporalio/temporal-proxy/pkg/ext"
+	"go.temporal.io/proxy/pkg/ext"
 )
 
 const (

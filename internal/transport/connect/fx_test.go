@@ -9,7 +9,7 @@ import (
 	"go.uber.org/fx"
 	"google.golang.org/grpc/connectivity"
 
-	"github.com/temporalio/temporal-proxy/internal/transport/connect"
+	"go.temporal.io/proxy/internal/transport/connect"
 )
 
 func TestModule(t *testing.T) {

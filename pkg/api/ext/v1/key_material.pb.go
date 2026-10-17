@@ -103,6 +103,12 @@ func (KeyMaterial_Cipher) EnumDescriptor() ([]byte, []int) {
 // Every byte of this message rides in the metadata of each payload it seals,
 // and stays there for as long as the Workflow retention period. Carry what
 // decrypt needs to find the key, and nothing else.
+//
+// NB: While only encrypted_dek is used for decryption, other fields are used for
+// key lookup. If changed or tampered with, decryption may fail since the key
+// might not be found. In sum, implementations using this should ensure that all
+// data regardless of the value (empty/nil/etc) should be included in payloads
+// and sent in full to the KMS service.
 type KeyMaterial struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// encrypted_dek is the wrapped DEK, as produced by whatever wrapping the
@@ -225,8 +231,8 @@ const file_api_ext_v1_key_material_proto_rawDesc = "" +
 	"\x12CIPHER_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12CIPHER_AES_256_GCM\x10\x01\x12\x1c\n" +
 	"\x18CIPHER_CHACHA20_POLY1305\x10\x02\x12\x1d\n" +
-	"\x19CIPHER_XCHACHA20_POLY1305\x10\x03B\xa5\x01\n" +
-	"\x0ecom.api.ext.v1B\x10KeyMaterialProtoP\x01Z7github.com/temporalio/temporal-proxy/pkg/api/ext/v1;ext\xa2\x02\x03AEX\xaa\x02\n" +
+	"\x19CIPHER_XCHACHA20_POLY1305\x10\x03B\x95\x01\n" +
+	"\x0ecom.api.ext.v1B\x10KeyMaterialProtoP\x01Z'go.temporal.io/proxy/pkg/api/ext/v1;ext\xa2\x02\x03AEX\xaa\x02\n" +
 	"Api.Ext.V1\xca\x02\n" +
 	"Api\\Ext\\V1\xe2\x02\x16Api\\Ext\\V1\\GPBMetadata\xea\x02\fApi::Ext::V1b\x06proto3"
 

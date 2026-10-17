@@ -8,10 +8,10 @@ import (
 	cloudnamespace "go.temporal.io/cloud-sdk/api/namespace/v1"
 	"google.golang.org/grpc"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/dataplane/dataplanetest"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
-	"github.com/temporalio/temporal-proxy/internal/version"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/dataplane/dataplanetest"
+	"go.temporal.io/proxy/internal/transport/meta"
+	"go.temporal.io/proxy/internal/version"
 )
 
 // TestEndToEndTheCloudAPIConnectionCarriesTheProxyVersion covers the second hop

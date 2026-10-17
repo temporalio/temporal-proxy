@@ -8,7 +8,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 
-	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger"
 )
 
 // plaintextMessage is logged the first time a call arrives unencrypted, and only

@@ -4,7 +4,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 const (
@@ -29,6 +29,11 @@ type (
 	Logger interface {
 		// Debug logs msg and tags at [LevelDebug].
 		Debug(msg string, tags ...tag.Tag)
+		// Enabled reports whether an entry at lvl would be recorded. Callers
+		// on hot paths may gate the construction of tags on it, since building
+		// arguments for an entry that is then discarded allocates. An
+		// unrecognized level answers true, so a bad value never hides logs.
+		Enabled(lvl Level) bool
 		// Error logs msg and tags at [LevelError].
 		Error(msg string, tags ...tag.Tag)
 		// Fatal logs msg and tags, then typically calls os.Exit(1).
@@ -76,6 +81,12 @@ func ParseLevel(lvl string) Level {
 // Debug logs msg and tags at [LevelDebug] using the default logger.
 func Debug(msg string, tags ...tag.Tag) {
 	defaultLogger.Debug(msg, tags...)
+}
+
+// Enabled reports whether an entry at lvl would be recorded using the default
+// logger. See [Logger.Enabled].
+func Enabled(lvl Level) bool {
+	return defaultLogger.Enabled(lvl)
 }
 
 // Error logs msg and tags at [LevelError] using the default logger.

@@ -7,7 +7,7 @@ import (
 	cloudnamespace "go.temporal.io/cloud-sdk/api/namespace/v1"
 	"go.temporal.io/cloud-sdk/cloudclient"
 
-	"github.com/temporalio/temporal-proxy/internal/services"
+	"go.temporal.io/proxy/internal/services"
 )
 
 const (

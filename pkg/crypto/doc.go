@@ -11,6 +11,13 @@
 // are opened from key URIs by a [KeyFactory], which handles the cloud KMS
 // schemes directly and can be extended with schemes of the caller's own.
 //
+// A [Vault] can bind each payload to the namespace it was sealed under by
+// authenticating that namespace as AES-GCM additional data, recorded on the
+// [Message]. [BindingMode] selects whether Seal binds and whether Open accepts
+// payloads that are not bound, so a fleet can adopt binding in phases. The zero
+// value is [BindingOff] for compatibility; a caller with no previously sealed
+// payloads should pass [WithBindingMode]([BindingStrict]).
+//
 // A [Vault] reports what it does to an [Observer] as one of a closed set of
 // [Event] types: a [CacheEvent] for a DEK cache hit or miss, one
 // [EnvelopeEvent] per Seal and Open carrying both the end-to-end and the

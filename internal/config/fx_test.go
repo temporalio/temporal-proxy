@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/services"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/services"
 )
 
 func TestModule_ProvidesConfig(t *testing.T) {
@@ -142,7 +142,7 @@ func TestModuleRejectsInvalidFile(t *testing.T) {
 func TestRequireKey(t *testing.T) {
 	t.Parallel()
 
-	const key = "  default:\n    uri: testing://a2V5\n    duration: 1h\n    renewBefore: 10m\n"
+	const key = "  namespaceBinding: strict\n  default:\n    uri: testing://a2V5\n    duration: 1h\n    renewBefore: 10m\n"
 
 	tests := []struct {
 		name    string

@@ -19,6 +19,11 @@
 // known path used with any method but POST answers 405 with an Allow header;
 // an unknown path answers 404.
 //
+// The namespace a request names is the one the Temporal Service knows. It is
+// mapped to the local name to pick a key policy, and payloads are bound to it:
+// /encode labels with it and /decode compares labels with it, under the same
+// binding mode as the gRPC path. Under a strict binding both routes require it.
+//
 // Requests and responses are protojson-encoded temporal.api.common.v1.Payloads
 // with Content-Type application/json. A response carries exactly as many
 // payloads as its request, in the same order, which the SDK's remote codec
@@ -32,7 +37,7 @@
 // # Codec Identity
 //
 // The handler applies a [Codecs], in practice
-// [github.com/temporalio/temporal-proxy/internal/proxy.Codecs], which is the
+// [go.temporal.io/proxy/internal/proxy.Codecs], which is the
 // same value each upstream's forwarder installs as a gRPC client interceptor. A
 // payload therefore transforms identically whichever path it travelled,
 // because the chain has one construction site rather than two free to drift

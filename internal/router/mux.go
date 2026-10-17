@@ -3,7 +3,7 @@ package router
 import (
 	"slices"
 
-	"github.com/temporalio/temporal-proxy/pkg/match"
+	"go.temporal.io/proxy/pkg/match"
 )
 
 const (

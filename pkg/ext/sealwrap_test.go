@@ -14,8 +14,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	extv1 "github.com/temporalio/temporal-proxy/pkg/api/ext/v1"
-	"github.com/temporalio/temporal-proxy/pkg/ext"
+	extv1 "go.temporal.io/proxy/pkg/api/ext/v1"
+	"go.temporal.io/proxy/pkg/ext"
 )
 
 // stubSealer is a miniature of a real key service: it holds a key the wrapper

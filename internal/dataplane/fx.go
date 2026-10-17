@@ -5,15 +5,15 @@ import (
 
 	"go.uber.org/fx"
 
-	"github.com/temporalio/temporal-proxy/internal/auth"
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/metrics"
-	"github.com/temporalio/temporal-proxy/internal/protoutil"
-	"github.com/temporalio/temporal-proxy/internal/proxy"
-	"github.com/temporalio/temporal-proxy/internal/services"
-	"github.com/temporalio/temporal-proxy/internal/transport/connect"
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"go.temporal.io/proxy/internal/auth"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/metrics"
+	"go.temporal.io/proxy/internal/protoutil"
+	"go.temporal.io/proxy/internal/proxy"
+	"go.temporal.io/proxy/internal/services"
+	"go.temporal.io/proxy/internal/transport/connect"
+	"go.temporal.io/proxy/pkg/crypto"
+	"go.temporal.io/proxy/pkg/logger"
 )
 
 // Module provides a [Dataplane] and its [proxy.Codecs] from the assembled

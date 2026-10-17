@@ -7,7 +7,7 @@ import (
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/temporalio/temporal-proxy/internal/cloud/translation"
+	"go.temporal.io/proxy/internal/cloud/translation"
 )
 
 func TestDefaultAnswersEmpty(t *testing.T) {

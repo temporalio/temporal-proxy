@@ -12,13 +12,13 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/template"
-	"github.com/temporalio/temporal-proxy/internal/transport/connect"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
-	"github.com/temporalio/temporal-proxy/internal/transport/resolve"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/template"
+	"go.temporal.io/proxy/internal/transport/connect"
+	"go.temporal.io/proxy/internal/transport/meta"
+	"go.temporal.io/proxy/internal/transport/resolve"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 type (

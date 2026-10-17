@@ -7,8 +7,8 @@ import (
 	"slices"
 	"strings"
 
-	glob "github.com/temporalio/temporal-proxy/pkg/match"
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	glob "go.temporal.io/proxy/pkg/match"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 type (

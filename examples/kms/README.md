@@ -384,6 +384,7 @@ distinct key for `payments`:
 ```yaml
 encryption:
   enabled: true
+  namespaceBinding: strict
   default:
     uri: extension://kms/payloads
     duration: 1h

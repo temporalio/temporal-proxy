@@ -7,9 +7,9 @@ import (
 	"go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/grpc"
 
-	"github.com/temporalio/temporal-proxy/internal/dataplane/dataplanetest"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
-	"github.com/temporalio/temporal-proxy/internal/version"
+	"go.temporal.io/proxy/internal/dataplane/dataplanetest"
+	"go.temporal.io/proxy/internal/transport/meta"
+	"go.temporal.io/proxy/internal/version"
 )
 
 // TestCloudUpstreamReceivesTheProxyVersion pins that Temporal Cloud is told

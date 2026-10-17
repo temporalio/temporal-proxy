@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"github.com/temporalio/temporal-proxy/internal/transport/resolve"
+	"go.temporal.io/proxy/internal/transport/resolve"
 )
 
 // backend is a gRPC server that answers any method and counts calls.

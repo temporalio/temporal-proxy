@@ -8,8 +8,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/codecserver"
-	"github.com/temporalio/temporal-proxy/internal/metrics"
+	"go.temporal.io/proxy/internal/codecserver"
+	"go.temporal.io/proxy/internal/metrics"
 )
 
 // wantSurface is the metric contract the codec server publishes. Operators build

@@ -10,9 +10,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/pkg/api/kms/v1"
-	"github.com/temporalio/temporal-proxy/pkg/ext"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/api/kms/v1"
+	"go.temporal.io/proxy/pkg/ext"
+	"go.temporal.io/proxy/pkg/logger"
 )
 
 type (

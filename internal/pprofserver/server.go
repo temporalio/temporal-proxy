@@ -4,10 +4,10 @@ import (
 	"net/http"
 	netpprof "net/http/pprof"
 
-	"github.com/temporalio/temporal-proxy/internal/auth"
-	"github.com/temporalio/temporal-proxy/internal/httpserver"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/internal/auth"
+	"go.temporal.io/proxy/internal/httpserver"
+	"go.temporal.io/proxy/internal/transport/meta"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 // route is the URL prefix every profile route is mounted under.

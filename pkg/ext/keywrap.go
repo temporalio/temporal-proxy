@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/pkg/api/ext/v1"
+	"go.temporal.io/proxy/pkg/api/ext/v1"
 )
 
 type (

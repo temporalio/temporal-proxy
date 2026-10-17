@@ -13,8 +13,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/internal/dataplane/dataplanetest"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
+	"go.temporal.io/proxy/internal/dataplane/dataplanetest"
+	"go.temporal.io/proxy/internal/transport/meta"
 )
 
 const getSystemInfo = "/temporal.api.workflowservice.v1.WorkflowService/GetSystemInfo"

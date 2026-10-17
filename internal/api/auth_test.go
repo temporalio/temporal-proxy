@@ -14,10 +14,10 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/internal/api"
-	"github.com/temporalio/temporal-proxy/internal/auth/outbound"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
-	authv1 "github.com/temporalio/temporal-proxy/pkg/api/auth/v1"
+	"go.temporal.io/proxy/internal/api"
+	"go.temporal.io/proxy/internal/auth/outbound"
+	"go.temporal.io/proxy/internal/transport/meta"
+	authv1 "go.temporal.io/proxy/pkg/api/auth/v1"
 )
 
 type (

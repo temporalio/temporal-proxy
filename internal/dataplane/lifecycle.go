@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/temporalio/temporal-proxy/internal/transport/connect"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/internal/transport/connect"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 // Start opens every static upstream connection so an unreachable one fails

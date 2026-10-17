@@ -14,7 +14,7 @@
 // writing one of these; authorizer.go is where the policy lives.
 //
 // The gRPC surface, graceful shutdown, and signal handling all come from
-// [github.com/temporalio/temporal-proxy/pkg/ext]: authorizer's Authenticate
+// [go.temporal.io/proxy/pkg/ext]: authorizer's Authenticate
 // satisfies [ext.Auth], and [ext.Serve] does the rest.
 //
 // The proxy reaches this server in plaintext with no credential of its own, which
@@ -32,9 +32,9 @@ import (
 	"flag"
 	"os"
 
-	"github.com/temporalio/temporal-proxy/pkg/ext"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/pkg/ext"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 func main() {

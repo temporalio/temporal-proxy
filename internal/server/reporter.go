@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/internal/metrics"
+	"go.temporal.io/proxy/internal/metrics"
 )
 
 // durationBuckets covers both sub-second unary calls and long-poll methods

@@ -15,7 +15,7 @@ import (
 
 	"go.temporal.io/sdk/client"
 
-	"github.com/temporalio/temporal-proxy/examples/authz"
+	"go.temporal.io/proxy/examples/authz"
 )
 
 const (

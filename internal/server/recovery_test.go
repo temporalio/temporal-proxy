@@ -14,10 +14,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
-	"github.com/temporalio/temporal-proxy/internal/metrics"
-	"github.com/temporalio/temporal-proxy/internal/rpc"
-	"github.com/temporalio/temporal-proxy/internal/server"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"go.temporal.io/proxy/internal/metrics"
+	"go.temporal.io/proxy/internal/rpc"
+	"go.temporal.io/proxy/internal/server"
+	"go.temporal.io/proxy/pkg/logger"
 )
 
 const (

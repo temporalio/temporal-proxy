@@ -9,7 +9,7 @@ import (
 	"go.uber.org/fx"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
-	"github.com/temporalio/temporal-proxy/internal/protoutil"
+	"go.temporal.io/proxy/internal/protoutil"
 )
 
 func TestModule(t *testing.T) {

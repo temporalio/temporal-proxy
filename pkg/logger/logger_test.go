@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger"
 )
 
 func TestParseLevel(t *testing.T) {

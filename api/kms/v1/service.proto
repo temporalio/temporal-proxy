@@ -5,7 +5,7 @@ package api.kms.v1;
 import "api/kms/v1/decrypt.proto";
 import "api/kms/v1/encrypt.proto";
 
-option go_package = "github.com/temporalio/temporal-proxy/pkg/api/kms/v1;kms";
+option go_package = "go.temporal.io/proxy/pkg/api/kms/v1;kms";
 
 // EncryptionService is the contract for a pluggable Key Management Service (KMS)
 // provider. The proxy ships with built-in providers backed by cloud KMS

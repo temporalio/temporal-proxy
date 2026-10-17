@@ -57,4 +57,4 @@ Tests use `testify` (require, not assert) and `t.Parallel()` throughout when pos
 ## Import Ordering
 
 `gci` enforces three import groups in order: standard library → third-party → local module
-(`github.com/temporalio/temporal-proxy`). Running `mise run format` fixes this automatically.
+(`go.temporal.io/proxy`). Running `mise run format` fixes this automatically.

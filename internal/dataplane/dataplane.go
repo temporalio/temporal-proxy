@@ -12,21 +12,21 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
-	"github.com/temporalio/temporal-proxy/internal/auth"
-	"github.com/temporalio/temporal-proxy/internal/auth/outbound"
-	"github.com/temporalio/temporal-proxy/internal/cloud/translation"
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/metrics"
-	"github.com/temporalio/temporal-proxy/internal/protoutil"
-	"github.com/temporalio/temporal-proxy/internal/proxy"
-	"github.com/temporalio/temporal-proxy/internal/router"
-	"github.com/temporalio/temporal-proxy/internal/server"
-	"github.com/temporalio/temporal-proxy/internal/services"
-	"github.com/temporalio/temporal-proxy/internal/transport/connect"
-	"github.com/temporalio/temporal-proxy/internal/version"
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/internal/auth"
+	"go.temporal.io/proxy/internal/auth/outbound"
+	"go.temporal.io/proxy/internal/cloud/translation"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/metrics"
+	"go.temporal.io/proxy/internal/protoutil"
+	"go.temporal.io/proxy/internal/proxy"
+	"go.temporal.io/proxy/internal/router"
+	"go.temporal.io/proxy/internal/server"
+	"go.temporal.io/proxy/internal/services"
+	"go.temporal.io/proxy/internal/transport/connect"
+	"go.temporal.io/proxy/internal/version"
+	"go.temporal.io/proxy/pkg/crypto"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 type (
@@ -367,7 +367,16 @@ func newUpstreamForwarder(
 	// installed unconditionally rather than gated on any one codec's config.
 	// Added after translation so it is the innermost unary interceptor, encoding
 	// outbound payloads last and decoding inbound payloads first.
-	cdc, err := codecs.Interceptor()
+	// Payloads are bound to the namespace the upstream knows, so a local rename
+	// leaves them readable and two proxies naming one namespace differently agree.
+	// An upstream with bindingLabelsFrom takes the label from the named upstream's
+	// rules instead, while its requests are still translated with its own.
+	var codecOpts []proxy.InterceptorOption
+	if labels := cfg.Upstreams.BindingRules(up); labels.Configured() {
+		codecOpts = append(codecOpts, proxy.WithRemoteNamespace(labels.Remote))
+	}
+
+	cdc, err := codecs.Interceptor(codecOpts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to build codec interceptor for upstream %q: %w", up.Name, err)
 	}

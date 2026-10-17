@@ -12,9 +12,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/temporalio/temporal-proxy/internal/proxy"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
-	"github.com/temporalio/temporal-proxy/pkg/codec"
+	"go.temporal.io/proxy/internal/proxy"
+	"go.temporal.io/proxy/internal/transport/meta"
+	"go.temporal.io/proxy/pkg/codec"
 )
 
 const failureNS = "orders"
@@ -214,7 +214,7 @@ func receiveFailure(t *testing.T, opts proxy.CodecOptions, f *failurepb.Failure)
 func openAttributes(t *testing.T, codecs *proxy.Codecs, f *failurepb.Failure) *common.Payload {
 	t.Helper()
 
-	opened, err := codecs.Decode(t.Context(), failureNS, []*common.Payload{f.GetEncodedAttributes()})
+	opened, err := codecs.Decode(t.Context(), failureNS, failureNS, []*common.Payload{f.GetEncodedAttributes()})
 	require.NoError(t, err)
 	require.Len(t, opened, 1)
 

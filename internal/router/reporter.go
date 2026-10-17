@@ -5,7 +5,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/temporalio/temporal-proxy/internal/metrics"
+	"go.temporal.io/proxy/internal/metrics"
 )
 
 const (

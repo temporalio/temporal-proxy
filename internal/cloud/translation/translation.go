@@ -8,7 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
-	"github.com/temporalio/temporal-proxy/internal/rpc"
+	"go.temporal.io/proxy/internal/rpc"
 )
 
 type (

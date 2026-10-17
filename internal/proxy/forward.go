@@ -12,9 +12,9 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
-	"github.com/temporalio/temporal-proxy/internal/protoutil"
-	"github.com/temporalio/temporal-proxy/internal/rpc"
-	"github.com/temporalio/temporal-proxy/internal/services"
+	"go.temporal.io/proxy/internal/protoutil"
+	"go.temporal.io/proxy/internal/rpc"
+	"go.temporal.io/proxy/internal/services"
 )
 
 // transportHeaders are the inbound hop's own headers, which describe that hop

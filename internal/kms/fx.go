@@ -10,12 +10,12 @@ import (
 
 	"go.uber.org/fx"
 
-	"github.com/temporalio/temporal-proxy/internal/api"
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/metrics"
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/internal/api"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/metrics"
+	"go.temporal.io/proxy/pkg/crypto"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 const (
@@ -147,9 +147,10 @@ func runRotation(ctx context.Context, v vaultRefresher, interval time.Duration, 
 }
 
 // createVault builds a vault from the registry, applying the configured cache
-// size and, when a default key policy is set, its DEK duration and renewal lead
-// time. A disabled cache is logged, since every Open then costs a KEK round
-// trip and the cache metrics read zero whether the cache is off or merely idle.
+// size, namespace binding mode, and, when a default key policy is set, its DEK
+// duration and renewal lead time. A disabled cache is logged, since every Open
+// then costs a KEK round trip and the cache metrics read zero whether the cache
+// is off or merely idle.
 func createVault(
 	c *config.Config,
 	r *crypto.KEKRegistry,
@@ -161,10 +162,16 @@ func createVault(
 		log.Warn("DEK cache is disabled by cacheSize: 0; every payload opened costs a KEK unwrap")
 	}
 
-	opts := make([]crypto.VaultOption, 0, 3+len(c.Encryption.Overrides))
+	mode, err := c.Encryption.NamespaceBinding.Mode()
+	if err != nil {
+		return nil, fmt.Errorf("invalid encryption.namespaceBinding: %w", err)
+	}
+
+	opts := make([]crypto.VaultOption, 0, 4+len(c.Encryption.Overrides))
 	opts = append(opts,
 		crypto.WithCacheSize(size),
 		crypto.WithObserver(reporter),
+		crypto.WithBindingMode(mode),
 	)
 
 	if dp := c.Encryption.Default; dp != nil {

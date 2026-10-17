@@ -9,7 +9,7 @@ import (
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/grpc"
 
-	"github.com/temporalio/temporal-proxy/internal/proxy"
+	"go.temporal.io/proxy/internal/proxy"
 )
 
 // The codecs themselves are covered where they live: encryption through this

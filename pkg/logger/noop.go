@@ -1,6 +1,6 @@
 package logger
 
-import "github.com/temporalio/temporal-proxy/pkg/logger/tag"
+import "go.temporal.io/proxy/pkg/logger/tag"
 
 type (
 	// NoopLogger is a [Logger] that discards every entry. It is useful in tests
@@ -16,6 +16,12 @@ func NewNoopLogger() *NoopLogger {
 
 // Debug implements [Logger] by discarding the entry.
 func (n *NoopLogger) Debug(string, ...tag.Tag) {
+}
+
+// Enabled implements [Logger]. NoopLogger discards every entry, whatever the
+// level, so nothing it could log is worth building.
+func (n *NoopLogger) Enabled(Level) bool {
+	return false
 }
 
 // Error implements [Logger] by discarding the entry.

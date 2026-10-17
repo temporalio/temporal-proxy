@@ -12,10 +12,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/temporalio/temporal-proxy/internal/auth"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/internal/auth"
+	"go.temporal.io/proxy/internal/transport/meta"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 // This file implements the codec server's HTTP routes and the order the checks
@@ -51,7 +51,7 @@ const (
 
 type (
 	// Codecs transforms payloads on their way to and from an upstream. It is the
-	// subset of [github.com/temporalio/temporal-proxy/internal/proxy.Codecs] the
+	// subset of [go.temporal.io/proxy/internal/proxy.Codecs] the
 	// handler needs, and an implementation must be the same value the upstream
 	// forwarders apply, or a payload will transform differently depending on
 	// which path it travelled.
@@ -60,21 +60,25 @@ type (
 	// number of payloads they were given in the same order, and must not mutate
 	// the slice they were passed.
 	Codecs interface {
-		// Decode opens payloads that arrived from an upstream. ns is the local
-		// namespace name and may be empty, since opening a sealed payload
-		// selects its key by the ID recorded in the payload itself.
+		// Decode opens payloads that arrived from an upstream. local is the local
+		// namespace name and may be empty, since opening a sealed payload selects
+		// its key by the ID recorded in the payload itself. remote is the name the
+		// caller sent. When set, opened payloads are compared with it under the
+		// vault's binding mode: strict refuses a mismatch, while permissive and off
+		// open it and count it.
 		//
 		// Returns an error if a payload cannot be opened. The handler never
 		// forwards that error's text to the caller.
-		Decode(ctx context.Context, ns string, payloads []*common.Payload) ([]*common.Payload, error)
+		Decode(ctx context.Context, local, remote string, payloads []*common.Payload) ([]*common.Payload, error)
 
-		// Encode seals payloads bound for an upstream. ns is the local namespace
-		// name and selects the key policy, so an empty ns takes the default
-		// policy rather than a namespace's own.
+		// Encode seals payloads bound for an upstream. local is the local namespace
+		// name and selects the key policy, so an empty local takes the default
+		// policy rather than a namespace's own. Sealed payloads are bound to
+		// remote, the name the caller sent.
 		//
 		// Returns an error if a payload cannot be sealed. The handler never
 		// forwards that error's text to the caller.
-		Encode(ctx context.Context, ns string, payloads []*common.Payload) ([]*common.Payload, error)
+		Encode(ctx context.Context, local, remote string, payloads []*common.Payload) ([]*common.Payload, error)
 	}
 
 	// Namespaces maps the namespace name a caller sends to the one the codecs
@@ -93,12 +97,13 @@ type (
 	Option func(*options)
 
 	options struct {
-		auth              auth.Authenticator
-		log               logger.Logger
-		origins           []string
-		credentials       bool
-		maxBodyBytes      int64
-		namespaceRequired bool
+		auth                    auth.Authenticator
+		log                     logger.Logger
+		origins                 []string
+		credentials             bool
+		maxBodyBytes            int64
+		namespaceRequired       bool
+		decodeNamespaceRequired bool
 	}
 
 	handler struct {
@@ -110,9 +115,11 @@ type (
 
 	// resolvedNamespace is the namespace a request addresses, resolved once
 	// before authentication so the route acts on the namespace that was
-	// authorized, even when the authenticator strips the header naming it.
+	// authorized, even when the authenticator strips the header naming it. name
+	// is the local name, sent the name the caller used.
 	resolvedNamespace struct {
 		name  string
+		sent  string
 		named bool
 	}
 
@@ -151,7 +158,7 @@ func Handler(c Codecs, n Namespaces, r *Reporter, opts ...Option) http.Handler {
 		fn   http.HandlerFunc
 	}{
 		{encodeRoute, h.payloads(encodeRoute, h.codecs.Encode, o.namespaceRequired)},
-		{decodeRoute, h.payloads(decodeRoute, h.codecs.Decode, false)},
+		{decodeRoute, h.payloads(decodeRoute, h.codecs.Decode, o.decodeNamespaceRequired)},
 		{downloadRoute, h.download},
 	}
 
@@ -210,17 +217,24 @@ func WithMaxBodyBytes(n int64) Option {
 }
 
 // WithNamespaceRequired makes /encode answer 400 when a request names no
-// namespace; it never constrains /decode. Set it when a per-namespace key
-// policy is configured, or a payload naming no namespace is silently sealed
-// under the default policy.
+// namespace; /decode is governed by [WithDecodeNamespaceRequired]. Set it when
+// a per-namespace key policy is configured, or a payload naming no namespace is
+// silently sealed under the default policy.
 func WithNamespaceRequired(required bool) Option {
 	return func(o *options) { o.namespaceRequired = required }
+}
+
+// WithDecodeNamespaceRequired makes /decode answer 400 when a request names no
+// namespace, before its body is read. Set it under a strict namespace binding,
+// where every opened payload is compared with the namespace the caller names.
+func WithDecodeNamespaceRequired(required bool) Option {
+	return func(o *options) { o.decodeNamespaceRequired = required }
 }
 
 // payloads returns the handler for a route that transforms payloads with fn.
 func (h *handler) payloads(
 	route string,
-	fn func(context.Context, string, []*common.Payload) ([]*common.Payload, error),
+	fn func(context.Context, string, string, []*common.Payload) ([]*common.Payload, error),
 	namespaceRequired bool,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -255,11 +269,11 @@ func (h *handler) payloads(
 		// holds KMS unwrap permission, so a provider error can carry key ARNs,
 		// ciphertext metadata, or vault messages that must not reach an HTTP
 		// response body. It is logged instead, since the operator needs it.
-		out, err := fn(r.Context(), ns, in.Payloads)
+		out, err := fn(r.Context(), ns.name, ns.sent, in.Payloads)
 		if err != nil {
 			h.opts.log.Error("Codec server failed to transform payloads",
 				tag.String("route", route),
-				tag.String("namespace", ns),
+				tag.String("namespace", ns.name),
 				tag.Error(err),
 			)
 
@@ -294,32 +308,32 @@ func (h *handler) download(w http.ResponseWriter, r *http.Request) {
 // prologue resolves the namespace and enforces that one was named when the
 // route requires it. It writes the response and reports ok=false when the
 // request may not proceed.
-func (h *handler) prologue(w http.ResponseWriter, r *http.Request, namespaceRequired bool) (string, bool) {
+func (h *handler) prologue(w http.ResponseWriter, r *http.Request, namespaceRequired bool) (resolvedNamespace, bool) {
 	ns := requestNamespace(r)
 	if namespaceRequired && !ns.named {
 		fail(w, http.StatusBadRequest,
 			"a namespace is required: send it as the "+namespaceHeader+" header or in the request path")
 
-		return "", false
+		return resolvedNamespace{}, false
 	}
 
-	return ns.name, true
+	return ns, true
 }
 
-// namespace returns the local namespace name the request addresses and whether
-// it named one at all. The path segment wins over the header, since a caller
-// that put it in the URL was explicit about it.
-func (h *handler) namespace(r *http.Request) (string, bool) {
-	name := r.PathValue("ns")
-	if name == "" {
-		name = r.Header.Get(namespaceHeader)
+// namespace returns the namespace the request addresses: the local name, the
+// name the caller sent, and whether it named one at all. The path segment wins
+// over the header, since a caller that put it in the URL was explicit about it.
+func (h *handler) namespace(r *http.Request) resolvedNamespace {
+	sent := r.PathValue("ns")
+	if sent == "" {
+		sent = r.Header.Get(namespaceHeader)
 	}
 
-	if name == "" {
-		return "", false
+	if sent == "" {
+		return resolvedNamespace{}
 	}
 
-	return h.ns.Local(name), true
+	return resolvedNamespace{name: h.ns.Local(sent), sent: sent, named: true}
 }
 
 // instrument reports every request reaching route with the status the caller
@@ -338,8 +352,7 @@ func (h *handler) instrument(route string, next http.Handler) http.Handler {
 // {ns} path segment is only set once a route has matched.
 func (h *handler) resolveNamespace(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		name, named := h.namespace(r)
-		ctx := context.WithValue(r.Context(), namespaceKey{}, resolvedNamespace{name: name, named: named})
+		ctx := context.WithValue(r.Context(), namespaceKey{}, h.namespace(r))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

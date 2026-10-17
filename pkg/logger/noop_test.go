@@ -5,8 +5,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 func TestNoopLogger(t *testing.T) {
@@ -24,4 +24,9 @@ func TestNoopLogger(t *testing.T) {
 	})
 
 	require.Same(t, l, l.With(tag.String("k", "v")))
+
+	// Enabled reports false at every level, recognized or not, because every
+	// entry is discarded.
+	require.False(t, l.Enabled(logger.LevelDebug))
+	require.False(t, l.Enabled(logger.Level(42)))
 }

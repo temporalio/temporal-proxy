@@ -4,11 +4,11 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/metrics"
-	"github.com/temporalio/temporal-proxy/internal/proxy"
-	"github.com/temporalio/temporal-proxy/internal/router"
-	"github.com/temporalio/temporal-proxy/internal/server"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/metrics"
+	"go.temporal.io/proxy/internal/proxy"
+	"go.temporal.io/proxy/internal/router"
+	"go.temporal.io/proxy/internal/server"
 )
 
 // reporters holds the metric reporters, each built once. A per-upstream build

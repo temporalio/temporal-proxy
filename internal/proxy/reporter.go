@@ -5,7 +5,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/temporalio/temporal-proxy/internal/metrics"
+	"go.temporal.io/proxy/internal/metrics"
 )
 
 type (
@@ -13,15 +13,19 @@ type (
 	// (encrypt) and open (decrypt) the encryption codec performs, on both the
 	// gRPC path and the codec server's HTTP path, timed end to end, including
 	// any KEK wrap or unwrap and any DEK cache lookup along the way. It also
-	// counts payloads the encryption codec skipped. The AES-step duration alone
-	// is owned by internal/kms. The namespace label is always declared but only
-	// carries a value when namespace labels are enabled, since the set of
-	// namespaces is unbounded; handles are resolved per call via WithLabelValues
-	// rather than pre-computed. A Reporter is safe for concurrent use.
+	// counts payloads the encryption codec skipped, payloads opened without a
+	// namespace binding, and payloads bound to a namespace other than the
+	// request's. The AES-step duration alone is owned by internal/kms. The
+	// namespace label is always declared but only carries a value when namespace
+	// labels are enabled, since the set of namespaces is unbounded; handles are
+	// resolved per call via WithLabelValues rather than pre-computed. A Reporter is
+	// safe for concurrent use.
 	Reporter struct {
 		ops             *prometheus.CounterVec
 		duration        *prometheus.HistogramVec
 		skipped         *prometheus.CounterVec
+		unbound         *prometheus.CounterVec
+		mismatches      *prometheus.CounterVec
 		namespaceLabels bool
 		labels          metrics.MetadataLabels
 	}
@@ -52,6 +56,16 @@ func NewReporter(f *metrics.Factory, opts ...ReporterOption) *Reporter {
 		Name: "payloads_skipped_total",
 		Help: "Total payloads the encryption codec left as they were, labeled by operation, encoding, and namespace.",
 	}, append([]string{"operation", "encoding", "namespace"}, r.labels.Names()...))
+
+	r.unbound = f.NewCounter(prometheus.CounterOpts{
+		Name: "vault_unbound_opens_total",
+		Help: "Total payloads handed to decrypt that are not bound to a namespace, whatever the outcome, labeled by namespace.",
+	}, append([]string{"namespace"}, r.labels.Names()...))
+
+	r.mismatches = f.NewCounter(prometheus.CounterOpts{
+		Name: "vault_namespace_mismatches_total",
+		Help: "Total payloads handed to decrypt that are bound to a namespace other than the request's, whatever the outcome, labeled by namespace.",
+	}, append([]string{"namespace"}, r.labels.Names()...))
 
 	return r
 }
@@ -86,6 +100,23 @@ func (r *Reporter) VaultOp(ctx context.Context, operation, result, namespace str
 func (r *Reporter) PayloadSkipped(ctx context.Context, operation, encoding, namespace string) {
 	labels := r.labels.AppendValues(ctx, nil)
 	r.skipped.WithLabelValues(append([]string{operation, encoding, r.nsLabel(namespace)}, labels...)...).Inc()
+}
+
+// UnboundOpen records one payload handed to decrypt that is not bound to a
+// namespace, before the vault decides what to do with it. Under a permissive
+// binding mode it counts what strict would refuse, so a namespace that stays at
+// zero for longer than its retention is ready for strict.
+func (r *Reporter) UnboundOpen(ctx context.Context, namespace string) {
+	labels := r.labels.AppendValues(ctx, nil)
+	r.unbound.WithLabelValues(append([]string{r.nsLabel(namespace)}, labels...)...).Inc()
+}
+
+// NamespaceMismatch records one payload handed to decrypt that is bound to a
+// namespace other than the request's, before the vault decides what to do with
+// it. Under a permissive binding mode it counts what strict would refuse.
+func (r *Reporter) NamespaceMismatch(ctx context.Context, namespace string) {
+	labels := r.labels.AppendValues(ctx, nil)
+	r.mismatches.WithLabelValues(append([]string{r.nsLabel(namespace)}, labels...)...).Inc()
 }
 
 // nsLabel returns ns when namespace labels are enabled and blank when they are

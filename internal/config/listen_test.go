@@ -6,10 +6,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/transport/creds"
-	"github.com/temporalio/temporal-proxy/pkg/testutil"
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/transport/creds"
+	"go.temporal.io/proxy/pkg/testutil"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 func TestListenConfig_Validate(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 func TestTestLoggerContains(t *testing.T) {
@@ -19,6 +19,10 @@ func TestTestLoggerContains(t *testing.T) {
 	l.Info("hello")
 	require.True(t, l.Contains("hello"))
 	require.False(t, l.Contains("goodbye"))
+
+	// TestLogger records every level, recognized or not.
+	require.True(t, l.Enabled(logger.LevelDebug))
+	require.True(t, l.Enabled(logger.Level(42)))
 }
 
 func TestTestLoggerContainsEntry(t *testing.T) {

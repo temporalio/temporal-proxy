@@ -1,7 +1,7 @@
 package router
 
 import (
-	"github.com/temporalio/temporal-proxy/internal/config"
+	"go.temporal.io/proxy/internal/config"
 )
 
 // MuxFor builds the Mux for prepared routing configuration. Panics if the

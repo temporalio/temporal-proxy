@@ -5,7 +5,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 type (
@@ -27,6 +27,17 @@ func NewZeroLogger(w io.Writer, lvl Level) *ZeroLogger {
 // Debug implements [Logger].
 func (l *ZeroLogger) Debug(msg string, tags ...tag.Tag) {
 	logEvent(l.log.Debug(), msg, tags)
+}
+
+// Enabled implements [Logger], reporting whether the configured level records
+// entries at lvl. An unrecognized level answers true rather than inheriting
+// [zeroLevel]'s Info mapping, so a bad value never hides logs.
+func (l *ZeroLogger) Enabled(lvl Level) bool {
+	if lvl > LevelError {
+		return true
+	}
+
+	return l.log.GetLevel() <= zeroLevel(lvl)
 }
 
 // Error implements [Logger].

@@ -4,7 +4,7 @@ package api.auth.v1;
 
 import "api/auth/v1/auth.proto";
 
-option go_package = "github.com/temporalio/temporal-proxy/pkg/api/auth/v1;auth";
+option go_package = "go.temporal.io/proxy/pkg/api/auth/v1;auth";
 
 // AuthService is the contract for a pluggable inbound authenticator. The proxy
 // ships with built-in authenticators for a fixed static token and for OIDC/JWKS

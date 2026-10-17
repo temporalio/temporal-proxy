@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/resolver"
 
-	"github.com/temporalio/temporal-proxy/internal/transport/resolve"
+	"go.temporal.io/proxy/internal/transport/resolve"
 )
 
 func TestIsTarget(t *testing.T) {

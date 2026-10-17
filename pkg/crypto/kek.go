@@ -206,6 +206,13 @@ func (r *KEKRegistry) Decrypt(ctx context.Context, m *DEKMaterial) (*DEK, error)
 	return dekFromKey(key)
 }
 
+// holds reports whether r can unwrap a DEK wrapped by the KEK with id, without
+// calling that KEK.
+func (r *KEKRegistry) holds(id string) bool {
+	_, ok := r.keyIDs[id]
+	return ok
+}
+
 // Close closes all registered KEKs and releases their resources.
 // Subsequent calls return the same error as the first call.
 func (r *KEKRegistry) Close() error {

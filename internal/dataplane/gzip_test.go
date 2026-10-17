@@ -11,7 +11,7 @@ import (
 	_ "google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/temporalio/temporal-proxy/internal/dataplane/dataplanetest"
+	"go.temporal.io/proxy/internal/dataplane/dataplanetest"
 )
 
 // A health check is served locally and never reaches the forwarder. This sends

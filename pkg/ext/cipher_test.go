@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/pkg/ext"
+	"go.temporal.io/proxy/pkg/ext"
 )
 
 func TestCiphers(t *testing.T) {

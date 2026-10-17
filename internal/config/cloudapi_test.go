@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/cloud"
-	"github.com/temporalio/temporal-proxy/internal/config"
+	"go.temporal.io/proxy/internal/cloud"
+	"go.temporal.io/proxy/internal/config"
 )
 
 // TestCloudAPIUpstreamsAreDistinctPerSource pins the property the pooled

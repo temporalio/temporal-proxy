@@ -7,8 +7,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/temporalio/temporal-proxy/pkg/logger"
-	"github.com/temporalio/temporal-proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
 type (
@@ -77,13 +77,19 @@ func (d *director) Resolve(
 		return Target{}, status.Errorf(codes.Unavailable, "router: no handler for upstream %q", upstream)
 	}
 
-	d.logger.Debug(
-		"routing request",
-		tag.String("method", method),
-		tag.String("namespace", namespace),
-		tag.String("upstream", upstream),
-		tag.Stringer("outcome", outcome),
-	)
+	// The decision is already counted in decisions_total; the entry is for an
+	// operator running at debug level. Gating on Enabled keeps requests at the
+	// default level from building the tags an entry they will never see would
+	// carry.
+	if d.logger.Enabled(logger.LevelDebug) {
+		d.logger.Debug(
+			"routing request",
+			tag.String("method", method),
+			tag.String("namespace", namespace),
+			tag.String("upstream", upstream),
+			tag.Stringer("outcome", outcome),
+		)
+	}
 
 	return Target{Upstream: upstream, Handle: handle}, nil
 }

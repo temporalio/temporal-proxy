@@ -18,6 +18,9 @@ upstreams:
 
 encryption:
   enabled: true
+  # Required whenever keys are configured: strict for a new deployment like this
+  # one. See "Namespace binding" in the top-level README.
+  namespaceBinding: strict
   default:
     # The testing scheme holds the key in the URI itself, which is only fit for
     # local runs. It is fixed rather than random so history sealed before a

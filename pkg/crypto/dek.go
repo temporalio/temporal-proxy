@@ -43,28 +43,30 @@ func NewDEK() (*DEK, error) {
 	return dekFromKey(k)
 }
 
-// Encrypt encrypts the plaintext pt using AES-256-GCM. The returned ciphertext
-// is prefixed with the randomly generated nonce.
-func (d *DEK) Encrypt(ctx context.Context, pt []byte) ([]byte, error) {
+// Encrypt encrypts the plaintext pt using AES-256-GCM, authenticating aad
+// alongside it. The returned ciphertext is prefixed with the randomly generated
+// nonce. aad may be nil.
+func (d *DEK) Encrypt(ctx context.Context, pt, aad []byte) ([]byte, error) {
 	nonce := make([]byte, d.gcm.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
-	return d.gcm.Seal(nonce, nonce, pt, nil), nil
+	return d.gcm.Seal(nonce, nonce, pt, aad), nil
 }
 
 // Decrypt decrypts the ciphertext ct using AES-256-GCM. The ciphertext must be
-// prefixed with the nonce, as produced by [DEK.Encrypt]. It returns an error
-// matching [ErrMalformedCipherText] when ct is shorter than the nonce or fails
-// authentication.
-func (d *DEK) Decrypt(ctx context.Context, ct []byte) ([]byte, error) {
+// prefixed with the nonce, as produced by [DEK.Encrypt], and aad must be what it
+// was sealed with. It returns an error matching [ErrMalformedCipherText] when ct
+// is shorter than the nonce or fails authentication, including on an aad
+// mismatch.
+func (d *DEK) Decrypt(ctx context.Context, ct, aad []byte) ([]byte, error) {
 	ns := d.gcm.NonceSize()
 	if len(ct) < ns {
 		return nil, ErrMalformedCipherText
 	}
 
-	pt, err := d.gcm.Open(nil, ct[:ns], ct[ns:], nil)
+	pt, err := d.gcm.Open(nil, ct[:ns], ct[ns:], aad)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrMalformedCipherText, err)
 	}

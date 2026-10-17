@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/transport/creds"
-	"github.com/temporalio/temporal-proxy/pkg/testutil"
+	"go.temporal.io/proxy/internal/transport/creds"
+	"go.temporal.io/proxy/pkg/testutil"
 )
 
 func TestDialer_Mode(t *testing.T) {

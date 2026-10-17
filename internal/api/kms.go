@@ -6,7 +6,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/temporalio/temporal-proxy/pkg/api/kms/v1"
+	"go.temporal.io/proxy/pkg/api/kms/v1"
 )
 
 // KMS wraps and unwraps data encryption keys on an extension server

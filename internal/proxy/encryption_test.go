@@ -18,12 +18,12 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/metrics"
-	"github.com/temporalio/temporal-proxy/internal/proxy"
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
-	"github.com/temporalio/temporal-proxy/pkg/codec"
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/metrics"
+	"go.temporal.io/proxy/internal/proxy"
+	"go.temporal.io/proxy/internal/transport/meta"
+	"go.temporal.io/proxy/pkg/codec"
+	"go.temporal.io/proxy/pkg/crypto"
 )
 
 const (
@@ -483,13 +483,88 @@ func TestCodecsEncodeSkipsListedEncodings(t *testing.T) {
 	require.NoError(t, err)
 
 	p := testPayload("acme/aes-gcm", "ciphertext-from-a-worker")
-	got, err := c.Encode(t.Context(), "ns1", []*common.Payload{p})
+	got, err := c.Encode(t.Context(), "ns1", "ns1", []*common.Payload{p})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.Same(t, p, got[0])
 }
 
-func (f *fakeVault) Seal(_ context.Context, ns string, data []byte) (*crypto.Message, error) {
+// TestEncryptionCountsUnboundOpens pins the strict-readiness signal. Dropping
+// the Bound check counts the bound row; counting after Open skips the failing
+// row; removing the ErrUnbound case from resultLabel fails its vault_ops check.
+func TestEncryptionCountsUnboundOpens(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		payload    func(t *testing.T) *common.Payload
+		openErr    error
+		wantCount  bool
+		wantResult string
+	}{
+		{
+			name:       "unbound payload is counted",
+			payload:    func(t *testing.T) *common.Payload { return sealedPayload(t, testPayload("json/plain", `"x"`)) },
+			wantCount:  true,
+			wantResult: "success",
+		},
+		{
+			name: "bound payload is not counted",
+			payload: func(t *testing.T) *common.Payload {
+				p := sealedPayload(t, testPayload("json/plain", `"x"`))
+				p.Metadata[codec.MetadataEncryptionNamespace] = []byte("ns1")
+				return p
+			},
+			wantResult: "success",
+		},
+		{
+			name:       "unbound payload refused by strict is still counted",
+			payload:    func(t *testing.T) *common.Payload { return sealedPayload(t, testPayload("json/plain", `"x"`)) },
+			openErr:    crypto.ErrUnbound,
+			wantCount:  true,
+			wantResult: "unbound",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			reg := prometheus.NewRegistry()
+			reporter := proxy.NewReporter(
+				metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"),
+				proxy.WithNamespaceLabels(true),
+			)
+
+			interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{
+				Vault:    &fakeVault{openErr: tc.openErr},
+				Reporter: reporter,
+			})
+			require.NoError(t, err)
+
+			ctx := metadata.AppendToOutgoingContext(t.Context(), meta.NamespaceHeader, "ns1")
+			resp := &workflowservice.StartWorkflowExecutionRequest{}
+			_ = interceptor(ctx, "/method", startRequest(), resp, nil, respondWith(tc.payload(t)))
+
+			unbound := gatherFamily(t, reg, "proxy_encryption_vault_unbound_opens_total")
+			if tc.wantCount {
+				require.NotNil(t, unbound)
+				require.True(t, hasLabels(unbound, map[string]string{"namespace": "ns1"}))
+				require.Equal(t, 1.0, unbound.GetMetric()[0].GetCounter().GetValue())
+			} else {
+				require.Nil(t, unbound)
+			}
+
+			ops := gatherFamily(t, reg, "proxy_encryption_vault_ops_total")
+			require.NotNil(t, ops)
+			require.True(t, hasLabels(ops, map[string]string{
+				"operation": "decrypt", "result": tc.wantResult, "namespace": "ns1",
+			}))
+		})
+	}
+}
+
+func (f *fakeVault) Seal(_ context.Context, ns string, data []byte, _ ...crypto.SealOption) (*crypto.Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -504,7 +579,7 @@ func (f *fakeVault) Seal(_ context.Context, ns string, data []byte) (*crypto.Mes
 	}, nil
 }
 
-func (f *fakeVault) Open(_ context.Context, msg *crypto.Message) ([]byte, error) {
+func (f *fakeVault) Open(_ context.Context, msg *crypto.Message, _ ...crypto.OpenOption) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 

@@ -9,8 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/codecserver"
-	"github.com/temporalio/temporal-proxy/internal/config"
+	"go.temporal.io/proxy/internal/codecserver"
+	"go.temporal.io/proxy/internal/config"
 )
 
 func TestNewOverrideMap(t *testing.T) {

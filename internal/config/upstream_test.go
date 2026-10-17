@@ -8,9 +8,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/pkg/testutil"
-	"github.com/temporalio/temporal-proxy/pkg/validation"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/pkg/testutil"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 // namespaceConfigYAML wraps a `namespaces:` body (each line indented to sit
@@ -905,4 +905,83 @@ upstreams:
 		err,
 		`upstreams[0].namespaces.rules: suffix: must be ".<account-id>" for a Temporal Cloud upstream`,
 	)
+}
+
+func TestUpstreamBindingLabelsFrom(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		from map[string]string // upstream name -> bindingLabelsFrom
+		want validation.Errors
+	}{
+		{
+			name: "unset is valid",
+		},
+		{
+			name: "another upstream is valid",
+			from: map[string]string{"local": "cloud"},
+		},
+		{
+			name: "unknown upstream",
+			from: map[string]string{"local": "nope"},
+			want: validation.Errors{{
+				Subject: "upstreams[1].namespaces",
+				Field:   "bindingLabelsFrom",
+				Message: `references unknown upstream "nope"`,
+			}},
+		},
+		{
+			name: "itself",
+			from: map[string]string{"local": "local"},
+			want: validation.Errors{{
+				Subject: "upstreams[1].namespaces",
+				Field:   "bindingLabelsFrom",
+				Message: "must name another upstream, not this one",
+			}},
+		},
+		{
+			// One hop only, so the label never depends on a chain of settings.
+			name: "an upstream that sets it too",
+			from: map[string]string{"local": "cloud", "system": "local"},
+			want: validation.Errors{{
+				Subject: "upstreams[2].namespaces",
+				Field:   "bindingLabelsFrom",
+				Message: `references upstream "local", which sets bindingLabelsFrom itself`,
+			}},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &config.Config{
+				Metrics: config.Metrics{HostPort: ":9090", Namespace: "tmprl_proxy"},
+				Listen:  config.ListenConfig{HostPort: ":8080"},
+				Upstreams: config.UpstreamList{
+					{
+						Name:       "cloud",
+						Listen:     config.ListenConfig{HostPort: "127.0.0.1:7233", Insecure: true},
+						Namespaces: config.NamespaceConfig{Rules: config.NamespaceRules{Suffix: ".acct"}},
+					},
+					{Name: "local", Listen: config.ListenConfig{HostPort: "127.0.0.1:7234", Insecure: true}},
+					{Name: "system", Listen: config.ListenConfig{HostPort: "127.0.0.1:7235", Insecure: true}},
+				},
+			}
+			for i := range cfg.Upstreams {
+				cfg.Upstreams[i].Namespaces.BindingLabelsFrom = tc.from[cfg.Upstreams[i].Name]
+			}
+
+			err := cfg.Prepare()
+			if tc.want == nil {
+				require.NoError(t, err)
+				return
+			}
+
+			var errs validation.Errors
+			require.ErrorAs(t, err, &errs)
+			require.Equal(t, tc.want, errs)
+		})
+	}
 }

@@ -28,8 +28,8 @@ const file_api_kms_v1_service_proto_rawDesc = "" +
 	"api.kms.v1\x1a\x18api/kms/v1/decrypt.proto\x1a\x18api/kms/v1/encrypt.proto2\x9f\x01\n" +
 	"\x11EncryptionService\x12D\n" +
 	"\aEncrypt\x12\x1a.api.kms.v1.EncryptRequest\x1a\x1b.api.kms.v1.EncryptResponse\"\x00\x12D\n" +
-	"\aDecrypt\x12\x1a.api.kms.v1.DecryptRequest\x1a\x1b.api.kms.v1.DecryptResponse\"\x00B\xa1\x01\n" +
-	"\x0ecom.api.kms.v1B\fServiceProtoP\x01Z7github.com/temporalio/temporal-proxy/pkg/api/kms/v1;kms\xa2\x02\x03AKX\xaa\x02\n" +
+	"\aDecrypt\x12\x1a.api.kms.v1.DecryptRequest\x1a\x1b.api.kms.v1.DecryptResponse\"\x00B\x91\x01\n" +
+	"\x0ecom.api.kms.v1B\fServiceProtoP\x01Z'go.temporal.io/proxy/pkg/api/kms/v1;kms\xa2\x02\x03AKX\xaa\x02\n" +
 	"Api.Kms.V1\xca\x02\n" +
 	"Api\\Kms\\V1\xe2\x02\x16Api\\Kms\\V1\\GPBMetadata\xea\x02\fApi::Kms::V1b\x06proto3"
 

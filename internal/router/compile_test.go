@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/internal/router"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/router"
 )
 
 func TestMuxFor(t *testing.T) {

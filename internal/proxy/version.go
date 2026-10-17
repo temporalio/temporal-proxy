@@ -5,7 +5,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/temporalio/temporal-proxy/internal/transport/meta"
+	"go.temporal.io/proxy/internal/transport/meta"
 )
 
 // VersionDialOptions returns the dial options that stamp the proxy's own build

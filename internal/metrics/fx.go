@@ -5,8 +5,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.uber.org/fx"
 
-	"github.com/temporalio/temporal-proxy/internal/config"
-	"github.com/temporalio/temporal-proxy/pkg/logger"
+	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/pkg/logger"
 )
 
 // Module provides a namespaced [Factory] bound to the injected Prometheus

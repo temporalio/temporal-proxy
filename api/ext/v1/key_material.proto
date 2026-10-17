@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package api.ext.v1;
 
-option go_package = "github.com/temporalio/temporal-proxy/pkg/api/ext/v1;ext";
+option go_package = "go.temporal.io/proxy/pkg/api/ext/v1;ext";
 
 // KeyMaterial is an optional framing for the ciphertext an extension server
 // returns from Encrypt. Decrypt is handed nothing but that ciphertext, so

@@ -9,8 +9,8 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
-	"github.com/temporalio/temporal-proxy/internal/protoutil"
-	"github.com/temporalio/temporal-proxy/internal/rpc"
+	"go.temporal.io/proxy/internal/protoutil"
+	"go.temporal.io/proxy/internal/rpc"
 )
 
 // temporalNamespaceHeader is the gRPC metadata key the Temporal SDK sets to the

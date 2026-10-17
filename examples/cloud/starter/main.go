@@ -10,7 +10,7 @@ import (
 
 	"go.temporal.io/sdk/client"
 
-	"github.com/temporalio/temporal-proxy/examples/cloud"
+	"go.temporal.io/proxy/examples/cloud"
 )
 
 func main() {

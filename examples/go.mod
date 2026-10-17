@@ -1,4 +1,4 @@
-module github.com/temporalio/temporal-proxy/examples
+module go.temporal.io/proxy/examples
 
 go 1.26.0
 
@@ -7,11 +7,11 @@ toolchain go1.27.1
 // The examples build against this working tree because pkg/api/kms/v1, which the
 // kms example serves, is not in a released tag yet. Outside this repository, drop
 // this line and require a released version of the proxy instead.
-replace github.com/temporalio/temporal-proxy => ../
+replace go.temporal.io/proxy => ../
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/temporalio/temporal-proxy v0.4.0
+	go.temporal.io/proxy v0.4.0
 	go.temporal.io/sdk v1.49.0
 	google.golang.org/grpc v1.84.0
 )
@@ -33,11 +33,11 @@ require (
 	github.com/stretchr/testify v1.12.1 // indirect
 	go.temporal.io/api v1.63.5 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/crypto v0.57.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect

@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
+	"go.temporal.io/proxy/pkg/crypto"
 )
 
 func TestNewDEK(t *testing.T) {
@@ -29,10 +29,10 @@ func TestNewDEK(t *testing.T) {
 		d2, err := crypto.NewDEK()
 		require.NoError(t, err)
 
-		ct, err := d1.Encrypt(t.Context(), []byte("sshh"))
+		ct, err := d1.Encrypt(t.Context(), []byte("sshh"), nil)
 		require.NoError(t, err)
 
-		_, err = d2.Decrypt(t.Context(), ct)
+		_, err = d2.Decrypt(t.Context(), ct, nil)
 		require.ErrorIs(t, err, crypto.ErrMalformedCipherText)
 	})
 }
@@ -57,10 +57,10 @@ func TestDEKEncryptDecrypt(t *testing.T) {
 			dek, err := crypto.NewDEK()
 			require.NoError(t, err)
 
-			ct, err := dek.Encrypt(ctx, tc.plaintext)
+			ct, err := dek.Encrypt(ctx, tc.plaintext, nil)
 			require.NoError(t, err)
 
-			pt, err := dek.Decrypt(ctx, ct)
+			pt, err := dek.Decrypt(ctx, ct, nil)
 			require.NoError(t, err)
 			require.True(t, bytes.Equal(tc.plaintext, pt))
 		})
@@ -77,10 +77,10 @@ func TestDEKEncrypt(t *testing.T) {
 		require.NoError(t, err)
 
 		pt := []byte("same plaintext")
-		ct1, err := dek.Encrypt(ctx, pt)
+		ct1, err := dek.Encrypt(ctx, pt, nil)
 		require.NoError(t, err)
 
-		ct2, err := dek.Encrypt(ctx, pt)
+		ct2, err := dek.Encrypt(ctx, pt, nil)
 		require.NoError(t, err)
 
 		require.NotEqual(t, ct1, ct2)
@@ -97,12 +97,12 @@ func TestDEKDecrypt(t *testing.T) {
 		dek, err := crypto.NewDEK()
 		require.NoError(t, err)
 
-		ct, err := dek.Encrypt(ctx, []byte("secret"))
+		ct, err := dek.Encrypt(ctx, []byte("secret"), nil)
 		require.NoError(t, err)
 
 		altDEK, err := crypto.NewDEK()
 		require.NoError(t, err)
-		_, err = altDEK.Decrypt(ctx, ct)
+		_, err = altDEK.Decrypt(ctx, ct, nil)
 		require.Error(t, err)
 	})
 
@@ -112,7 +112,7 @@ func TestDEKDecrypt(t *testing.T) {
 		dek, err := crypto.NewDEK()
 		require.NoError(t, err)
 
-		ct, err := dek.Decrypt(t.Context(), []byte("nope"))
+		ct, err := dek.Decrypt(t.Context(), []byte("nope"), nil)
 		require.ErrorIs(t, err, crypto.ErrMalformedCipherText)
 		require.Nil(t, ct)
 	})
@@ -124,11 +124,51 @@ func TestDEKDecrypt(t *testing.T) {
 		dek, err := crypto.NewDEK()
 		require.NoError(t, err)
 
-		ct, err := dek.Encrypt(ctx, []byte("secret"))
+		ct, err := dek.Encrypt(ctx, []byte("secret"), nil)
 		require.NoError(t, err)
 
 		ct[len(ct)-1] ^= 0xFF
-		_, err = dek.Decrypt(ctx, ct)
+		_, err = dek.Decrypt(ctx, ct, nil)
 		require.Error(t, err)
 	})
+}
+
+// TestDEKAdditionalData pins that the AAD is authenticated: dropping it from
+// either gcm.Seal or gcm.Open makes the mismatch rows open.
+func TestDEKAdditionalData(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		sealAAD []byte
+		openAAD []byte
+		wantErr bool
+	}{
+		{name: "matching", sealAAD: []byte("a"), openAAD: []byte("a")},
+		{name: "both nil", sealAAD: nil, openAAD: nil},
+		{name: "different", sealAAD: []byte("a"), openAAD: []byte("b"), wantErr: true},
+		{name: "sealed with, opened without", sealAAD: []byte("a"), openAAD: nil, wantErr: true},
+		{name: "sealed without, opened with", sealAAD: nil, openAAD: []byte("a"), wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			dek, err := crypto.NewDEK()
+			require.NoError(t, err)
+
+			ct, err := dek.Encrypt(t.Context(), []byte("secret"), tc.sealAAD)
+			require.NoError(t, err)
+
+			pt, err := dek.Decrypt(t.Context(), ct, tc.openAAD)
+			if tc.wantErr {
+				require.ErrorIs(t, err, crypto.ErrMalformedCipherText)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, []byte("secret"), pt)
+		})
+	}
 }

@@ -11,8 +11,8 @@ import (
 	"go.temporal.io/api/common/v1"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/temporalio/temporal-proxy/pkg/codec"
-	"github.com/temporalio/temporal-proxy/pkg/crypto"
+	"go.temporal.io/proxy/pkg/codec"
+	"go.temporal.io/proxy/pkg/crypto"
 )
 
 const (
@@ -33,6 +33,8 @@ type fakeCipher struct {
 	decErr    error             // when set, Decrypt returns it
 	decReturn []byte            // when set, Decrypt returns these bytes instead of the unsealed plaintext
 	unknown   string            // when set, Decrypt fails with crypto.ErrUnknownKey for messages under this KEK ID
+	bound     bool              // when set, Encrypt returns messages bound to ns
+	ns        string            // the namespace Encrypt binds to when bound is set
 }
 
 func TestEncryptorRoundtrip(t *testing.T) {
@@ -427,6 +429,68 @@ func TestEncryptorDecodeMixedOwnership(t *testing.T) {
 	require.Equal(t, []string{codec.SkipOpDecrypt + " " + codec.EncryptionEncoding}, skipped)
 }
 
+// TestEncryptorNamespaceLabel pins the label's wire form. Testing the value
+// instead of presence in Decode fails the empty-namespace row; writing the label
+// for unbound messages fails the unbound row.
+func TestEncryptorNamespaceLabel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		bound bool
+		ns    string
+	}{
+		{name: "unbound"},
+		{name: "bound", bound: true, ns: "orders"},
+		{name: "bound to the empty namespace", bound: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			original := testPayload("json/plain", `"x"`)
+			want := proto.Clone(original).(*common.Payload)
+
+			sealed, err := codec.NewEncryptor(&fakeCipher{bound: tc.bound, ns: tc.ns}).Encode([]*common.Payload{original})
+			require.NoError(t, err)
+
+			label, ok := sealed[0].Metadata[codec.MetadataEncryptionNamespace]
+			require.Equal(t, tc.bound, ok)
+			require.Equal(t, tc.ns, string(label))
+
+			opener := &fakeCipher{}
+			opened, err := codec.NewEncryptor(opener).Decode(sealed)
+			require.NoError(t, err)
+
+			require.Len(t, opener.decrypted, 1)
+			require.Equal(t, tc.bound, opener.decrypted[0].Bound)
+			require.Equal(t, tc.ns, opener.decrypted[0].Namespace)
+			require.True(t, proto.Equal(want, opened[0]), "the label must not leak into the opened payload")
+		})
+	}
+}
+
+// TestEncryptorDecodeIgnoresLabelOnForeignPayloads pins that the label is not
+// part of the ownership rule. Treating a label as a claim of ownership makes
+// the cipher see these payloads.
+func TestEncryptorDecodeIgnoresLabelOnForeignPayloads(t *testing.T) {
+	t.Parallel()
+
+	label := map[string][]byte{codec.MetadataEncryptionNamespace: []byte("orders")}
+	foreign := testPayload("json/plain", `"x"`)
+	foreign.Metadata[codec.MetadataEncryptionNamespace] = []byte("orders")
+	payloads := []*common.Payload{foreign, markedPayload(label)}
+
+	c := &fakeCipher{}
+	got, err := codec.NewEncryptor(c).Decode(payloads)
+	require.NoError(t, err)
+
+	require.Empty(t, c.decrypted)
+	require.Same(t, payloads[0], got[0])
+	require.Same(t, payloads[1], got[1])
+}
+
 func (f *fakeCipher) Encrypt(data []byte) (*crypto.Message, error) {
 	if f.encErr != nil {
 		return nil, f.encErr
@@ -437,6 +501,8 @@ func (f *fakeCipher) Encrypt(data []byte) (*crypto.Message, error) {
 	return &crypto.Message{
 		Ciphertext:  append([]byte(sealPrefix), data...),
 		KeyMaterial: &crypto.DEKMaterial{KEKID: testKEKID, EncryptedDEK: testDEK},
+		Bound:       f.bound,
+		Namespace:   f.ns,
 	}, nil
 }
 

@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
-	"github.com/temporalio/temporal-proxy/internal/api"
-	kmsv1 "github.com/temporalio/temporal-proxy/pkg/api/kms/v1"
+	"go.temporal.io/proxy/internal/api"
+	kmsv1 "go.temporal.io/proxy/pkg/api/kms/v1"
 )
 
 // fakeConn is a grpc.ClientConnInterface that records the last unary request and
