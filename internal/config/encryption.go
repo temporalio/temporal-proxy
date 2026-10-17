@@ -105,12 +105,8 @@ func (e *Encryption) Validate() error {
 	return validation.Validate("", rules...)
 }
 
-// RequireKey fails unless a Default key policy is configured. It is the check
-// behind a deployment that must never run without a key, and is kept out of
-// Validate because the YAML alone must not be able to opt out of it. It checks
-// for a key rather than Enabled: a key with Enabled false is a decrypt-only
-// proxy, which still reads sealed payloads and is a deliberate way to wind
-// encryption down.
+// RequireKey fails unless a Default key policy is configured, whether or not
+// encryption is Enabled.
 func (e *Encryption) RequireKey() error {
 	return validation.Validate(
 		"encryption",

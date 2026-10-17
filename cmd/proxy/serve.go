@@ -71,7 +71,6 @@ func serve() *cli.Command {
 				fx.Supply(
 					fx.Annotate(ctx, fx.As(new(context.Context))),
 					fx.Annotate(cmd.String("config"), config.ConfigFileTag),
-					fx.Annotate(cmd.Bool("require-encryption"), config.RequireEncryptionTag),
 					fx.Annotate(protoregistry.GlobalFiles, fx.As(new(protoutil.Files))),
 					fx.Annotate(protoregistry.GlobalTypes, fx.As(new(protoutil.Types))),
 					// Services whose request and response types have their namespace
@@ -87,6 +86,7 @@ func serve() *cli.Command {
 				auth.Module,
 				codecserver.Module,
 				config.Module,
+				config.RequireKey(cmd.Bool("require-encryption")),
 				connect.Module,
 				dataplane.Module,
 				httpserver.Module,

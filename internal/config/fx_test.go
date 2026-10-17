@@ -136,10 +136,10 @@ func TestModuleRejectsInvalidFile(t *testing.T) {
 	require.ErrorContains(t, app.Err(), "at least one upstream is required")
 }
 
-// TestModule_RequireEncryption covers the startup guard against a proxy that
-// would forward plaintext. It keys on a configured key, not on enabled, so a
-// decrypt-only proxy (a key with enabled false) still starts.
-func TestModule_RequireEncryption(t *testing.T) {
+// TestRequireKey covers the startup guard against a proxy that would forward
+// plaintext. It keys on a configured key, not on enabled, so a decrypt-only
+// proxy (a key with enabled false) still starts.
+func TestRequireKey(t *testing.T) {
 	t.Parallel()
 
 	const key = "  default:\n    uri: testing://a2V5\n    duration: 1h\n    renewBefore: 10m\n"
@@ -166,11 +166,9 @@ func TestModule_RequireEncryption(t *testing.T) {
 
 			app := fx.New(
 				fx.NopLogger,
-				fx.Supply(
-					fx.Annotate(path, config.ConfigFileTag),
-					fx.Annotate(tt.require, config.RequireEncryptionTag),
-				),
+				fx.Supply(fx.Annotate(path, config.ConfigFileTag)),
 				config.Module,
+				config.RequireKey(tt.require),
 				fx.Invoke(func(*config.Config) {}),
 			)
 
