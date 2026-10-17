@@ -38,3 +38,16 @@ func Supply(cfg *Config) fx.Option {
 		NewAllowlist,
 	)
 }
+
+// RequireKey fails the graph unless the provided *Config has an encryption key
+// (see [Encryption.RequireKey]). When required is false it adds nothing. It
+// works with either [Module] or [Supply].
+func RequireKey(required bool) fx.Option {
+	if !required {
+		return fx.Options()
+	}
+
+	return fx.Invoke(func(cfg *Config) error {
+		return cfg.Encryption.RequireKey()
+	})
+}

@@ -58,6 +58,11 @@ func serve() *cli.Command {
 				Value:   "info",
 				Sources: cli.EnvVars("LOG_LEVEL"),
 			},
+			&cli.BoolFlag{
+				Name:    "require-encryption",
+				Usage:   "Refuse to start unless the config has an encryption key (encryption.default)",
+				Sources: cli.EnvVars("PROXY_REQUIRE_ENCRYPTION"),
+			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			log := logger.NewZeroLogger(os.Stderr, logger.ParseLevel(cmd.String("level")))
@@ -81,6 +86,7 @@ func serve() *cli.Command {
 				auth.Module,
 				codecserver.Module,
 				config.Module,
+				config.RequireKey(cmd.Bool("require-encryption")),
 				connect.Module,
 				dataplane.Module,
 				httpserver.Module,

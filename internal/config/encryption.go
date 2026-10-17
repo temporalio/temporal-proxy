@@ -138,6 +138,21 @@ func (e *Encryption) Validate() error {
 	return validation.Validate("", rules...)
 }
 
+// RequireKey fails unless a Default key policy is configured, whether or not
+// encryption is Enabled.
+func (e *Encryption) RequireKey() error {
+	return validation.Validate(
+		"encryption",
+		validation.Field("default", e.Default, func(p *KeyPolicy) error {
+			if p == nil {
+				return errors.New("a key is required when encryption is required")
+			}
+
+			return nil
+		}),
+	)
+}
+
 // Mode maps b to the vault's binding mode. An absent value is an error rather
 // than a default, since the right mode depends on whether earlier payloads exist.
 // It is the only place the spellings are known, so validation and vault

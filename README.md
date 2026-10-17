@@ -132,6 +132,12 @@ Images are published to [Docker Hub](https://hub.docker.com/r/temporalio/tempora
 docker pull temporalio/temporal-proxy:latest
 ```
 
+To guard against a deployment that would forward payloads unencrypted, start the proxy with
+`--require-encryption` (or set `PROXY_REQUIRE_ENCRYPTION=true`). The proxy then refuses to start unless the config
+has an encryption key (`encryption.default`). It checks for a key rather than `encryption.enabled`, so a decrypt-only
+proxy (a key with `enabled: false`) still starts. The flag sits outside the config file so that editing the config
+alone cannot turn it off.
+
 ### Helm
 
 A chart is published to the Temporal Helm repo at `https://go.temporal.io/helm-charts`:
