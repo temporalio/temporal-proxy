@@ -12,7 +12,7 @@ replace go.temporal.io/proxy => ../
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	go.temporal.io/proxy v0.4.0
-	go.temporal.io/sdk v1.49.0
+	go.temporal.io/sdk v1.50.0
 	google.golang.org/grpc v1.84.0
 )
 
