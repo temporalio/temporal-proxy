@@ -91,7 +91,7 @@ func TestNew(t *testing.T) {
 		}, time.Second, 10*time.Millisecond)
 
 		require.NoError(t, svr.Stop(t.Context()))
-		<-errCh
+		require.NoError(t, <-errCh)
 
 		require.True(t, log.Contains("Shutting down"), "expected shutdown to be logged")
 	})
@@ -121,7 +121,7 @@ func TestServerInsecureWarning(t *testing.T) {
 		}, time.Second, 10*time.Millisecond)
 
 		require.NoError(t, svr.Stop(t.Context()))
-		<-errCh
+		require.NoError(t, <-errCh)
 	})
 
 	t.Run("does not warn when credentials are secure", func(t *testing.T) {
@@ -145,7 +145,7 @@ func TestServerInsecureWarning(t *testing.T) {
 		}, time.Second, 10*time.Millisecond)
 
 		require.NoError(t, svr.Stop(t.Context()))
-		<-errCh
+		require.NoError(t, <-errCh)
 
 		require.False(t, log.Contains(insecureMessage))
 	})
@@ -191,7 +191,7 @@ func TestWithStreamInterceptor(t *testing.T) {
 	require.True(t, called.Load())
 
 	require.NoError(t, svr.Stop(t.Context()))
-	<-errCh
+	require.NoError(t, <-errCh)
 }
 
 func TestWithUnknownServiceHandler(t *testing.T) {
@@ -224,7 +224,7 @@ func TestWithUnknownServiceHandler(t *testing.T) {
 	require.ErrorContains(t, err, "reached-unknown-handler")
 
 	require.NoError(t, svr.Stop(t.Context()))
-	<-errCh
+	require.NoError(t, <-errCh)
 }
 
 func TestWithServerCodec(t *testing.T) {
@@ -250,7 +250,7 @@ func TestWithServerCodec(t *testing.T) {
 	require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.GetStatus())
 
 	require.NoError(t, svr.Stop(t.Context()))
-	<-errCh
+	require.NoError(t, <-errCh)
 
 	require.Positive(t, rec.calls.Load(), "forced server codec should be exercised")
 }
@@ -315,7 +315,7 @@ func TestWithHealthServices(t *testing.T) {
 	}
 
 	require.NoError(t, svr.Stop(t.Context()))
-	<-errCh
+	require.NoError(t, <-errCh)
 }
 
 func TestServerStartAndStop(t *testing.T) {
@@ -506,7 +506,7 @@ func TestStopDrainsCleanlyWhenNothingIsInFlight(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 
 	require.NoError(t, svr.Stop(t.Context()))
-	<-errCh
+	require.NoError(t, <-errCh)
 
 	// Guards against the forced path becoming unconditional: with nothing to wait
 	// on, the drain must finish on its own.
