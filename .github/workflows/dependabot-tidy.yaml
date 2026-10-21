@@ -1,0 +1,54 @@
+name: dependabot-tidy
+
+# examples replaces the root module with ../, so a root bump can move shared
+# indirect deps forward and leave examples/go.mod stale. Dependabot only edits
+# examples/go.mod when the bumped dependency is listed there directly, so tidy
+# it here and push the result back to the PR branch.
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - go.mod
+      - go.sum
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  tidy-examples:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    env:
+      HEAD_REF: ${{ github.head_ref }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.head_ref }}
+      - uses: ./.github/actions/setup
+      - run: go mod tidy
+        working-directory: examples
+      - name: Commit and push
+        id: push
+        run: |
+          if git diff --quiet -- examples/go.mod examples/go.sum; then
+            echo "examples/go.mod is already tidy"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add examples/go.mod examples/go.sum
+          git commit -m "[examples]: go mod tidy"
+          git push origin "HEAD:${HEAD_REF}"
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+      # Pushes made with GITHUB_TOKEN don't trigger workflows, so start CI on
+      # the new commit explicitly.
+      - if: steps.push.outputs.pushed == 'true'
+        run: gh workflow run ci.yaml --ref "$HEAD_REF"
+        env:
+          GH_TOKEN: ${{ github.token }}

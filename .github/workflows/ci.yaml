@@ -9,6 +9,8 @@ on:
     branches:
       - main
       - releases/**
+  # dependabot-tidy dispatches this after pushing a commit to a PR branch.
+  workflow_dispatch:
 
 permissions:
   contents: read
