@@ -446,7 +446,7 @@ func TestHandlerCoHostsLocalHealthWithForwarding(t *testing.T) {
 	require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, eResp.GetStatus())
 
 	require.NoError(t, svr.Stop(t.Context()))
-	<-errCh
+	require.NoError(t, <-errCh)
 }
 
 func TestForwardToReturnsStreamSetupFailure(t *testing.T) {
