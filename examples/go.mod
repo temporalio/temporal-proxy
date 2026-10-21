@@ -1,8 +1,8 @@
 module go.temporal.io/proxy/examples
 
-go 1.26.0
+go 1.26.10
 
-toolchain go1.27.1
+toolchain go1.27.3
 
 // The examples build against this working tree because pkg/api/kms/v1, which the
 // kms example serves, is not in a released tag yet. Outside this repository, drop
