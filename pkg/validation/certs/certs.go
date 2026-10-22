@@ -77,17 +77,24 @@ func ValidatePEMFile(path string, checks ...Check) error {
 	return ValidatePEM(data, checks...)
 }
 
-// ValidatePEMKeyFile reads path and verifies it contains at least one PEM
-// block whose type ends in "PRIVATE KEY" (covering "RSA PRIVATE KEY",
-// "EC PRIVATE KEY", and "PRIVATE KEY" for PKCS#8). The block contents are
-// not parsed; cryptographic validity and cert/key matching are exercised
-// at runtime by [crypto/tls.LoadX509KeyPair].
+// ValidatePEMKeyFile reads path and forwards its contents to [ValidatePEMKey].
+// A read failure is returned wrapped so callers can distinguish IO problems from
+// validation failures.
 func ValidatePEMKeyFile(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("failed to read PEM key file: %w", err)
 	}
 
+	return ValidatePEMKey(data)
+}
+
+// ValidatePEMKey verifies data contains at least one PEM block whose type ends
+// in "PRIVATE KEY" (covering "RSA PRIVATE KEY", "EC PRIVATE KEY", and
+// "PRIVATE KEY" for PKCS#8). The block contents are not parsed; cryptographic
+// validity and cert/key matching are exercised at runtime by
+// [crypto/tls.X509KeyPair].
+func ValidatePEMKey(data []byte) error {
 	for rest := data; len(rest) > 0; {
 		block, r := pem.Decode(rest)
 		if block == nil {

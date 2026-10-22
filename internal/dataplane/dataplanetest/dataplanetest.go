@@ -18,6 +18,7 @@ import (
 
 	"go.temporal.io/proxy/internal/api"
 	"go.temporal.io/proxy/internal/auth"
+	"go.temporal.io/proxy/internal/certreload"
 	"go.temporal.io/proxy/internal/codecserver"
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/dataplane"
@@ -178,6 +179,7 @@ func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 		),
 		api.Module,
 		auth.Module,
+		certreload.Module,
 		codecserver.Module,
 		connect.Module,
 		dataplane.Module,
