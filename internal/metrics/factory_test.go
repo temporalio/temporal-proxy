@@ -199,3 +199,24 @@ func TestModuleProvidesNamespacedMetrics(t *testing.T) {
 wired_wired_total 1
 `), "wired_wired_total"))
 }
+
+func TestFactory_NewGaugeVec(t *testing.T) {
+	t.Parallel()
+
+	reg := goprom.NewRegistry()
+	m := metrics.New("myns", promauto.With(reg)).ForSubsystem("sub")
+
+	// The caller's Namespace and Subsystem must lose to the bound ones.
+	m.NewGaugeVec(goprom.GaugeOpts{
+		Namespace: "ignored",
+		Subsystem: "ignored",
+		Name:      "level",
+		Help:      "Current level.",
+	}, []string{"kind"}).WithLabelValues("a").Set(3)
+
+	require.NoError(t, testutil.GatherAndCompare(reg, strings.NewReader(`
+# HELP myns_sub_level Current level.
+# TYPE myns_sub_level gauge
+myns_sub_level{kind="a"} 3
+`), "myns_sub_level"))
+}

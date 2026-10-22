@@ -176,12 +176,19 @@ func TestListener_TLSConfig(t *testing.T) {
 
 		_, cert, key := testutil.GenerateMTLSCerts(t)
 
-		cfg, err := creds.NewListener(creds.WithCertificate(cert, key)).TLSConfig()
+		base, err := creds.NewListener(creds.WithCertificate(cert, key)).TLSConfig()
 		require.NoError(t, err)
-		require.NotNil(t, cfg)
+		require.NotNil(t, base)
+		require.Empty(t, base.Certificates)
+		require.Equal(t, uint16(tls.VersionTLS12), base.MinVersion)
+		require.NotEmpty(t, base.CipherSuites)
+
+		cfg, err := base.GetConfigForClient(&tls.ClientHelloInfo{})
+		require.NoError(t, err)
 		require.Len(t, cfg.Certificates, 1)
 		require.Equal(t, uint16(tls.VersionTLS12), cfg.MinVersion)
 		require.NotEmpty(t, cfg.CipherSuites)
+		require.Equal(t, []string{"h2", "http/1.1"}, cfg.NextProtos)
 		require.Equal(t, tls.NoClientCert, cfg.ClientAuth)
 		require.Nil(t, cfg.ClientCAs)
 	})
@@ -191,9 +198,12 @@ func TestListener_TLSConfig(t *testing.T) {
 
 		ca, cert, key := testutil.GenerateMTLSCerts(t)
 
-		cfg, err := creds.NewListener(creds.WithCA(ca), creds.WithCertificate(cert, key)).TLSConfig()
+		base, err := creds.NewListener(creds.WithCA(ca), creds.WithCertificate(cert, key)).TLSConfig()
 		require.NoError(t, err)
-		require.NotNil(t, cfg)
+		require.NotNil(t, base)
+
+		cfg, err := base.GetConfigForClient(&tls.ClientHelloInfo{})
+		require.NoError(t, err)
 		require.Equal(t, tls.RequireAndVerifyClientCert, cfg.ClientAuth)
 		require.NotNil(t, cfg.ClientCAs)
 	})

@@ -14,6 +14,7 @@ import (
 
 	"go.temporal.io/proxy/internal/api"
 	"go.temporal.io/proxy/internal/auth"
+	"go.temporal.io/proxy/internal/certreload"
 	"go.temporal.io/proxy/internal/codecserver"
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/dataplane"
@@ -84,6 +85,7 @@ func serve() *cli.Command {
 				),
 				api.Module,
 				auth.Module,
+				certreload.Module,
 				codecserver.Module,
 				config.Module,
 				config.RequireKey(cmd.Bool("require-encryption")),

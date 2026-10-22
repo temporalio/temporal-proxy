@@ -23,6 +23,7 @@ import (
 	"go.temporal.io/proxy/internal/server"
 	"go.temporal.io/proxy/internal/services"
 	"go.temporal.io/proxy/internal/transport/connect"
+	"go.temporal.io/proxy/internal/transport/creds"
 	"go.temporal.io/proxy/internal/version"
 	"go.temporal.io/proxy/pkg/crypto"
 	"go.temporal.io/proxy/pkg/logger"
@@ -60,6 +61,7 @@ type (
 		allowlist  services.Allowlist
 		auth       auth.Authenticator
 		vault      *crypto.Vault
+		reloader   *creds.Reloader
 		logger     logger.Logger
 		abort      func(error)
 	}
@@ -183,7 +185,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 	)
 
 	gateway, err := server.New(
-		server.WithCredentials(cfg.Listen.Listener()),
+		server.WithCredentials(cfg.Listen.Listener(creds.WithReloader(o.reloader, "gateway"))),
 		server.WithServerCodec(router.Codec()),
 		// Health entries come from the allowlist, so what the gateway reports a
 		// status for is exactly what it will forward.
@@ -259,6 +261,13 @@ func WithAuth(a auth.Authenticator) Option {
 // encryption keys are configured; New rejects enabled encryption without one.
 func WithVault(v *crypto.Vault) Option {
 	return Option(func(o *options) { o.vault = v })
+}
+
+// WithReloader registers the TLS material of the gateway, every upstream, and
+// the Cloud API with r, so changed files are picked up without a restart. A nil
+// r, or omitting it, leaves every credential with the material it loaded first.
+func WithReloader(r *creds.Reloader) Option {
+	return Option(func(o *options) { o.reloader = r })
 }
 
 // WithLogger sets the logger used by the gateway and every upstream, defaulting
@@ -403,7 +412,7 @@ func newUpstreamForwarder(
 		dialOpts = append(dialOpts, translation.DialOptions(reg, translation.Via(conn))...)
 	}
 
-	res, err := proxy.ResolverFor(up, dialOpts, o.logger)
+	res, err := proxy.ResolverFor(up, dialOpts, o.logger, creds.WithReloader(o.reloader, "upstream/"+up.Name))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -477,7 +486,9 @@ func cloudAPIConn(cfg *config.Config, o *options, up *config.Upstream) (*transla
 		dialOpts = append(dialOpts, outbound.DialOptions(cp)...)
 	}
 
-	res, err := proxy.ResolverFor(api, dialOpts, o.logger)
+	// Every Cloud upstream renders the same Cloud API block, so they share one
+	// file set, and the reloader reads it once under this one id.
+	res, err := proxy.ResolverFor(api, dialOpts, o.logger, creds.WithReloader(o.reloader, "cloud_api"))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to resolve the Cloud API of upstream %q: %w", up.Name, err)
 	}

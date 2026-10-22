@@ -6,6 +6,7 @@ import (
 	"go.uber.org/fx"
 
 	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/transport/creds"
 	"go.temporal.io/proxy/pkg/logger"
 	"go.temporal.io/proxy/pkg/logger/tag"
 )
@@ -37,6 +38,7 @@ type (
 		Config    *config.Config
 		Logger    logger.Logger
 		Lifecycle fx.Lifecycle
+		Reloader  *creds.Reloader
 		Routes    []Route `group:"http_routes"`
 	}
 )
@@ -58,7 +60,7 @@ func newFromParams(p Params) (*Server, error) {
 
 	cfg := &p.Config.HTTP.Listen
 
-	tlsCfg, err := cfg.Listener().TLSConfig()
+	tlsCfg, err := cfg.Listener(creds.WithReloader(p.Reloader, "http")).TLSConfig()
 	if err != nil {
 		return nil, err
 	}

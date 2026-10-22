@@ -5,6 +5,7 @@ import (
 	"maps"
 	"net"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,7 +17,32 @@ import (
 	"go.temporal.io/proxy/internal/api"
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/transport/connect"
+	"go.temporal.io/proxy/internal/transport/creds"
+	"go.temporal.io/proxy/pkg/testutil"
 )
+
+// credentialRecorder is a [creds.Reporter] that keeps the credential label of
+// every expiry it is told about.
+type credentialRecorder struct {
+	mu    sync.Mutex
+	names []string
+}
+
+func (c *credentialRecorder) Attempt(string, error) {}
+
+func (c *credentialRecorder) NotAfter(credential, _ string, _ time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.names = append(c.names, credential)
+}
+
+func (c *credentialRecorder) credentials() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return append([]string(nil), c.names...)
+}
 
 // buildModule wires api.Module against the supplied config and pool, returning
 // the extension server connections and whatever error fx reported. fx.Populate
@@ -24,9 +50,22 @@ import (
 func buildModule(t *testing.T, cfg *config.Config, pool *connect.Pool) (api.Connections, error) {
 	t.Helper()
 
+	return buildModuleWithReloader(t, cfg, pool, creds.NewReloader())
+}
+
+// buildModuleWithReloader is [buildModule] with the extension servers' TLS
+// material registered with r.
+func buildModuleWithReloader(
+	t *testing.T,
+	cfg *config.Config,
+	pool *connect.Pool,
+	r *creds.Reloader,
+) (api.Connections, error) {
+	t.Helper()
+
 	var out api.Connections
 	app := fx.New(
-		fx.Supply(cfg, pool),
+		fx.Supply(cfg, pool, r),
 		api.Module,
 		fx.Populate(&out),
 		fx.NopLogger,
@@ -73,6 +112,7 @@ func TestModuleFailsStartWhenExtensionServerUnreachable(t *testing.T) {
 				Listen: config.ListenConfig{HostPort: deadAddr(t)},
 			}),
 			pool,
+			creds.NewReloader(),
 		),
 		api.Module,
 		fx.Populate(&out),
@@ -88,6 +128,29 @@ func TestModuleFailsStartWhenExtensionServerUnreachable(t *testing.T) {
 	defer cancel()
 
 	require.ErrorContains(t, app.Start(startCtx), "extension server connection not ready")
+}
+
+func TestModule_RegistersExtensionCredential(t *testing.T) {
+	t.Parallel()
+
+	ca, _, _ := testutil.GenerateMTLSCerts(t)
+
+	rec := &credentialRecorder{}
+	r := creds.NewReloader(creds.WithReporter(rec))
+
+	pool := connect.NewPool()
+	t.Cleanup(func() { require.NoError(t, pool.Close()) })
+
+	_, err := buildModuleWithReloader(t, extensionServers(config.ExtensionServer{
+		Name:   "kms",
+		Listen: config.ListenConfig{HostPort: "127.0.0.1:9090", TLS: &config.TLSConfig{CA: ca}},
+	}), pool, r)
+	require.NoError(t, err)
+
+	require.NoError(t, r.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, r.Stop(context.WithoutCancel(t.Context()))) })
+
+	require.Equal(t, []string{"extension/kms"}, rec.credentials())
 }
 
 func TestModuleBuildsAConnPerExtensionServer(t *testing.T) {

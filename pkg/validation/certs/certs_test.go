@@ -465,6 +465,46 @@ func TestValidatePEMKeyFile(t *testing.T) {
 	})
 }
 
+func TestValidatePEMKey(t *testing.T) {
+	t.Parallel()
+
+	_, ecKeyFile := testutil.GenerateSelfSignedCert(t)
+	_, rsaKeyFile := testutil.GenerateRSACert(t)
+	ecKey := readFile(t, ecKeyFile)
+	rsaKey := readFile(t, rsaKeyFile)
+	pkcs8 := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("opaque")})
+
+	tests := []struct {
+		name    string
+		data    []byte
+		wantErr string
+	}{
+		{name: "PKCS#8 block", data: pkcs8},
+		{name: "EC block", data: ecKey},
+		{name: "RSA block", data: rsaKey},
+		{
+			name:    "certificate only",
+			data:    testutil.RSACert(t, validTemplate()),
+			wantErr: "no PRIVATE KEY block found in PEM data",
+		},
+		{name: "garbage", data: []byte("not pem at all"), wantErr: "no PRIVATE KEY block found in PEM data"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := certs.ValidatePEMKey(tc.data)
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+
+			require.EqualError(t, err, tc.wantErr)
+		})
+	}
+}
+
 func readFile(t *testing.T, path string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(path)

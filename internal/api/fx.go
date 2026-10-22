@@ -10,6 +10,7 @@ import (
 	"go.temporal.io/proxy/internal/auth/outbound"
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/transport/connect"
+	"go.temporal.io/proxy/internal/transport/creds"
 )
 
 // extensionKeyPrefix namespaces extension-server entries in the shared
@@ -33,7 +34,7 @@ var Module = fx.Options(
 		for i := range p.Config.ExtensionServers {
 			es := &p.Config.ExtensionServers[i]
 
-			conn, err := extensionConn(p.Pool, es)
+			conn, err := extensionConn(p.Pool, es, p.Reloader)
 			if err != nil {
 				return nil, err
 			}
@@ -69,6 +70,7 @@ type (
 		Config    *config.Config
 		Lifecycle fx.Lifecycle
 		Pool      *connect.Pool
+		Reloader  *creds.Reloader
 	}
 
 	// Connections maps an extension server name to a connection to that server.
@@ -84,7 +86,8 @@ type (
 // module then opens on start. Unlike an upstream connection it installs no
 // namespace translation or payload encryption interceptor; an extension server
 // wraps DEKs, so sealing its traffic with the vault it backs would be circular.
-func extensionConn(pool *connect.Pool, s *config.ExtensionServer) (*connect.Conn, error) {
+// Its TLS material is registered with r.
+func extensionConn(pool *connect.Pool, s *config.ExtensionServer, r *creds.Reloader) (*connect.Conn, error) {
 	var opts []grpc.DialOption
 
 	cp, err := outbound.CredentialProviderFor(s.Credentials)
@@ -103,7 +106,7 @@ func extensionConn(pool *connect.Pool, s *config.ExtensionServer) (*connect.Conn
 		serverName = s.Listen.TLS.ServerName
 	}
 
-	cred, err := s.Listen.Dialer().DialOption(serverName)
+	cred, err := s.Listen.Dialer(creds.WithReloader(r, "extension/"+s.Name)).DialOption(serverName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build credentials for extension server %q: %w", s.Name, err)
 	}

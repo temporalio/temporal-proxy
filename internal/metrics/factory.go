@@ -72,3 +72,16 @@ func (f *Factory) NewGauge(opts prometheus.GaugeOpts) prometheus.Gauge {
 
 	return f.factory.NewGauge(opts)
 }
+
+// NewGaugeVec creates and registers a GaugeVec. It forces the bound namespace
+// (and subsystem, when set) onto opts, overriding any the caller set, so every
+// gauge shares the same prefix. labelNames are the gauge's variable label
+// dimensions.
+func (f *Factory) NewGaugeVec(opts prometheus.GaugeOpts, labelNames []string) *prometheus.GaugeVec {
+	opts.Namespace = f.namespace
+	if f.subsystem != "" {
+		opts.Subsystem = f.subsystem
+	}
+
+	return f.factory.NewGaugeVec(opts, labelNames)
+}

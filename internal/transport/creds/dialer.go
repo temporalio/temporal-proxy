@@ -12,8 +12,8 @@ import (
 // Dialer is a client-side credential resolved from a set of [Option]s. It owns
 // the outbound TLS-mode decision (insecure, system-root TLS, custom-CA TLS, or
 // mutual TLS) and builds the corresponding
-// [google.golang.org/grpc.DialOption]. Certificate and CA material is parsed
-// once and reused, so a single Dialer backs every per-request dial of a
+// [google.golang.org/grpc.DialOption]. Certificate and CA material is loaded
+// once and shared, so a single Dialer backs every per-request dial of a
 // templated upstream.
 type Dialer struct {
 	opts     *options
@@ -29,7 +29,7 @@ func NewDialer(opts ...Option) *Dialer {
 	o := newOptions(opts)
 	mode := resolveClient(o)
 
-	return &Dialer{opts: o, mode: mode, material: &material{opts: o, mode: mode}}
+	return &Dialer{opts: o, mode: mode, material: newMaterial(o, mode)}
 }
 
 // Mode reports the resolved outbound TLS mode.
@@ -50,8 +50,9 @@ func (d *Dialer) Validate() error {
 
 // DialOption returns the [grpc.DialOption] for outbound connections. serverName
 // sets the SNI and hostname-verification name (empty uses the dial target's
-// host). The certificate and CA material is parsed on the first call and reused
-// on subsequent calls, so only serverName varies per call. The same legality
+// host). The certificate and CA material is loaded on the first call, and every
+// handshake uses the material's current snapshot, so connections opened after a
+// reload see the new material even through an older DialOption. The same legality
 // guard as Validate runs first, so an illegal configuration fails here rather
 // than dialing with the wrong mode.
 func (d *Dialer) DialOption(serverName string) (grpc.DialOption, error) {
@@ -67,27 +68,12 @@ func (d *Dialer) DialOption(serverName string) (grpc.DialOption, error) {
 			ServerName: serverName,
 			MinVersion: minTLSVersion,
 		})), nil
-	case ModeCustomCA:
+	case ModeCustomCA, ModeMutualTLS:
 		if err := d.material.load(); err != nil {
 			return nil, err
 		}
 
-		return grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
-			ServerName: serverName,
-			MinVersion: minTLSVersion,
-			RootCAs:    d.material.caPool,
-		})), nil
-	case ModeMutualTLS:
-		if err := d.material.load(); err != nil {
-			return nil, err
-		}
-
-		return grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
-			Certificates: []tls.Certificate{d.material.cert},
-			RootCAs:      d.material.caPool,
-			ServerName:   serverName,
-			MinVersion:   minTLSVersion,
-		})), nil
+		return grpc.WithTransportCredentials(&reloadingCreds{m: d.material, serverName: serverName}), nil
 	default:
 		return nil, fmt.Errorf("creds: unreachable dialer mode %d", d.mode)
 	}
