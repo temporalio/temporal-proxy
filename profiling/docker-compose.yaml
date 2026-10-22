@@ -1,0 +1,110 @@
+# Profiling stack: proxy + Pyroscope + Parca + Grafana + k6.
+#
+# Start:  mise run profile:up  (or docker compose up --build)
+# Load:   mise run profile:k6  (or docker compose --profile load run --rm k6 ...)
+# Browse: Grafana at http://localhost:3000 (Pyroscope flamecharts)
+#         Parca  at http://localhost:7070 (native flamecharts)
+#
+# Alloy and Parca share the proxy container's network namespace so they
+# can scrape /debug/pprof on 127.0.0.1 without auth or TLS.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=postgres
+      - DEFAULT_NAMESPACE=default
+    ports:
+      - "7233:7233"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  proxy:
+    build:
+      context: ..
+      dockerfile: profiling/Dockerfile.dev
+    volumes:
+      - ./proxy-config.yaml:/etc/proxy/config.yaml:ro
+    ports:
+      - "8233:8233"     # gRPC gateway
+      - "9090:9090"     # Prometheus metrics
+      - "7070:7070"     # Parca UI (via shared network namespace)
+      - "12345:12345"   # Alloy admin (via shared network namespace)
+    depends_on:
+      - temporal
+
+  alloy:
+    image: grafana/alloy:latest
+    network_mode: "service:proxy"
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+    command: ["run", "/etc/alloy/config.alloy"]
+    depends_on:
+      - proxy
+      - pyroscope
+
+  parca:
+    image: ghcr.io/parca-dev/parca:latest
+    network_mode: "service:proxy"
+    volumes:
+      - ./parca.yaml:/etc/parca/parca.yaml:ro
+      - parca-data:/var/lib/parca
+    command:
+      - /parca
+      - --config-path=/etc/parca/parca.yaml
+      - --cors-allowed-origins=*
+      - --port=7070
+    depends_on:
+      - proxy
+
+  pyroscope:
+    image: grafana/pyroscope:latest
+    ports:
+      - "4040:4040"
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    depends_on:
+      - pyroscope
+
+  k6:
+    image: grafana/k6:latest
+    profiles: ["load"]
+    volumes:
+      - ./k6:/scripts:ro
+    environment:
+      - K6_VUS=${K6_VUS:-10}
+      - K6_DURATION=${K6_DURATION:-60s}
+      - PROXY_ADDR=proxy:8233
+    depends_on:
+      - proxy
+
+volumes:
+  pg-data:
+  parca-data:

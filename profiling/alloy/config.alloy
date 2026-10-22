@@ -1,0 +1,44 @@
+// Grafana Alloy config: scrape the proxy's /debug/pprof endpoints and
+// push profiles to Pyroscope.  Alloy shares the proxy container's network
+// namespace, so 127.0.0.1:8445 reaches the proxy's HTTP listener directly.
+
+pyroscope.scrape "proxy" {
+  targets = [
+    {"__address__" = "127.0.0.1:8445", "service_name" = "temporal-proxy"},
+  ]
+
+  profiling_config {
+    profile.process_cpu {
+      enabled = true
+      path    = "/debug/pprof/profile"
+      delta   = true
+    }
+    profile.memory {
+      enabled = true
+      path    = "/debug/pprof/heap"
+      delta   = true
+    }
+    profile.goroutine {
+      enabled = true
+      path    = "/debug/pprof/goroutine"
+    }
+    profile.mutex {
+      enabled = true
+      path    = "/debug/pprof/mutex"
+      delta   = true
+    }
+    profile.block {
+      enabled = true
+      path    = "/debug/pprof/block"
+      delta   = true
+    }
+  }
+
+  forward_to = [pyroscope.write.local.receiver]
+}
+
+pyroscope.write "local" {
+  endpoint {
+    url = "http://pyroscope:4040"
+  }
+}

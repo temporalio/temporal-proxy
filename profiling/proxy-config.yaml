@@ -1,0 +1,25 @@
+# Proxy config for the profiling stack.  gRPC on :8233, HTTP/pprof on
+# loopback :8445.  Loopback lets us skip auth and TLS, which is safe
+# because only containers sharing this network namespace can reach it.
+
+hostPort: :8233
+insecure: true
+
+allowedServices:
+  - temporal.api.workflowservice.v1.WorkflowService
+  - temporal.api.operatorservice.v1.OperatorService
+  - grpc.reflection.v1.ServerReflection
+
+upstreams:
+  - name: primary
+    hostPort: temporal:7233
+    insecure: true
+
+routing:
+  default: primary
+
+http:
+  hostPort: 127.0.0.1:8445
+  insecure: true
+  pprof:
+    enabled: true

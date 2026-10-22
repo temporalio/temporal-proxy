@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+#MISE description="Start the profiling stack (proxy + Pyroscope + Parca + Grafana)"
+#USAGE flag "-d --detach" help="Run in background" default="true"
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)/profiling"
+
+args=("up" "--build")
+if [[ "${usage_detach:-true}" == "true" ]]; then
+  args+=("-d")
+fi
+
+docker compose "${args[@]}"
+
+echo >&2
+echo "Grafana:  http://localhost:3000  (Pyroscope flamecharts)" >&2
+echo "Parca:    http://localhost:7070  (native flamecharts)" >&2
+echo "Pyroscope http://localhost:4040  (raw API)" >&2
+echo "Proxy:    localhost:8233         (gRPC gateway)" >&2
