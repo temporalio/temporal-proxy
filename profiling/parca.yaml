@@ -1,0 +1,45 @@
+# Parca pull-mode config: Parca scrapes pprof itself, no collector. It
+# runs in the proxy's network stack, so 127.0.0.1:8445 is the proxy's
+# loopback listener. Heap is a snapshot (Go ignores seconds there), while
+# cpu, mutex, and block are delta profiles.
+#
+# A Go process answers only one CPU profile at a time and Alloy scrapes
+# the same endpoint, so the CPU windows are kept short and far apart:
+# 10 s of profiling every 60 s, against Alloy's 8 s every 30 s. With no
+# `seconds` value Parca profiles for the whole interval, which would hold
+# the profiler continuously and starve Alloy out.
+
+object_storage:
+  bucket:
+    type: FILESYSTEM
+    config:
+      directory: /var/lib/parca
+
+scrape_configs:
+  - job_name: temporal-proxy
+    scrape_interval: 60s
+    static_configs:
+      - targets: ["127.0.0.1:8445"]
+        labels:
+          service: temporal-proxy
+    profiling_config:
+      pprof_config:
+        process_cpu:
+          enabled: true
+          path: /debug/pprof/profile
+          delta: true
+          seconds: 10
+        memory:
+          enabled: true
+          path: /debug/pprof/heap
+        goroutine:
+          enabled: true
+          path: /debug/pprof/goroutine
+        mutex:
+          enabled: true
+          path: /debug/pprof/mutex
+          delta: true
+        block:
+          enabled: true
+          path: /debug/pprof/block
+          delta: true

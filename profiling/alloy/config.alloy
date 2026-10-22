@@ -1,0 +1,54 @@
+// Grafana Alloy config: pull profiles from the proxy's /debug/pprof
+// endpoints and write them to Pyroscope. Alloy runs in the proxy's
+// network stack, so 127.0.0.1:8445 is the proxy's loopback listener.
+
+pyroscope.scrape "proxy" {
+  targets = [
+    {"__address__" = "127.0.0.1:8445", "service_name" = "temporal-proxy"},
+  ]
+
+  // A Go process answers only one CPU profile at a time and Parca scrapes
+  // the same endpoint (10 s CPU windows every 60 s), so keep Alloy's CPU
+  // windows short and on the opposite cadence: 8 s every 30 s. The default
+  // 14 s out of every 15 s left no room for the second collector.
+  scrape_interval            = "30s"
+  scrape_timeout             = "15s"
+  delta_profiling_duration   = "8s"
+
+  profiling_config {
+    // The paths mirror the routes internal/pprofserver mounts. Heap is a
+    // snapshot: Go ignores seconds on /debug/pprof/heap, so it is not a
+    // delta profile; cpu, mutex, and block are.
+    profile.process_cpu {
+      enabled = true
+      path    = "/debug/pprof/profile"
+      delta   = true
+    }
+    profile.memory {
+      enabled = true
+      path    = "/debug/pprof/heap"
+    }
+    profile.goroutine {
+      enabled = true
+      path    = "/debug/pprof/goroutine"
+    }
+    profile.mutex {
+      enabled = true
+      path    = "/debug/pprof/mutex"
+      delta   = true
+    }
+    profile.block {
+      enabled = true
+      path    = "/debug/pprof/block"
+      delta   = true
+    }
+  }
+
+  forward_to = [pyroscope.write.local.receiver]
+}
+
+pyroscope.write "local" {
+  endpoint {
+    url = "http://pyroscope:4040"
+  }
+}

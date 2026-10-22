@@ -1,0 +1,112 @@
+# Profiling stack: proxy + Pyroscope + Parca + Grafana + k6.
+#
+# Start:  mise run profile:up  (or docker compose up --build --wait)
+# Load:   mise run profile:k6  (or docker compose --profile load run --rm k6 ...)
+# Browse: Grafana at http://localhost:3000 (Pyroscope flamecharts)
+#         Parca    at http://localhost:7070 (native flamecharts)
+#
+# Alloy and Parca share the proxy container's network stack so they can
+# scrape /debug/pprof on 127.0.0.1, the loopback bind the proxy accepts
+# without auth or TLS. Every published port binds loopback only.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=postgres
+    ports:
+      - "127.0.0.1:7233:7233"
+    healthcheck:
+      # The entrypoint binds the frontend on the container's own IP
+      # (BIND_ON_IP), not on loopback, so the probe uses the hostname.
+      # k6 polls the API for the default Namespace itself afterwards.
+      test: ["CMD", "bash", "-c", ": >/dev/tcp/$(hostname)/7233"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  proxy:
+    build:
+      context: ..
+      dockerfile: profiling/Dockerfile.dev
+    volumes:
+      - ./proxy-config.yaml:/etc/proxy/config.yaml:ro
+    ports:
+      - "127.0.0.1:8233:8233"   # gRPC gateway
+      - "127.0.0.1:9090:9090"   # Prometheus metrics
+      - "127.0.0.1:7070:7070"   # Parca UI (shares the proxy's network stack)
+    depends_on:
+      temporal:
+        condition: service_healthy
+
+  alloy:
+    image: grafana/alloy:latest
+    network_mode: "service:proxy"
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+    command: ["run", "/etc/alloy/config.alloy"]
+    depends_on:
+      - proxy
+      - pyroscope
+
+  parca:
+    image: ghcr.io/parca-dev/parca:v0.29.1
+    network_mode: "service:proxy"
+    volumes:
+      - ./parca.yaml:/etc/parca/parca.yaml:ro
+    command:
+      - /parca
+      - --config-path=/etc/parca/parca.yaml
+    depends_on:
+      - proxy
+
+  pyroscope:
+    image: grafana/pyroscope:latest
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./grafana/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    depends_on:
+      - pyroscope
+
+  k6:
+    image: grafana/k6:latest
+    profiles: ["load"]
+    volumes:
+      - ./k6:/scripts:ro
+    environment:
+      - K6_VUS=${K6_VUS:-10}
+      - K6_DURATION=${K6_DURATION:-60s}
+      - PROXY_ADDR=proxy:8233
+    depends_on:
+      - proxy
+
+volumes:
+  pg-data:

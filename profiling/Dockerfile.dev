@@ -1,0 +1,16 @@
+# The root Dockerfile only packages a goreleaser artifact, so this build
+# compiles the proxy from the source tree instead. CGO stays off because
+# the alpine runtime has no glibc, and a static binary needs none.
+FROM golang:1.27 AS builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /proxy ./cmd/proxy
+
+FROM alpine:3.24.1
+RUN adduser -D -u 1000 proxy
+COPY --from=builder /proxy /usr/local/bin/proxy
+USER proxy
+ENTRYPOINT ["proxy"]
+CMD ["serve", "-c", "/etc/proxy/config.yaml"]

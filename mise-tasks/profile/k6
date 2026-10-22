@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#MISE description="Run k6 gRPC load test against the profiling proxy"
+#USAGE flag "-v --vus <vus>" help="Virtual users" default="10"
+#USAGE flag "-d --duration <duration>" help="Test duration" default="60s"
+#USAGE flag "-s --script <script>" help="k6 script path" default="grpc-load.js"
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)/profiling"
+
+K6_VUS="$usage_vus" K6_DURATION="$usage_duration" \
+  docker compose --profile load run --rm k6 run "/scripts/$usage_script"
