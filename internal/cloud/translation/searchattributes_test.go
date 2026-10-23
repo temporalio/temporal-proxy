@@ -88,16 +88,36 @@ func TestListSearchAttributesResponse(t *testing.T) {
 			}}
 
 			// Pre-filled so the test shows stale values are cleared: Cloud reports no
-			// system attributes or storage schema, so none may survive.
+			// storage schema, and system attributes come from the generated list.
 			reply := &operatorservice.ListSearchAttributesResponse{
-				SystemAttributes: map[string]enumspb.IndexedValueType{"WorkflowType": enumspb.INDEXED_VALUE_TYPE_KEYWORD},
+				SystemAttributes: map[string]enumspb.IndexedValueType{"Stale": enumspb.INDEXED_VALUE_TYPE_KEYWORD},
 				StorageSchema:    map[string]string{"stale": "stale"},
 			}
 			require.NoError(t, listSearchAttributesResponse(&operatorservice.ListSearchAttributesRequest{}, up, reply))
 
-			want := &operatorservice.ListSearchAttributesResponse{CustomAttributes: tt.want}
+			want := &operatorservice.ListSearchAttributesResponse{
+				CustomAttributes: tt.want,
+				SystemAttributes: systemAttributes,
+			}
 			require.True(t, proto.Equal(want, reply), "got %v", reply)
 		})
+	}
+}
+
+func TestSystemAttributesIncludeTheBuiltIns(t *testing.T) {
+	t.Parallel()
+
+	// Guards against regenerating from a broken source: an empty or mistyped list
+	// would still satisfy a test that only compares against systemAttributes.
+	for name, typ := range map[string]enumspb.IndexedValueType{
+		"WorkflowId":             enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+		"WorkflowType":           enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+		"ExecutionStatus":        enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+		"StartTime":              enumspb.INDEXED_VALUE_TYPE_DATETIME,
+		"HistoryLength":          enumspb.INDEXED_VALUE_TYPE_INT,
+		"TemporalSchedulePaused": enumspb.INDEXED_VALUE_TYPE_BOOL,
+	} {
+		require.Equal(t, typ, systemAttributes[name], name)
 	}
 }
 

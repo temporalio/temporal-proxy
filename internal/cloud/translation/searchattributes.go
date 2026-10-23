@@ -1,6 +1,8 @@
 package translation
 
 import (
+	"maps"
+
 	enumspb "go.temporal.io/api/enums/v1"
 	operatorservice "go.temporal.io/api/operatorservice/v1"
 	cloudservice "go.temporal.io/cloud-sdk/api/cloudservice/v1"
@@ -36,9 +38,9 @@ func listSearchAttributesRequest(req *operatorservice.ListSearchAttributesReques
 }
 
 // listSearchAttributesResponse reports the namespace's custom search attributes
-// from its Cloud spec. System attributes and the storage schema are left empty:
-// Cloud reports neither, and a hand-kept list of Temporal's built-ins would be a
-// claim about what Cloud indexes that Cloud never made.
+// from its Cloud spec. Cloud reports no system attributes, so they come from the
+// Temporal Server release systemattributes_gen.go was generated from. The storage
+// schema is left empty.
 func listSearchAttributesResponse(
 	_ *operatorservice.ListSearchAttributesRequest,
 	up *cloudservice.GetNamespaceResponse,
@@ -53,6 +55,7 @@ func listSearchAttributesResponse(
 
 	reply.Reset()
 	reply.CustomAttributes = custom
+	reply.SystemAttributes = maps.Clone(systemAttributes)
 
 	return nil
 }

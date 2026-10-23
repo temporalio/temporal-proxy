@@ -386,7 +386,8 @@ func TestEndToEndANamespacedTranslationFiresOnTheCloudUpstreamItLandsOn(t *testi
 		map[string]enumspb.IndexedValueType{"OrderId": enumspb.INDEXED_VALUE_TYPE_KEYWORD},
 		reply.GetCustomAttributes(),
 	)
-	require.Empty(t, reply.GetSystemAttributes())
+	require.Equal(t, enumspb.INDEXED_VALUE_TYPE_KEYWORD, reply.GetSystemAttributes()["ExecutionStatus"],
+		"Cloud reports no system attributes, so the proxy must supply the built-ins the UI filters on")
 }
 
 // TestEndToEndTheDefaultUpstreamCarriesNamespacelessRequests covers the ordinary

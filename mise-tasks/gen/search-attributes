@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#MISE description="Regenerate the system search attributes reported for Cloud upstreams"
+#USAGE flag "-v --version <version>" help="Temporal Server release to read them from" default="latest"
+set -euo pipefail
+
+pkg="internal/cloud/translation"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+# The server module is far too heavy to add to go.mod for one map, so the
+# generator runs in a throwaway module that depends on it instead. Its ignore
+# constraint is dropped there, since go mod tidy skips ignored files.
+sed '/^\/\/go:build ignore$/d' "$pkg/gen_systemattributes.go" >"$work/main.go"
+(
+  cd "$work"
+  go mod init gen >/dev/null 2>&1
+  go get "go.temporal.io/server@$usage_version" >/dev/null
+  go mod tidy >/dev/null 2>&1
+  go run . "$OLDPWD/$pkg/systemattributes_gen.go"
+)
+
+grep -m1 "go.temporal.io/server" "$pkg/systemattributes_gen.go"
