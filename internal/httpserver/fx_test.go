@@ -5,15 +5,26 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
 
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/httpserver"
+	"go.temporal.io/proxy/internal/transport/creds"
 	"go.temporal.io/proxy/pkg/logger"
+	"go.temporal.io/proxy/pkg/testutil"
 )
+
+// credentialRecorder is a [creds.Reporter] that keeps the credential label of
+// every expiry it is told about.
+type credentialRecorder struct {
+	mu    sync.Mutex
+	names []string
+}
 
 func TestModuleMountsEveryRouteGroup(t *testing.T) {
 	t.Parallel()
@@ -25,7 +36,7 @@ func TestModuleMountsEveryRouteGroup(t *testing.T) {
 	var svr *httpserver.Server
 
 	app := fx.New(
-		fx.Supply(cfg),
+		fx.Supply(cfg, creds.NewReloader()),
 		fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
 		fx.Provide(httpserver.AsRoutes(func() []httpserver.Route {
 			return []httpserver.Route{{Pattern: "/", Handler: body("root")}}
@@ -70,7 +81,27 @@ func TestModuleFailsWhenTheTLSMaterialWillNotLoad(t *testing.T) {
 		TLS:      &config.TLSConfig{Cert: missing, Key: missing},
 	})
 
-	require.ErrorContains(t, app.Err(), "failed to load server key pair")
+	require.ErrorContains(t, app.Err(), "failed to read PEM file")
+}
+
+func TestNewFromParams_RegistersHTTPCredential(t *testing.T) {
+	t.Parallel()
+
+	cert, key := testutil.GenerateSelfSignedCert(t)
+
+	rec := &credentialRecorder{}
+	r := creds.NewReloader(creds.WithReporter(rec))
+
+	app := newTestAppWithReloader(t, config.ListenConfig{
+		HostPort: "127.0.0.1:0",
+		TLS:      &config.TLSConfig{Cert: cert, Key: key},
+	}, r)
+	require.NoError(t, app.Err())
+
+	require.NoError(t, r.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, r.Stop(context.WithoutCancel(t.Context()))) })
+
+	require.Equal(t, []string{"http"}, rec.credentials())
 }
 
 func TestModuleIsInertWithNoRoutes(t *testing.T) {
@@ -84,7 +115,7 @@ func TestModuleIsInertWithNoRoutes(t *testing.T) {
 	var svr *httpserver.Server
 
 	app := fx.New(
-		fx.Supply(&config.Config{}),
+		fx.Supply(&config.Config{}, creds.NewReloader()),
 		fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
 		fx.Provide(httpserver.AsRoutes(func() []httpserver.Route { return nil })),
 		httpserver.Module,
@@ -98,12 +129,36 @@ func TestModuleIsInertWithNoRoutes(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, app.Stop(context.WithoutCancel(t.Context()))) })
 }
 
+func (c *credentialRecorder) Attempt(string, error) {}
+
+func (c *credentialRecorder) NotAfter(credential, _ string, _ time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.names = append(c.names, credential)
+}
+
+func (c *credentialRecorder) credentials() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return append([]string(nil), c.names...)
+}
+
 // newTestApp builds the module serving a single root route on listen.
 func newTestApp(t *testing.T, listen config.ListenConfig) *fx.App {
 	t.Helper()
 
+	return newTestAppWithReloader(t, listen, creds.NewReloader())
+}
+
+// newTestAppWithReloader builds the module serving a single root route on
+// listen, registering its TLS material with r.
+func newTestAppWithReloader(t *testing.T, listen config.ListenConfig, r *creds.Reloader) *fx.App {
+	t.Helper()
+
 	return fx.New(
-		fx.Supply(&config.Config{HTTP: config.HTTP{Listen: listen}}),
+		fx.Supply(&config.Config{HTTP: config.HTTP{Listen: listen}}, r),
 		fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
 		fx.Provide(httpserver.AsRoutes(func() []httpserver.Route {
 			return []httpserver.Route{{Pattern: "/", Handler: body("root")}}

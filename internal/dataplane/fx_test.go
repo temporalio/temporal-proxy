@@ -12,6 +12,7 @@ import (
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/dataplane"
 	"go.temporal.io/proxy/internal/services"
+	"go.temporal.io/proxy/internal/transport/creds"
 	"go.temporal.io/proxy/pkg/logger"
 )
 
@@ -101,5 +102,6 @@ func testGraph(t *testing.T, cfg *config.Config) fx.Option {
 		fx.Supply(fx.Annotate(d.auth, fx.As(new(auth.Authenticator)))),
 		fx.Supply(fx.Annotate(d.logger, fx.As(new(logger.Logger)))),
 		fx.Supply(d.vault),
+		fx.Supply(creds.NewReloader()),
 	)
 }

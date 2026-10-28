@@ -12,6 +12,7 @@ import (
 	"go.temporal.io/proxy/internal/proxy"
 	"go.temporal.io/proxy/internal/services"
 	"go.temporal.io/proxy/internal/transport/connect"
+	"go.temporal.io/proxy/internal/transport/creds"
 	"go.temporal.io/proxy/pkg/crypto"
 	"go.temporal.io/proxy/pkg/logger"
 )
@@ -42,6 +43,7 @@ type Params struct {
 	Allowlist  services.Allowlist
 	Auth       auth.Authenticator
 	Vault      *crypto.Vault
+	Reloader   *creds.Reloader
 
 	Types  protoutil.Types `optional:"true"`
 	Logger logger.Logger   `optional:"true"`
@@ -62,6 +64,7 @@ func newFromParams(p Params) (*Dataplane, error) {
 		WithAllowlist(p.Allowlist),
 		WithAuth(p.Auth),
 		WithVault(p.Vault),
+		WithReloader(p.Reloader),
 		WithLogger(p.Logger),
 		WithAbort(func(error) {
 			_ = p.Shutdowner.Shutdown(fx.ExitCode(1))

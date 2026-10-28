@@ -13,6 +13,8 @@
 // accidentally-empty client credential verifies the peer against the system root
 // pool rather than silently downgrading. Construction performs no file I/O;
 // certificate material is read and parsed lazily when a credential is validated
-// or used. A Dialer parses it once and reuses it across [Dialer.DialOption]
-// calls, while [Listener.TLSConfig] re-reads it on every call.
+// or first used. It is loaded once and then refreshed by a Reloader when one is
+// attached. Every TLS handshake builds its configuration from the material in
+// use at that moment, so new connections pick up a reload while existing ones
+// keep the material they negotiated with.
 package creds
