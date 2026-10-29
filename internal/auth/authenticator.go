@@ -118,6 +118,21 @@ func canonicalHeader(h string) string {
 	return strings.ToLower(h)
 }
 
+// resolveScheme returns the credential scheme to require. noScheme wins and
+// yields a blank scheme, so the header carries the bare credential; otherwise a
+// blank scheme defaults to "Bearer".
+func resolveScheme(scheme string, noScheme bool) string {
+	if noScheme {
+		return ""
+	}
+
+	if scheme == "" {
+		return defaultScheme
+	}
+
+	return scheme
+}
+
 // extractToken returns the credential carried in md under header, stripping the
 // scheme prefix (case-insensitive). It returns ok=false when the header is
 // absent or the scheme does not match. A blank scheme returns the raw value.

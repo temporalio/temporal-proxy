@@ -50,7 +50,7 @@ func TestJWKSAuthenticate(t *testing.T) {
 
 	t.Run("valid token", func(t *testing.T) {
 		t.Parallel()
-		a := newJWKSAuthenticator(goodKeyfunc, []string{"proxy"}, "https://issuer", "", "")
+		a := newJWKSAuthenticator(goodKeyfunc, []string{"proxy"}, "https://issuer", "", "", false)
 		tok := sign(jwt.RegisteredClaims{
 			Issuer:    "https://issuer",
 			Audience:  jwt.ClaimStrings{"proxy"},
@@ -61,14 +61,14 @@ func TestJWKSAuthenticate(t *testing.T) {
 
 	t.Run("expired token", func(t *testing.T) {
 		t.Parallel()
-		a := newJWKSAuthenticator(goodKeyfunc, nil, "", "", "")
+		a := newJWKSAuthenticator(goodKeyfunc, nil, "", "", "", false)
 		tok := sign(jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(-time.Hour))})
 		require.Equal(t, codes.Unauthenticated, status.Code(a.Authenticate(t.Context(), meta.Target{}, bearer(tok))))
 	})
 
 	t.Run("wrong audience", func(t *testing.T) {
 		t.Parallel()
-		a := newJWKSAuthenticator(goodKeyfunc, []string{"proxy"}, "", "", "")
+		a := newJWKSAuthenticator(goodKeyfunc, []string{"proxy"}, "", "", "", false)
 		tok := sign(jwt.RegisteredClaims{
 			Audience:  jwt.ClaimStrings{"other"},
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
@@ -114,7 +114,7 @@ func TestJWKSAuthenticate(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				a := newJWKSAuthenticator(goodKeyfunc, tt.audiences, "", "", "")
+				a := newJWKSAuthenticator(goodKeyfunc, tt.audiences, "", "", "", false)
 				tok := sign(jwt.RegisteredClaims{
 					Audience:  tt.tokenAud,
 					ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
@@ -133,7 +133,7 @@ func TestJWKSAuthenticate(t *testing.T) {
 
 	t.Run("wrong issuer", func(t *testing.T) {
 		t.Parallel()
-		a := newJWKSAuthenticator(goodKeyfunc, nil, "https://issuer", "", "")
+		a := newJWKSAuthenticator(goodKeyfunc, nil, "https://issuer", "", "", false)
 		tok := sign(jwt.RegisteredClaims{
 			Issuer:    "https://evil",
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
@@ -144,14 +144,41 @@ func TestJWKSAuthenticate(t *testing.T) {
 	t.Run("bad signature", func(t *testing.T) {
 		t.Parallel()
 		other, _ := rsa.GenerateKey(rand.Reader, 2048)
-		a := newJWKSAuthenticator(func(*jwt.Token) (any, error) { return &other.PublicKey, nil }, nil, "", "", "")
+		a := newJWKSAuthenticator(func(*jwt.Token) (any, error) { return &other.PublicKey, nil }, nil, "", "", "", false)
 		tok := sign(jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))})
 		require.Equal(t, codes.Unauthenticated, status.Code(a.Authenticate(t.Context(), meta.Target{}, bearer(tok))))
 	})
 
+	t.Run("blank scheme still requires Bearer", func(t *testing.T) {
+		t.Parallel()
+		a := newJWKSAuthenticator(goodKeyfunc, nil, "", "", "", false)
+		tok := sign(jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))})
+		md := metadata.Pairs("authorization", tok)
+		require.Equal(t, codes.Unauthenticated, status.Code(a.Authenticate(t.Context(), meta.Target{}, md)))
+	})
+
+	t.Run("noScheme accepts the bare token from a custom header", func(t *testing.T) {
+		t.Parallel()
+		a := newJWKSAuthenticator(goodKeyfunc, nil, "", "x-goog-iap-jwt-assertion", "", true)
+		tok := sign(jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))})
+		md := metadata.Pairs("x-goog-iap-jwt-assertion", tok)
+		require.NoError(t, a.Authenticate(t.Context(), meta.Target{}, md))
+	})
+
+	t.Run("noScheme passes a Bearer prefix through to verification", func(t *testing.T) {
+		t.Parallel()
+		a := newJWKSAuthenticator(goodKeyfunc, nil, "", "x-goog-iap-jwt-assertion", "", true)
+		tok := sign(jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))})
+		md := metadata.Pairs("x-goog-iap-jwt-assertion", "Bearer "+tok)
+		err := a.Authenticate(t.Context(), meta.Target{}, md)
+		require.Equal(t, codes.Unauthenticated, status.Code(err))
+		require.Equal(t, "invalid credentials", status.Convert(err).Message(),
+			"the prefixed value must reach the parser and fail there, not be stripped or rejected as malformed")
+	})
+
 	t.Run("missing header", func(t *testing.T) {
 		t.Parallel()
-		a := newJWKSAuthenticator(goodKeyfunc, nil, "", "", "")
+		a := newJWKSAuthenticator(goodKeyfunc, nil, "", "", "", false)
 		require.Equal(t, codes.Unauthenticated, status.Code(a.Authenticate(t.Context(), meta.Target{}, metadata.MD{})))
 	})
 
@@ -159,7 +186,7 @@ func TestJWKSAuthenticate(t *testing.T) {
 		t.Parallel()
 		a := newJWKSAuthenticator(func(*jwt.Token) (any, error) {
 			return nil, errKeysUnavailable
-		}, nil, "", "", "")
+		}, nil, "", "", "", false)
 		tok := sign(jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))})
 		require.Equal(t, codes.Unavailable, status.Code(a.Authenticate(t.Context(), meta.Target{}, bearer(tok))))
 	})
@@ -173,7 +200,7 @@ func TestJWKSAuthenticate(t *testing.T) {
 			return goodKeyfunc, nil
 		})
 
-		a := newJWKSAuthenticator(keyfn, nil, "", "", "")
+		a := newJWKSAuthenticator(keyfn, nil, "", "", "", false)
 		tok := sign(jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))})
 
 		// The loader is still blocked on release: the gate must be closed, so
@@ -213,7 +240,7 @@ func TestNewJWKSAuthenticatorInvalidURL(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			a, err := NewJWKSAuthenticator(tt.url, nil, "", "", "")
+			a, err := NewJWKSAuthenticator(tt.url, nil, "", "", "", false)
 			require.Nil(t, a)
 			require.ErrorContains(t, err, tt.wantErr)
 		})
@@ -231,7 +258,7 @@ func TestJWKSRejectionLogExcludesToken(t *testing.T) {
 	require.NoError(t, err)
 
 	keyfn := func(*jwt.Token) (any, error) { return &key.PublicKey, nil }
-	a := newJWKSAuthenticator(keyfn, nil, "", "", "")
+	a := newJWKSAuthenticator(keyfn, nil, "", "", "", false)
 
 	expired := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.RegisteredClaims{
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(-time.Hour)),

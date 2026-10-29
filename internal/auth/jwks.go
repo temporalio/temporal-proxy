@@ -60,7 +60,12 @@ type JWKSAuthenticator struct {
 // from the JWKS at rawURL. It returns an error if rawURL is malformed but does
 // not block on the IdP: the first key fetch runs in the background, and until
 // it completes Authenticate fails closed with codes.Unavailable.
-func NewJWKSAuthenticator(rawURL string, audiences []string, issuer, header, scheme string) (*JWKSAuthenticator, error) {
+//
+// A blank scheme defaults to "Bearer". noScheme reads the bare token from
+// header instead, as identity-aware proxies such as Google IAP send it.
+func NewJWKSAuthenticator(
+	rawURL string, audiences []string, issuer, header, scheme string, noScheme bool,
+) (*JWKSAuthenticator, error) {
 	if err := validateJWKSURL(rawURL); err != nil {
 		return nil, err
 	}
@@ -81,20 +86,18 @@ func NewJWKSAuthenticator(rawURL string, audiences []string, issuer, header, sch
 		}), nil
 	})
 
-	return newJWKSAuthenticator(keyfn, audiences, issuer, header, scheme), nil
+	return newJWKSAuthenticator(keyfn, audiences, issuer, header, scheme, noScheme), nil
 }
 
-func newJWKSAuthenticator(keyfn jwt.Keyfunc, audiences []string, issuer, header, scheme string) *JWKSAuthenticator {
-	if scheme == "" {
-		scheme = defaultScheme
-	}
-
+func newJWKSAuthenticator(
+	keyfn jwt.Keyfunc, audiences []string, issuer, header, scheme string, noScheme bool,
+) *JWKSAuthenticator {
 	return &JWKSAuthenticator{
 		keyfn:     keyfn,
 		audiences: audiences,
 		issuer:    issuer,
 		header:    canonicalHeader(header),
-		scheme:    scheme,
+		scheme:    resolveScheme(scheme, noScheme),
 	}
 }
 

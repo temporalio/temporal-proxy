@@ -4,10 +4,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/metadata"
 
 	"go.temporal.io/proxy/internal/api"
 	"go.temporal.io/proxy/internal/auth"
 	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/transport/meta"
 )
 
 func TestFor(t *testing.T) {
@@ -64,4 +66,18 @@ func TestFor(t *testing.T) {
 			require.NotNil(t, got)
 		})
 	}
+}
+
+// TestForPassesNoScheme pins that noScheme in config reaches the authenticator,
+// so the bare header value is accepted rather than a "Bearer" prefix required.
+func TestForPassesNoScheme(t *testing.T) {
+	t.Parallel()
+
+	a, err := auth.For(&config.AuthConfig{StaticToken: &config.StaticTokenConfig{
+		Token:    "s3cret",
+		Header:   "x-token",
+		NoScheme: true,
+	}}, nil)
+	require.NoError(t, err)
+	require.NoError(t, a.Authenticate(t.Context(), meta.Target{}, metadata.Pairs("x-token", "s3cret")))
 }
