@@ -1,7 +1,7 @@
 // Package meta defines the internal contract for what the gateway learns about a
-// request once and every later stage reads: the [Target] on the context, and the
-// namespace stamped on outgoing metadata for the forwarder's resolver and client
-// interceptors. It depends on no other internal packages.
+// request once and every later stage reads: the [Target] and the loopback mark on
+// the context, and the namespace stamped on outgoing metadata for the forwarder's
+// resolver and client interceptors. It depends on no other internal packages.
 package meta
 
 import (
@@ -59,6 +59,10 @@ type (
 	// targetKey keys a Target on a context. It is an unexported type so no other
 	// package can collide with or forge the entry.
 	targetKey struct{}
+
+	// loopbackKey marks a context as the liveness check's own call. It is an
+	// unexported type for the same reason as targetKey.
+	loopbackKey struct{}
 )
 
 // WithTarget returns ctx carrying target. It travels as a context value rather
@@ -76,6 +80,19 @@ func WithTarget(ctx context.Context, target Target) context.Context {
 func TargetFrom(ctx context.Context) Target {
 	target, _ := ctx.Value(targetKey{}).(Target)
 	return target
+}
+
+// WithLoopback returns ctx marked as a call the proxy made to itself. Like the
+// Target, it travels as a context value rather than as metadata because a caller
+// must not be able to forge it: a forged mark would quiet its own rejections.
+func WithLoopback(ctx context.Context) context.Context {
+	return context.WithValue(ctx, loopbackKey{}, true)
+}
+
+// IsLoopback reports whether ctx carries the mark set by [WithLoopback].
+func IsLoopback(ctx context.Context) bool {
+	loopback, _ := ctx.Value(loopbackKey{}).(bool)
+	return loopback
 }
 
 // HTTPGroups returns every declared route group except HTTPGroupUnspecified. A

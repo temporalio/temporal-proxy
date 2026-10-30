@@ -11,10 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"go.temporal.io/proxy/internal/auth"
 	"go.temporal.io/proxy/internal/transport/creds"
+	"go.temporal.io/proxy/internal/transport/meta"
 	"go.temporal.io/proxy/pkg/logger"
 	"go.temporal.io/proxy/pkg/testutil"
 )
@@ -63,6 +67,33 @@ func (f *fakeHealthStream) Recv() (*grpc_health_v1.HealthCheckResponse, error) {
 		Status: grpc_health_v1.HealthCheckResponse_SERVING,
 	}, nil
 }
+
+// rejectingAuthenticator rejects every request with err.
+type rejectingAuthenticator struct {
+	err error
+}
+
+func (a rejectingAuthenticator) Authenticate(context.Context, meta.Target, metadata.MD) error {
+	return a.err
+}
+
+func (rejectingAuthenticator) SecureHeaders() []string { return nil }
+
+// hangingAuthenticator answers only once the stream it is deciding on ends, the
+// way a call to an extension server that stopped responding does, and records
+// that a stream reached it.
+type hangingAuthenticator struct {
+	reached atomic.Bool
+}
+
+func (a *hangingAuthenticator) Authenticate(ctx context.Context, _ meta.Target, _ metadata.MD) error {
+	a.reached.Store(true)
+	<-ctx.Done()
+
+	return status.FromContextError(ctx.Err()).Err()
+}
+
+func (*hangingAuthenticator) SecureHeaders() []string { return nil }
 
 func TestStatusFor(t *testing.T) {
 	t.Parallel()
@@ -278,6 +309,151 @@ func TestLoopbackCheckRunsTheStreamChain(t *testing.T) {
 
 	require.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, svr.healthCheck.Status(t.Context()))
 	require.Equal(t, int64(1), seen.Load(), "the check must travel the stream interceptor chain")
+}
+
+// TestLoopbackRejectionLogLevel pins that the check's expected rejections stay
+// out of the warn log every interval, while anything else keeps the warning
+// that carries the detailed reason.
+func TestLoopbackRejectionLogLevel(t *testing.T) {
+	t.Parallel()
+
+	const (
+		serving    = grpc_health_v1.HealthCheckResponse_SERVING
+		notServing = grpc_health_v1.HealthCheckResponse_NOT_SERVING
+	)
+
+	tests := []struct {
+		name   string
+		err    error
+		status grpc_health_v1.HealthCheckResponse_ServingStatus
+		level  logger.Level
+	}{
+		{
+			name:   "a missing credential logs at debug",
+			err:    status.Error(codes.Unauthenticated, "rejected"),
+			status: serving,
+			level:  logger.LevelDebug,
+		},
+		{
+			name:   "a denied caller logs at debug",
+			err:    status.Error(codes.PermissionDenied, "rejected"),
+			status: serving,
+			level:  logger.LevelDebug,
+		},
+		{
+			name:   "an unavailable authenticator keeps its warning",
+			err:    status.Error(codes.Unavailable, "rejected"),
+			status: notServing,
+			level:  logger.LevelWarn,
+		},
+		{
+			name:   "a timed out authenticator keeps its warning",
+			err:    status.Error(codes.DeadlineExceeded, "rejected"),
+			status: notServing,
+			level:  logger.LevelWarn,
+		},
+		{
+			name:   "a bare context deadline keeps its warning",
+			err:    context.DeadlineExceeded,
+			status: notServing,
+			level:  logger.LevelWarn,
+		},
+		{
+			name:   "an authenticator answering Canceled keeps its warning",
+			err:    status.Error(codes.Canceled, "rejected"),
+			status: serving,
+			level:  logger.LevelWarn,
+		},
+		{
+			name:   "a broken authenticator keeps its warning",
+			err:    status.Error(codes.Internal, "rejected"),
+			status: serving,
+			level:  logger.LevelWarn,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			log := logger.NewTestLogger()
+			svr := startLoopbackServer(t,
+				WithStreamInterceptor(auth.StreamServerInterceptor(rejectingAuthenticator{err: tt.err}, log)),
+				WithLoopbackHealthCheck(time.Minute, 5*time.Second),
+			)
+
+			silent := logger.LevelDebug
+			if tt.level == logger.LevelDebug {
+				silent = logger.LevelWarn
+			}
+
+			require.Equal(t, tt.status, svr.healthCheck.Status(t.Context()))
+			require.NotNil(t, log.TagsOf(tt.level, "inbound authentication rejected"))
+			require.Nil(t, log.TagsOf(silent, "inbound authentication rejected"))
+		})
+	}
+}
+
+// TestLoopbackHungAuthenticatorKeepsItsWarning checks the warning end to end for
+// an authenticator that stops responding. The interceptor sees Canceled or
+// DeadlineExceeded, while the check gets DeadlineExceeded and reports
+// NOT_SERVING. A run can expire before it reaches the authenticator, so the check
+// repeats until one does. The interceptor can log after the check returns, so the
+// warning is then awaited.
+func TestLoopbackHungAuthenticatorKeepsItsWarning(t *testing.T) {
+	t.Parallel()
+
+	log := logger.NewTestLogger()
+	hung := &hangingAuthenticator{}
+	svr := startLoopbackServer(t,
+		WithStreamInterceptor(auth.StreamServerInterceptor(hung, log)),
+		WithLoopbackHealthCheck(time.Minute, 300*time.Millisecond),
+	)
+
+	deadline := time.Now().Add(30 * time.Second)
+	for !hung.reached.Load() {
+		require.True(t, time.Now().Before(deadline), "the check must reach the authenticator")
+		require.Equal(t, grpc_health_v1.HealthCheckResponse_NOT_SERVING, svr.healthCheck.Status(t.Context()))
+	}
+
+	require.Eventually(t, func() bool {
+		return log.TagsOf(logger.LevelWarn, "inbound authentication rejected") != nil
+	}, 5*time.Second, 10*time.Millisecond, "a hung authenticator must keep its warning")
+	require.Nil(t, log.TagsOf(logger.LevelDebug, "inbound authentication rejected"))
+}
+
+// TestRealServerRejectionLogsAtWarn proves the mark stays on the loopback server:
+// the same call through the real listener is a real caller and still warns.
+func TestRealServerRejectionLogsAtWarn(t *testing.T) {
+	t.Parallel()
+
+	log := logger.NewTestLogger()
+	rejection := rejectingAuthenticator{err: status.Error(codes.Unauthenticated, "rejected")}
+	svr, err := New(
+		WithLogger(logger.NewNoopLogger()),
+		WithStreamInterceptor(auth.StreamServerInterceptor(rejection, log)),
+		WithLoopbackHealthCheck(time.Minute, 5*time.Second),
+	)
+	require.NoError(t, err)
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	go func() { _ = svr.Start(t.Context(), lis) }()
+	t.Cleanup(func() { require.NoError(t, svr.Stop(context.WithoutCancel(t.Context()))) })
+
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	err = watchOnce(ctx, grpc_health_v1.NewHealthClient(conn))
+
+	require.Equal(t, codes.Unauthenticated, status.Code(err))
+	require.NotNil(t, log.TagsOf(logger.LevelWarn, "inbound authentication rejected"))
+	require.Nil(t, log.TagsOf(logger.LevelDebug, "inbound authentication rejected"))
 }
 
 // startLoopbackServer builds a server from opts and serves it, returning once

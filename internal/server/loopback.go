@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
+	"go.temporal.io/proxy/internal/transport/meta"
 	"go.temporal.io/proxy/pkg/logger"
 	"go.temporal.io/proxy/pkg/logger/tag"
 )
@@ -48,20 +49,43 @@ type (
 		lis      *bufconn.Listener
 		logger   logger.Logger
 	}
+
+	// loopbackStream overrides Context so the interceptor chain sees a stream
+	// marked by [markLoopback].
+	loopbackStream struct {
+		grpc.ServerStream
+		ctx context.Context
+	}
 )
 
 // newLoopbackServer builds the server behind the in-process listener, from the
 // same options as the real one so that it runs the same interceptor chain, and
-// registering the same health service so both answer from one status. It is a
-// separate server because transport credentials belong to a [grpc.Server], and
-// this one requires none; nothing outside the process holds its listener, so
-// only the check can reach it.
+// registering the same health service so both answer from one status. Its only
+// addition is [markLoopback], ahead of that chain. It is a separate server
+// because transport credentials belong to a [grpc.Server], and this one requires
+// none; nothing outside the process holds its listener, so only the check can
+// reach it.
 func newLoopbackServer(o *options, hc *health.Server) *grpc.Server {
-	svr := grpc.NewServer(o.serverOptions(grpc.Creds(insecure.NewCredentials()))...)
+	opts := append(
+		[]grpc.ServerOption{grpc.ChainStreamInterceptor(markLoopback)},
+		o.serverOptions(grpc.Creds(insecure.NewCredentials()))...,
+	)
+	svr := grpc.NewServer(opts...)
 	grpc_health_v1.RegisterHealthServer(svr, hc)
 
 	return svr
 }
+
+// markLoopback marks each stream as the liveness check's own call, so a later
+// interceptor can tell an expected outcome from a real caller's. It runs only on
+// the loopback server, ahead of the shared chain, and changes nothing but the
+// stream's context.
+func markLoopback(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	return handler(srv, &loopbackStream{ServerStream: ss, ctx: meta.WithLoopback(ss.Context())})
+}
+
+// Context returns the context carrying the loopback mark.
+func (s *loopbackStream) Context() context.Context { return s.ctx }
 
 // newLoopbackCheck builds the check that dials lis. Both durations are taken as
 // given: [Server] is not the owner of their defaults, and the caller has already

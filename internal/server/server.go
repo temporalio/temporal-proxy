@@ -349,7 +349,7 @@ func (s *Server) runHealthCheck(ctx context.Context) {
 // serverOptions builds the server options for one server, taking its transport
 // credentials from the caller: the loopback server is assembled from this same
 // set so it carries the same interceptor chain, and differs only in being
-// credential-free.
+// credential-free and in marking its streams with [markLoopback].
 func (o *options) serverOptions(creds grpc.ServerOption) []grpc.ServerOption {
 	opts := []grpc.ServerOption{creds}
 	if len(o.streamInterceptors) > 0 {
