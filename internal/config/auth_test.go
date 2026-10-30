@@ -3,6 +3,7 @@ package config_test
 import (
 	"testing"
 
+	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/require"
 
 	"go.temporal.io/proxy/internal/config"
@@ -41,6 +42,30 @@ func TestAuthConfigValidate(t *testing.T) {
 			name:    "static token missing token",
 			cfg:     config.AuthConfig{StaticToken: &config.StaticTokenConfig{}},
 			wantErr: "token",
+		},
+		{
+			name: "static token noScheme",
+			cfg:  config.AuthConfig{StaticToken: &config.StaticTokenConfig{Token: "secret", NoScheme: true}},
+		},
+		{
+			name: "jwks noScheme",
+			cfg: config.AuthConfig{JWKS: &config.JWKSConfig{
+				URL: "https://issuer.example.com/jwks.json", NoScheme: true,
+			}},
+		},
+		{
+			name: "static token noScheme with scheme",
+			cfg: config.AuthConfig{StaticToken: &config.StaticTokenConfig{
+				Token: "secret", Scheme: "Token", NoScheme: true,
+			}},
+			wantErr: "noScheme: cannot be set with scheme",
+		},
+		{
+			name: "jwks noScheme with scheme",
+			cfg: config.AuthConfig{JWKS: &config.JWKSConfig{
+				URL: "https://issuer.example.com/jwks.json", Scheme: "Bearer", NoScheme: true,
+			}},
+			wantErr: "noScheme: cannot be set with scheme",
 		},
 		{
 			name:    "jwks missing url",
@@ -94,6 +119,36 @@ func TestCredentialConfigValidate(t *testing.T) {
 				return
 			}
 			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+// TestAuthConfigNoSchemeDecoding pins the noScheme YAML key, and that leaving it
+// out keeps the historical "Bearer" default.
+func TestAuthConfigNoSchemeDecoding(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		{"omitted", "{}", false},
+		{"empty scheme", `scheme: ""`, false},
+		{"set", "noScheme: true", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var jwks config.JWKSConfig
+			require.NoError(t, yaml.Unmarshal([]byte(tt.yaml), &jwks))
+			require.Equal(t, tt.want, jwks.NoScheme)
+
+			var static config.StaticTokenConfig
+			require.NoError(t, yaml.Unmarshal([]byte(tt.yaml), &static))
+			require.Equal(t, tt.want, static.NoScheme)
 		})
 	}
 }

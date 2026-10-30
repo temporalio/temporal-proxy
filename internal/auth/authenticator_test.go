@@ -92,7 +92,7 @@ func TestStreamServerInterceptor(t *testing.T) {
 func TestStreamServerInterceptorStripsConsumedHeader(t *testing.T) {
 	t.Parallel()
 
-	a, err := auth.NewStaticTokenAuthenticator("s3cret", "", "") // header defaults to "authorization"
+	a, err := auth.NewStaticTokenAuthenticator("s3cret", "", "", false) // header defaults to "authorization"
 	require.NoError(t, err)
 
 	inMD := metadata.Pairs("authorization", "Bearer s3cret", "x-keep", "v")
@@ -132,7 +132,7 @@ func TestStreamServerInterceptorLogsReason(t *testing.T) {
 	var buf bytes.Buffer
 	log := logger.NewZeroLogger(&buf, logger.LevelInfo)
 
-	a, err := auth.NewStaticTokenAuthenticator("s3cret", "", "")
+	a, err := auth.NewStaticTokenAuthenticator("s3cret", "", "", false)
 	require.NoError(t, err)
 
 	ic := auth.StreamServerInterceptor(a, log)

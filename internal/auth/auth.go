@@ -28,8 +28,10 @@ func For(ac *config.AuthConfig, conns api.Connections) (Authenticator, error) {
 
 		return api.NewAuth(cc, ac.External.CredentialHeaders), nil
 	case ac.StaticToken != nil:
-		return NewStaticTokenAuthenticator(ac.StaticToken.Token, ac.StaticToken.Header, ac.StaticToken.Scheme)
+		return NewStaticTokenAuthenticator(ac.StaticToken.Token, ac.StaticToken.Header, ac.StaticToken.Scheme, ac.StaticToken.NoScheme)
 	default:
-		return NewJWKSAuthenticator(ac.JWKS.URL, ac.JWKS.Audiences, ac.JWKS.Issuer, ac.JWKS.Header, ac.JWKS.Scheme)
+		return NewJWKSAuthenticator(
+			ac.JWKS.URL, ac.JWKS.Audiences, ac.JWKS.Issuer, ac.JWKS.Header, ac.JWKS.Scheme, ac.JWKS.NoScheme,
+		)
 	}
 }

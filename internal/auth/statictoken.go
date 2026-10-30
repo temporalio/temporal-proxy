@@ -21,18 +21,18 @@ type StaticTokenAuthenticator struct {
 }
 
 // NewStaticTokenAuthenticator builds a StaticTokenAuthenticator. header and
-// scheme default to "authorization" and "Bearer" when blank. A blank token is
-// an error.
-func NewStaticTokenAuthenticator(token, header, scheme string) (*StaticTokenAuthenticator, error) {
+// scheme default to "authorization" and "Bearer" when blank; noScheme compares
+// the bare header value instead. A blank token is an error.
+func NewStaticTokenAuthenticator(token, header, scheme string, noScheme bool) (*StaticTokenAuthenticator, error) {
 	if token == "" {
 		return nil, errors.New("auth: static token is required")
 	}
 
-	if scheme == "" {
-		scheme = defaultScheme
-	}
-
-	return &StaticTokenAuthenticator{token: token, header: canonicalHeader(header), scheme: scheme}, nil
+	return &StaticTokenAuthenticator{
+		token:  token,
+		header: canonicalHeader(header),
+		scheme: resolveScheme(scheme, noScheme),
+	}, nil
 }
 
 // Authenticate compares the extracted token against the configured value in

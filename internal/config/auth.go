@@ -18,19 +18,32 @@ type (
 	}
 
 	// StaticTokenConfig compares an inbound bearer token against a fixed value.
+	//
+	// Scheme is the prefix the header value must carry, "Bearer" when blank.
+	// NoScheme compares the bare header value instead. It is a separate option,
+	// rather than an empty Scheme, for backwards compatibility: a blank or
+	// omitted scheme has always meant "Bearer".
 	StaticTokenConfig struct {
-		Token  string `yaml:"token"`
-		Header string `yaml:"header"`
-		Scheme string `yaml:"scheme"`
+		Token    string `yaml:"token"`
+		Header   string `yaml:"header"`
+		Scheme   string `yaml:"scheme"`
+		NoScheme bool   `yaml:"noScheme"`
 	}
 
 	// JWKSConfig verifies an inbound JWT's signature and claims against a JWKS.
+	//
+	// Scheme is the prefix the header value must carry, "Bearer" when blank.
+	// NoScheme reads the bare JWT from the header instead, as identity-aware
+	// proxies send it (e.g. Google IAP's x-goog-iap-jwt-assertion). It is a
+	// separate option, rather than an empty Scheme, for backwards
+	// compatibility: a blank or omitted scheme has always meant "Bearer".
 	JWKSConfig struct {
 		URL       string   `yaml:"url"`
 		Audiences []string `yaml:"audiences"`
 		Issuer    string   `yaml:"issuer"`
 		Header    string   `yaml:"header"`
 		Scheme    string   `yaml:"scheme"`
+		NoScheme  bool     `yaml:"noScheme"`
 	}
 
 	// ExternalAuthConfig delegates the inbound decision to an extension server
@@ -118,15 +131,17 @@ func (a *AuthConfig) referentialRules(subject string, known map[string]struct{})
 	}}
 }
 
-// Validate requires the token value.
+// Validate requires the token value and rejects a scheme alongside noScheme.
 func (c *StaticTokenConfig) Validate() error {
 	return validation.Validate(
 		"",
 		validation.Field("token", c.Token, validation.Required[string]()),
+		noSchemeRule(c.Scheme, c.NoScheme),
 	)
 }
 
-// Validate requires a syntactically valid absolute https JWKS URL.
+// Validate requires a syntactically valid absolute https JWKS URL and rejects a
+// scheme alongside noScheme.
 func (c *JWKSConfig) Validate() error {
 	return validation.Validate(
 		"",
@@ -142,7 +157,18 @@ func (c *JWKSConfig) Validate() error {
 
 			return nil
 		}),
+		noSchemeRule(c.Scheme, c.NoScheme),
 	)
+}
+
+// noSchemeRule rejects a scheme set alongside noScheme, which asks for none.
+func noSchemeRule(scheme string, noScheme bool) validation.Rule {
+	return func() validation.Errors {
+		if noScheme && scheme != "" {
+			return validation.Errors{{Field: "noScheme", Message: "cannot be set with scheme"}}
+		}
+		return nil
+	}
 }
 
 // Validate requires the extension server name; the credential header list may be

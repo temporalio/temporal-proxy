@@ -121,7 +121,7 @@ func TestGatewayRecordsRequestMetrics(t *testing.T) {
 func TestGatewayEndToEndAuth(t *testing.T) {
 	t.Parallel()
 
-	authenticator, err := auth.NewStaticTokenAuthenticator("secret", "", "")
+	authenticator, err := auth.NewStaticTokenAuthenticator("secret", "", "", false)
 	require.NoError(t, err)
 
 	cfg := testConfig()
