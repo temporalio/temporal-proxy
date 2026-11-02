@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
@@ -53,9 +54,9 @@ func AdmitAll() Authenticator {
 
 // StreamServerInterceptor adapts an Authenticator to a gRPC stream server
 // interceptor, logging each rejection's detailed reason (never the token) via
-// log. a must be non-nil; callers get one from the auth module, where the
-// unconfigured case is the admit-all default. A nil log falls back to the
-// default logger.
+// log, at warn unless the liveness check expects it. a must be non-nil; callers
+// get one from the auth module, where the unconfigured case is the admit-all
+// default. A nil log falls back to the default logger.
 func StreamServerInterceptor(a Authenticator, log logger.Logger) grpc.StreamServerInterceptor {
 	if log == nil {
 		log = logger.Default()
@@ -64,7 +65,12 @@ func StreamServerInterceptor(a Authenticator, log logger.Logger) grpc.StreamServ
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		md, _ := metadata.FromIncomingContext(ss.Context())
 		if err := a.Authenticate(ss.Context(), meta.TargetFrom(ss.Context()), md); err != nil {
-			log.Warn(
+			logRejection := log.Warn
+			if expectedByLoopback(ss.Context(), err) {
+				logRejection = log.Debug
+			}
+
+			logRejection(
 				"inbound authentication rejected",
 				tag.String("method", info.FullMethod),
 				tag.String("code", status.Code(err).String()),
@@ -91,6 +97,27 @@ func StreamServerInterceptor(a Authenticator, log logger.Logger) grpc.StreamServ
 		}
 
 		return handler(srv, ss)
+	}
+}
+
+// expectedByLoopback reports whether err is a rejection the liveness check
+// expects, since it sends no credential by design. Everything else keeps its
+// warning: this log is the only place an authenticator's detailed reason
+// survives, and a code seen here can differ from the one the check gets. A hung
+// authenticator surfaces here as Canceled or DeadlineExceeded, whichever of the
+// stream's deadline and gRPC closing the stream lands first. The check gets
+// DeadlineExceeded unless shutdown cancels it first, and it would count Canceled
+// as an answer.
+func expectedByLoopback(ctx context.Context, err error) bool {
+	if !meta.IsLoopback(ctx) {
+		return false
+	}
+
+	switch status.Code(err) {
+	case codes.Unauthenticated, codes.PermissionDenied:
+		return true
+	default:
+		return false
 	}
 }
 
