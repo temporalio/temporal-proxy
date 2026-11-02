@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.temporal.io/proxy/internal/auth/outbound"
+	"go.temporal.io/proxy/internal/config"
 )
 
 func TestStaticCredentialProvider(t *testing.T) {
@@ -36,6 +37,16 @@ func TestStaticCredentialProvider(t *testing.T) {
 		md, err := p.GetRequestMetadata(t.Context())
 		require.NoError(t, err)
 		require.Equal(t, map[string]string{"x-api-key": "Token k3y"}, md)
+	})
+
+	t.Run("none scheme sends the bare api key", func(t *testing.T) {
+		t.Parallel()
+		p, err := outbound.NewStaticCredentialProvider("k3y", "x-api-key", config.NoScheme)
+		require.NoError(t, err)
+
+		md, err := p.GetRequestMetadata(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, map[string]string{"x-api-key": "k3y"}, md)
 	})
 
 	t.Run("mixed-case header is lowercased to a canonical metadata key", func(t *testing.T) {

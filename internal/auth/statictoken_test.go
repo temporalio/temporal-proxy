@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"go.temporal.io/proxy/internal/auth"
+	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/transport/meta"
 )
 
@@ -17,11 +18,11 @@ func TestStaticTokenAuthenticator(t *testing.T) {
 
 	t.Run("empty token is rejected at construction", func(t *testing.T) {
 		t.Parallel()
-		_, err := auth.NewStaticTokenAuthenticator("", "", "", false)
+		_, err := auth.NewStaticTokenAuthenticator("", "", "")
 		require.Error(t, err)
 	})
 
-	a, err := auth.NewStaticTokenAuthenticator("s3cret", "", "", false)
+	a, err := auth.NewStaticTokenAuthenticator("s3cret", "", "")
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -45,10 +46,10 @@ func TestStaticTokenAuthenticator(t *testing.T) {
 	}
 }
 
-func TestStaticTokenAuthenticatorNoScheme(t *testing.T) {
+func TestStaticTokenAuthenticatorNoneScheme(t *testing.T) {
 	t.Parallel()
 
-	a, err := auth.NewStaticTokenAuthenticator("s3cret", "x-token", "", true)
+	a, err := auth.NewStaticTokenAuthenticator("s3cret", "x-token", config.NoScheme)
 	require.NoError(t, err)
 
 	tests := []struct {

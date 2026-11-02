@@ -68,15 +68,16 @@ func TestFor(t *testing.T) {
 	}
 }
 
-// TestForPassesNoScheme pins that noScheme in config reaches the authenticator,
-// so the bare header value is accepted rather than a "Bearer" prefix required.
-func TestForPassesNoScheme(t *testing.T) {
+// TestForPassesNoneScheme pins that scheme: none in config reaches the
+// authenticator, so the bare header value is accepted rather than a "Bearer"
+// prefix required.
+func TestForPassesNoneScheme(t *testing.T) {
 	t.Parallel()
 
 	a, err := auth.For(&config.AuthConfig{StaticToken: &config.StaticTokenConfig{
-		Token:    "s3cret",
-		Header:   "x-token",
-		NoScheme: true,
+		Token:  "s3cret",
+		Header: "x-token",
+		Scheme: config.NoScheme,
 	}}, nil)
 	require.NoError(t, err)
 	require.NoError(t, a.Authenticate(t.Context(), meta.Target{}, metadata.Pairs("x-token", "s3cret")))

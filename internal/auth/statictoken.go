@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 
+	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/rpc"
 	"go.temporal.io/proxy/internal/transport/meta"
 )
@@ -20,10 +21,10 @@ type StaticTokenAuthenticator struct {
 	scheme string
 }
 
-// NewStaticTokenAuthenticator builds a StaticTokenAuthenticator. header and
-// scheme default to "authorization" and "Bearer" when blank; noScheme compares
-// the bare header value instead. A blank token is an error.
-func NewStaticTokenAuthenticator(token, header, scheme string, noScheme bool) (*StaticTokenAuthenticator, error) {
+// NewStaticTokenAuthenticator builds a StaticTokenAuthenticator. header
+// defaults to "authorization" when blank, and scheme is resolved by
+// config.ResolveScheme. A blank token is an error.
+func NewStaticTokenAuthenticator(token, header, scheme string) (*StaticTokenAuthenticator, error) {
 	if token == "" {
 		return nil, errors.New("auth: static token is required")
 	}
@@ -31,7 +32,7 @@ func NewStaticTokenAuthenticator(token, header, scheme string, noScheme bool) (*
 	return &StaticTokenAuthenticator{
 		token:  token,
 		header: canonicalHeader(header),
-		scheme: resolveScheme(scheme, noScheme),
+		scheme: config.ResolveScheme(scheme),
 	}, nil
 }
 

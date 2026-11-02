@@ -3,8 +3,18 @@ package config
 import (
 	"errors"
 	"net/url"
+	"strings"
 
 	"go.temporal.io/proxy/pkg/validation"
+)
+
+const (
+	// NoScheme is the scheme value that means the credential header carries the
+	// bare credential, with no prefix. A blank scheme can't mean this: blank has
+	// always defaulted to "Bearer".
+	NoScheme = "none"
+
+	defaultScheme = "Bearer"
 )
 
 type (
@@ -18,32 +28,22 @@ type (
 	}
 
 	// StaticTokenConfig compares an inbound bearer token against a fixed value.
-	//
-	// Scheme is the prefix the header value must carry, "Bearer" when blank.
-	// NoScheme compares the bare header value instead. It is a separate option,
-	// rather than an empty Scheme, for backwards compatibility: a blank or
-	// omitted scheme has always meant "Bearer".
+	// Scheme is resolved by [ResolveScheme].
 	StaticTokenConfig struct {
-		Token    string `yaml:"token"`
-		Header   string `yaml:"header"`
-		Scheme   string `yaml:"scheme"`
-		NoScheme bool   `yaml:"noScheme"`
+		Token  string `yaml:"token"`
+		Header string `yaml:"header"`
+		Scheme string `yaml:"scheme"`
 	}
 
 	// JWKSConfig verifies an inbound JWT's signature and claims against a JWKS.
-	//
-	// Scheme is the prefix the header value must carry, "Bearer" when blank.
-	// NoScheme reads the bare JWT from the header instead, as identity-aware
-	// proxies send it (e.g. Google IAP's x-goog-iap-jwt-assertion). It is a
-	// separate option, rather than an empty Scheme, for backwards
-	// compatibility: a blank or omitted scheme has always meant "Bearer".
+	// Scheme is resolved by [ResolveScheme]; [NoScheme] suits identity-aware
+	// proxies that send a bare JWT, such as Google IAP's x-goog-iap-jwt-assertion.
 	JWKSConfig struct {
 		URL       string   `yaml:"url"`
 		Audiences []string `yaml:"audiences"`
 		Issuer    string   `yaml:"issuer"`
 		Header    string   `yaml:"header"`
 		Scheme    string   `yaml:"scheme"`
-		NoScheme  bool     `yaml:"noScheme"`
 	}
 
 	// ExternalAuthConfig delegates the inbound decision to an extension server
@@ -73,13 +73,27 @@ type (
 	}
 
 	// StaticCredentialConfig injects a fixed API key as a bearer header on every
-	// outbound request to the upstream.
+	// outbound request to the upstream. Scheme is resolved by [ResolveScheme].
 	StaticCredentialConfig struct {
 		APIKey string `yaml:"apiKey"`
 		Header string `yaml:"header"`
 		Scheme string `yaml:"scheme"`
 	}
 )
+
+// ResolveScheme returns the prefix a credential header carries before the
+// credential: "Bearer" when s is blank, no prefix ("") when s is [NoScheme]
+// (case-insensitive), and s itself otherwise.
+func ResolveScheme(s string) string {
+	switch {
+	case s == "":
+		return defaultScheme
+	case strings.EqualFold(s, NoScheme):
+		return ""
+	default:
+		return s
+	}
+}
 
 // Validate requires exactly one authenticator and checks the selected one.
 func (a *AuthConfig) Validate() error {
@@ -131,17 +145,15 @@ func (a *AuthConfig) referentialRules(subject string, known map[string]struct{})
 	}}
 }
 
-// Validate requires the token value and rejects a scheme alongside noScheme.
+// Validate requires the token value.
 func (c *StaticTokenConfig) Validate() error {
 	return validation.Validate(
 		"",
 		validation.Field("token", c.Token, validation.Required[string]()),
-		noSchemeRule(c.Scheme, c.NoScheme),
 	)
 }
 
-// Validate requires a syntactically valid absolute https JWKS URL and rejects a
-// scheme alongside noScheme.
+// Validate requires a syntactically valid absolute https JWKS URL.
 func (c *JWKSConfig) Validate() error {
 	return validation.Validate(
 		"",
@@ -157,18 +169,7 @@ func (c *JWKSConfig) Validate() error {
 
 			return nil
 		}),
-		noSchemeRule(c.Scheme, c.NoScheme),
 	)
-}
-
-// noSchemeRule rejects a scheme set alongside noScheme, which asks for none.
-func noSchemeRule(scheme string, noScheme bool) validation.Rule {
-	return func() validation.Errors {
-		if noScheme && scheme != "" {
-			return validation.Errors{{Field: "noScheme", Message: "cannot be set with scheme"}}
-		}
-		return nil
-	}
 }
 
 // Validate requires the extension server name; the credential header list may be

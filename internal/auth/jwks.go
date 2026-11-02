@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 
+	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/rpc"
 	"go.temporal.io/proxy/internal/transport/meta"
 )
@@ -60,12 +61,7 @@ type JWKSAuthenticator struct {
 // from the JWKS at rawURL. It returns an error if rawURL is malformed but does
 // not block on the IdP: the first key fetch runs in the background, and until
 // it completes Authenticate fails closed with codes.Unavailable.
-//
-// A blank scheme defaults to "Bearer". noScheme reads the bare token from
-// header instead, as identity-aware proxies such as Google IAP send it.
-func NewJWKSAuthenticator(
-	rawURL string, audiences []string, issuer, header, scheme string, noScheme bool,
-) (*JWKSAuthenticator, error) {
+func NewJWKSAuthenticator(rawURL string, audiences []string, issuer, header, scheme string) (*JWKSAuthenticator, error) {
 	if err := validateJWKSURL(rawURL); err != nil {
 		return nil, err
 	}
@@ -86,18 +82,16 @@ func NewJWKSAuthenticator(
 		}), nil
 	})
 
-	return newJWKSAuthenticator(keyfn, audiences, issuer, header, scheme, noScheme), nil
+	return newJWKSAuthenticator(keyfn, audiences, issuer, header, scheme), nil
 }
 
-func newJWKSAuthenticator(
-	keyfn jwt.Keyfunc, audiences []string, issuer, header, scheme string, noScheme bool,
-) *JWKSAuthenticator {
+func newJWKSAuthenticator(keyfn jwt.Keyfunc, audiences []string, issuer, header, scheme string) *JWKSAuthenticator {
 	return &JWKSAuthenticator{
 		keyfn:     keyfn,
 		audiences: audiences,
 		issuer:    issuer,
 		header:    canonicalHeader(header),
-		scheme:    resolveScheme(scheme, noScheme),
+		scheme:    config.ResolveScheme(scheme),
 	}
 }
 

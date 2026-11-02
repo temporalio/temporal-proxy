@@ -4,15 +4,15 @@ import (
 	"context"
 	"errors"
 	"strings"
+
+	"go.temporal.io/proxy/internal/config"
 )
 
-const (
-	defaultHeader = "authorization"
-	defaultScheme = "Bearer"
-)
+const defaultHeader = "authorization"
 
-// StaticCredentialProvider attaches a fixed "<scheme> <apiKey>" header to every
-// outbound request on the connection it is dialed with. It implements
+// StaticCredentialProvider attaches a fixed "<scheme> <apiKey>" header (or the
+// bare apiKey when the scheme is config.NoScheme) to every outbound request on
+// the connection it is dialed with. It implements
 // google.golang.org/grpc/credentials PerRPCCredentials and requires transport
 // security, so gRPC refuses to send the credential over an insecure connection.
 type StaticCredentialProvider struct {
@@ -20,19 +20,20 @@ type StaticCredentialProvider struct {
 	value  string
 }
 
-// NewStaticCredentialProvider builds a StaticCredentialProvider. header and
-// scheme default to "authorization" and "Bearer" when blank. A blank apiKey is
-// an error.
+// NewStaticCredentialProvider builds a StaticCredentialProvider. header
+// defaults to "authorization" when blank, and scheme is resolved by
+// config.ResolveScheme. A blank apiKey is an error.
 func NewStaticCredentialProvider(apiKey, header, scheme string) (*StaticCredentialProvider, error) {
 	if apiKey == "" {
 		return nil, errors.New("auth: api key is required")
 	}
 
-	if scheme == "" {
-		scheme = defaultScheme
+	value := apiKey
+	if scheme = config.ResolveScheme(scheme); scheme != "" {
+		value = scheme + " " + apiKey
 	}
 
-	return &StaticCredentialProvider{header: canonicalHeader(header), value: scheme + " " + apiKey}, nil
+	return &StaticCredentialProvider{header: canonicalHeader(header), value: value}, nil
 }
 
 // GetRequestMetadata returns the fixed credential header for every call.
