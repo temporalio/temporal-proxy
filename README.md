@@ -400,6 +400,28 @@ command against `localhost`.
 Profiles name hot code paths in the proxy itself, which is why the routes are off unless enabled and why validation
 requires `auth` the moment the listener is reachable beyond loopback.
 
+## Standalone Nexus Operations over HTTP (not yet supported)
+
+The proxy will serve the Nexus HTTP connector on the HTTP listener, so an application with no Temporal context can start
+and track Standalone Nexus Operations over HTTP. The keys below are parsed and validated today, but a config that sets
+`http.standaloneNexus` fails validation as not yet supported until the connector is served.
+Workflows that call Nexus through the gRPC gateway need no block. See [the design](rfc/nexus-http-connector.md).
+
+| Key                                         | Default | Meaning                                                                                                 |
+| ------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------- |
+| `http.standaloneNexus[].name`               | none    | Names the block in logs and metrics. Must be unique.                                                    |
+| `http.standaloneNexus[].pathPrefix`         | none    | Absolute path of two or more segments to mount the block under. Must not overlap another route group.   |
+| `http.standaloneNexus[].namespace`          | none    | Namespace the block stores operations in. Must route to an upstream without request metadata.           |
+| `http.standaloneNexus[].identity`           | none    | Default for start, cancel, and terminate bodies that set none. A caller's own value wins, unverified.   |
+| `http.standaloneNexus[].maxRequestBodySize` | `4MiB`  | Largest request body the block accepts.                                                                 |
+| `http.standaloneNexus[].auth`               | none    | Same shape as `http.codecServer.auth`. Required, with `http.tls`, once `http.hostPort` is not loopback. |
+
+Payloads a block sends and receives use the block Namespace's codec, as on the gRPC gateway.
+Blocks require `allowedServices` to include `temporal.api.workflowservice.v1.WorkflowService`, which the connector calls.
+A block's `pathPrefix` is a clean absolute path such as `/nexus/partners`; a single segment, a second segment of
+`encode`, `decode`, or `download`, anything under `/debug/pprof`, and a prefix nested in another block's are refused,
+since each would take routes from another route group or block.
+
 ## Metrics
 
 The proxy serves Prometheus metrics on `/metrics`. Everything under `metrics:` in the config controls the endpoint and

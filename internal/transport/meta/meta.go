@@ -39,6 +39,24 @@ const (
 	HTTPGroupPProf
 )
 
+// The routes each HTTP route group mounts on the shared HTTP listener. The
+// codec server and pprof server mount them, and config validates
+// http.standaloneNexus path prefixes against them.
+const (
+	// CodecServerEncodeRoute is the codec server's encode route, served at the
+	// root and under a /{namespace} segment.
+	CodecServerEncodeRoute = "/encode"
+	// CodecServerDecodeRoute is the codec server's decode route, served at the
+	// root and under a /{namespace} segment.
+	CodecServerDecodeRoute = "/decode"
+	// CodecServerDownloadRoute is the codec server's download route, served at
+	// the root and under a /{namespace} segment.
+	CodecServerDownloadRoute = "/download"
+	// PProfRoute is the prefix the pprof server mounts every profile route
+	// under.
+	PProfRoute = "/debug/pprof/"
+)
+
 type (
 	// HTTPGroup identifies which of the proxy's HTTP route groups a request
 	// reached. Every value except HTTPGroupUnspecified is listed by [HTTPGroups].
@@ -106,6 +124,12 @@ func IsLoopback(ctx context.Context) bool {
 // new group is added here alongside its constant.
 func HTTPGroups() []HTTPGroup {
 	return []HTTPGroup{HTTPGroupCodecServer, HTTPGroupPProf}
+}
+
+// CodecServerRoutes returns the codec server's routes, each served at the root
+// and under a /{namespace} segment.
+func CodecServerRoutes() []string {
+	return []string{CodecServerEncodeRoute, CodecServerDecodeRoute, CodecServerDownloadRoute}
 }
 
 // WithNamespace returns ctx with namespace set on its outgoing gRPC metadata,

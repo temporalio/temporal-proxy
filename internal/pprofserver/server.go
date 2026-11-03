@@ -10,9 +10,6 @@ import (
 	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
-// route is the URL prefix every profile route is mounted under.
-const route = "/debug/pprof/"
-
 // newFromParams builds the routes the configuration describes, or returns none
 // when the pprof block is disabled. Authentication wraps the whole group when
 // configured. The profiles name no namespace, so the namespace a decision names
@@ -43,20 +40,20 @@ func newFromParams(p Params) ([]httpserver.Route, error) {
 		log.Warn("Pprof routes are running without authentication, which is only allowed on a loopback bind")
 	}
 
-	return []httpserver.Route{{Pattern: route, Handler: authenticate(newHandler())}}, nil
+	return []httpserver.Route{{Pattern: meta.PProfRoute, Handler: authenticate(newHandler())}}, nil
 }
 
 // newHandler builds the mux serving the standard profile endpoints under
-// [route]. Mounting them on a mux of our own rather than letting
+// [meta.PProfRoute]. Mounting them on a mux of our own rather than letting
 // net/http/pprof register its globals keeps the routes behind the group's
 // authentication and off any other server in the process.
 func newHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc(route, netpprof.Index)
-	mux.HandleFunc(route+"cmdline", netpprof.Cmdline)
-	mux.HandleFunc(route+"profile", netpprof.Profile)
-	mux.HandleFunc(route+"symbol", netpprof.Symbol)
-	mux.HandleFunc(route+"trace", netpprof.Trace)
+	mux.HandleFunc(meta.PProfRoute, netpprof.Index)
+	mux.HandleFunc(meta.PProfRoute+"cmdline", netpprof.Cmdline)
+	mux.HandleFunc(meta.PProfRoute+"profile", netpprof.Profile)
+	mux.HandleFunc(meta.PProfRoute+"symbol", netpprof.Symbol)
+	mux.HandleFunc(meta.PProfRoute+"trace", netpprof.Trace)
 
 	return mux
 }

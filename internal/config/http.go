@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"net"
 
 	"go.temporal.io/proxy/pkg/validation"
@@ -10,11 +11,12 @@ type (
 	// HTTP configures the shared HTTP listener and the route groups it serves.
 	// Listen is inline, so its address and TLS are the block's own hostPort,
 	// insecure, and tls keys. Each group carries its own CORS and auth, since
-	// their callers differ.
+	// their callers differ. Every Standalone Nexus block is a group of its own.
 	HTTP struct {
-		Listen      ListenConfig `yaml:",inline"`
-		CodecServer CodecServer  `yaml:"codecServer"`
-		PProf       PProf        `yaml:"pprof"`
+		Listen          ListenConfig     `yaml:",inline"`
+		CodecServer     CodecServer      `yaml:"codecServer"`
+		PProf           PProf            `yaml:"pprof"`
+		StandaloneNexus []NexusConnector `yaml:"standaloneNexus"`
 	}
 
 	// routeGroup is a set of routes served by the shared HTTP listener. Each
@@ -36,17 +38,26 @@ type (
 // enabled nothing binds, so nothing is checked. A group reachable beyond
 // loopback requires authentication, and the listener requires TLS once any
 // such group has it, because a browser will not send a token over plaintext.
+// Rules spanning the Nexus blocks are also checked.
 func (h *HTTP) Validate() error {
-	return validateGroups(&h.Listen, h.groups())
+	rules := append(groupRules(&h.Listen, h.groups()), h.nexusRules()...)
+
+	return validation.Validate("", rules...)
 }
 
 // groups lists every route group the listener can serve. A new group is a
-// field on HTTP plus an entry here.
+// field on HTTP plus an entry here. Each Nexus block is a group of its own.
 func (h *HTTP) groups() []namedGroup {
-	return []namedGroup{
+	groups := []namedGroup{
 		{name: "codecServer", group: &h.CodecServer},
 		{name: "pprof", group: &h.PProf},
 	}
+
+	for i := range h.StandaloneNexus {
+		groups = append(groups, namedGroup{name: fmt.Sprintf("standaloneNexus[%d]", i), group: &h.StandaloneNexus[i]})
+	}
+
+	return groups
 }
 
 // referentialRules checks that every enabled group's external auth names a
@@ -62,9 +73,9 @@ func (h *HTTP) referentialRules(known map[string]struct{}) []validation.Rule {
 	return rules
 }
 
-// validateGroups applies the listener rules for the enabled groups among
-// groups.
-func validateGroups(listen *ListenConfig, groups []namedGroup) error {
+// groupRules returns the listener rules for the enabled groups among groups,
+// or none when no group is enabled.
+func groupRules(listen *ListenConfig, groups []namedGroup) []validation.Rule {
 	var enabled []namedGroup
 	authed := false
 	for _, g := range groups {
@@ -115,7 +126,7 @@ func validateGroups(listen *ListenConfig, groups []namedGroup) error {
 		listen.insecureRule(),
 	)
 
-	return validation.Validate("", rules...)
+	return rules
 }
 
 // isLoopback reports whether hostPort binds only the loopback interface. An

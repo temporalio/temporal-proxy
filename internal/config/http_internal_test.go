@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 type fakeGroup struct {
@@ -27,24 +29,24 @@ func TestValidateGroupsAppliesToAnyGroup(t *testing.T) {
 	}{
 		{
 			name:   "only disabled groups bind nothing",
-			groups: []namedGroup{{name: "nexus", group: &fakeGroup{}}},
+			groups: []namedGroup{{name: "standaloneNexus", group: &fakeGroup{}}},
 		},
 		{
 			name:    "second group without auth off loopback",
 			listen:  ListenConfig{HostPort: ":8443"},
-			groups:  []namedGroup{{name: "codecServer", group: &fakeGroup{}}, {name: "nexus", group: &fakeGroup{on: true}}},
-			wantErr: "nexus: auth: auth is required unless hostPort is loopback",
+			groups:  []namedGroup{{name: "codecServer", group: &fakeGroup{}}, {name: "standaloneNexus", group: &fakeGroup{on: true}}},
+			wantErr: "standaloneNexus: auth: auth is required unless hostPort is loopback",
 		},
 		{
 			name:    "second group with auth but no tls off loopback",
 			listen:  ListenConfig{HostPort: ":8443"},
-			groups:  []namedGroup{{name: "nexus", group: &fakeGroup{on: true, auth: token}}},
+			groups:  []namedGroup{{name: "standaloneNexus", group: &fakeGroup{on: true, auth: token}}},
 			wantErr: "tls is required when auth is configured and hostPort is not loopback",
 		},
 		{
 			name:   "loopback needs no auth",
 			listen: ListenConfig{HostPort: "127.0.0.1:8443"},
-			groups: []namedGroup{{name: "nexus", group: &fakeGroup{on: true}}},
+			groups: []namedGroup{{name: "standaloneNexus", group: &fakeGroup{on: true}}},
 		},
 	}
 
@@ -52,7 +54,7 @@ func TestValidateGroupsAppliesToAnyGroup(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := validateGroups(&tt.listen, tt.groups)
+			err := validation.Validate("", groupRules(&tt.listen, tt.groups)...)
 			if tt.wantErr == "" {
 				require.NoError(t, err)
 				return
