@@ -39,7 +39,7 @@ func TestForwardContextCarriesIncomingMetadataOutbound(t *testing.T) {
 	// incoming metadata here silently breaks both.
 	in := metadata.Pairs(
 		meta.NamespaceHeader, "orders",
-		temporalNamespaceHeader, "orders",
+		meta.TemporalNamespaceHeader, "orders",
 		"authorization", "Bearer k3y",
 		"user-agent", "grpc-go/1.0",
 		"content-type", "application/grpc",
@@ -49,7 +49,7 @@ func TestForwardContextCarriesIncomingMetadataOutbound(t *testing.T) {
 	out, ok := metadata.FromOutgoingContext(forwardContext(metadata.NewIncomingContext(t.Context(), in)))
 	require.True(t, ok, "expected forwardContext to install outgoing metadata")
 	require.Equal(t, []string{"orders"}, out.Get(meta.NamespaceHeader))
-	require.Equal(t, []string{"orders"}, out.Get(temporalNamespaceHeader))
+	require.Equal(t, []string{"orders"}, out.Get(meta.TemporalNamespaceHeader))
 	require.Equal(t, []string{"Bearer k3y"}, out.Get("authorization"))
 
 	// Transport headers describe the inbound hop: gRPC sets its own on the
