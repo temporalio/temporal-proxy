@@ -2,8 +2,10 @@ package codec_test
 
 import (
 	"crypto/rand"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/common/v1"
@@ -12,6 +14,14 @@ import (
 	"go.temporal.io/proxy/pkg/codec"
 	"go.temporal.io/proxy/pkg/compress"
 )
+
+// recordingObserver records what a Compressor reports, one string per call.
+type recordingObserver struct {
+	events    []string
+	algorithm string
+	in, out   int
+	err       error
+}
 
 func TestCompressorRoundtrip(t *testing.T) {
 	t.Parallel()
@@ -254,6 +264,88 @@ func TestCompressorDecodeOnlyAllocations(t *testing.T) {
 		_, _ = codec.NewCompressor(nil, decoders).Decode(in)
 	})
 	require.LessOrEqual(t, allocs, 1.0)
+}
+
+// TestCompressorObserver shows each payload reaches the observer once, as
+// either an op or a skip with its reason. Dropping a skipped call, or reporting
+// the not-smaller case only as a skip, fails it.
+func TestCompressorObserver(t *testing.T) {
+	t.Parallel()
+
+	incompressible := make([]byte, 512)
+	_, _ = rand.Read(incompressible)
+
+	marked := compressiblePayload()
+	marked.Metadata[codec.MetadataEncoding] = []byte(codec.CompressionEncoding)
+
+	tests := []struct {
+		name    string
+		payload *common.Payload
+		want    []string
+	}{
+		{name: "compressed", payload: compressiblePayload(), want: []string{"compress snappy <nil>"}},
+		{name: "below minBytes", payload: testPayload("json/plain", `"a"`), want: []string{"skip below_min_bytes snappy"}},
+		{name: "already compressed", payload: marked, want: []string{"skip already_compressed snappy"}},
+		{
+			// Compression ran and cost CPU, so it is an op as well as a skip.
+			name:    "not smaller",
+			payload: testPayload("binary/plain", string(incompressible)),
+			want:    []string{"compress snappy <nil>", "skip not_smaller snappy"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			obs := &recordingObserver{}
+			c := codec.NewCompressor(newSnappy(t), codec.WithMinBytes(16), codec.WithCompressionObserver(obs))
+			_, err := c.Encode([]*common.Payload{tc.payload})
+			require.NoError(t, err)
+			require.Equal(t, tc.want, obs.events)
+		})
+	}
+}
+
+// TestCompressorObserverDecode shows a restored payload is observed with the
+// sizes either side of the algorithm, and an unknown algorithm with the name the
+// payload gave and an error matching ErrUnknownAlgorithm. Passing the sizes in
+// the wrong order fails the first case.
+func TestCompressorObserverDecode(t *testing.T) {
+	t.Parallel()
+
+	compressed, err := codec.NewCompressor(newZstd(t)).Encode([]*common.Payload{compressiblePayload()})
+	require.NoError(t, err)
+
+	t.Run("restored", func(t *testing.T) {
+		t.Parallel()
+
+		obs := &recordingObserver{}
+		_, err := codec.NewCompressor(newZstd(t), codec.WithCompressionObserver(obs)).Decode(compressed)
+		require.NoError(t, err)
+		require.Equal(t, []string{"decompress zstd <nil>"}, obs.events)
+		require.Less(t, obs.in, obs.out)
+	})
+
+	t.Run("unknown algorithm", func(t *testing.T) {
+		t.Parallel()
+
+		obs := &recordingObserver{}
+		_, err := codec.NewCompressor(newSnappy(t), codec.WithCompressionObserver(obs)).Decode(compressed)
+		require.ErrorIs(t, err, codec.ErrUnknownAlgorithm)
+		require.Len(t, obs.events, 1)
+		require.ErrorIs(t, obs.err, codec.ErrUnknownAlgorithm)
+		require.Equal(t, "zstd", obs.algorithm)
+	})
+}
+
+func (r *recordingObserver) Observe(op, algorithm string, in, out int, _ time.Duration, err error) {
+	r.algorithm, r.in, r.out, r.err = algorithm, in, out, err
+	r.events = append(r.events, fmt.Sprintf("%s %s %v", op, algorithm, err))
+}
+
+func (r *recordingObserver) Skipped(reason, algorithm string) {
+	r.events = append(r.events, "skip "+reason+" "+algorithm)
 }
 
 // compressiblePayload returns a payload whose data compresses well.

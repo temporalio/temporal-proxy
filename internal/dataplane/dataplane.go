@@ -116,10 +116,11 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 	// are global, so nothing here varies per upstream. Building it once is also
 	// what lets the codec server apply the identical chain.
 	codecOpts := proxy.CodecOptions{
-		Encrypt:        cfg.Encryption.Enabled,
-		EncodeFailures: cfg.Encryption.Failures,
-		SkipEncodings:  cfg.Encryption.SkipEncodings,
-		Compression:    &cfg.Compression,
+		Encrypt:             cfg.Encryption.Enabled,
+		EncodeFailures:      cfg.Encryption.Failures,
+		SkipEncodings:       cfg.Encryption.SkipEncodings,
+		Compression:         &cfg.Compression,
+		CompressionReporter: reps.compression,
 	}
 
 	// Only assign the vault once it is known to be there. o.vault is a concrete

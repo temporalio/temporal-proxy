@@ -385,8 +385,8 @@ how series are labeled:
 
 Every name below is prefixed with the metric prefix and its subsystem, so `requests_total` in the `server` subsystem is
 exposed as `tmprl_proxy_server_requests_total` by default. Each configured metadata label is added to the series
-emitted while serving a request: the `server` and `router` series, `vault_ops`, `vault_unbound_opens`, and
-`vault_namespace_mismatches`. The KEK and
+emitted while serving a request: the `server`, `router`, and `compression` series, `vault_ops`, `vault_unbound_opens`,
+and `vault_namespace_mismatches`. The KEK and
 DEK series do not carry them, because they are emitted off the request path where no metadata is in scope to read.
 Neither do `vault_ops`, `vault_unbound_opens`, or `vault_namespace_mismatches` when the operation came from the codec
 server: an HTTP request carries no gRPC metadata, so a metadata label reports blank there even though the same series
@@ -398,33 +398,47 @@ server, since an HTTP request carries no gRPC metadata), and `vault_ops_total` r
 payload sealed under a KEK the proxy doesn't hold, `result="unbound"` for one `strict` refused for carrying no
 Namespace binding, and `result="mismatch"` for one `strict` refused for being bound to another Namespace.
 
-| Subsystem      | Metric                             | Type      | Labels                               |
-| -------------- | ---------------------------------- | --------- | ------------------------------------ |
-| `server`       | `requests_total`                   | counter   | `method`, `code`                     |
-| `server`       | `request_duration_seconds`         | histogram | `method`                             |
-| `server`       | `panics_total`                     | counter   | `method`                             |
-| `router`       | `decisions_total`                  | counter   | `upstream`, `outcome`                |
-| `router`       | `forwarding_errors_total`          | counter   | `upstream`, `reason`                 |
-| `encryption`   | `vault_ops_total`                  | counter   | `operation`, `result`, `namespace`   |
-| `encryption`   | `vault_ops_duration_seconds`       | histogram | `operation`, `namespace`             |
-| `encryption`   | `payloads_skipped_total`           | counter   | `operation`, `encoding`, `namespace` |
-| `encryption`   | `vault_unbound_opens_total`        | counter   | `namespace`                          |
-| `encryption`   | `vault_namespace_mismatches_total` | counter   | `namespace`                          |
-| `encryption`   | `kek_ops_total`                    | counter   | `provider`, `operation`, `result`    |
-| `encryption`   | `kek_ops_duration_seconds`         | histogram | `provider`, `operation`              |
-| `encryption`   | `dek_ops_total`                    | counter   | `operation`, `result`                |
-| `encryption`   | `dek_ops_duration_seconds`         | histogram | `operation`                          |
-| `encryption`   | `dek_rotations_total`              | counter   | `reason`                             |
-| `encryption`   | `dek_cache_hits_total`             | counter   | none                                 |
-| `encryption`   | `dek_cache_misses_total`           | counter   | none                                 |
-| `encryption`   | `dek_cache_size`                   | gauge     | none                                 |
-| `codec_server` | `requests_total`                   | counter   | `route`, `code`                      |
-| `codec_server` | `request_duration_seconds`         | histogram | `route`                              |
+| Subsystem      | Metric                             | Type      | Labels                                          |
+| -------------- | ---------------------------------- | --------- | ----------------------------------------------- |
+| `server`       | `requests_total`                   | counter   | `method`, `code`                                |
+| `server`       | `request_duration_seconds`         | histogram | `method`                                        |
+| `server`       | `panics_total`                     | counter   | `method`                                        |
+| `router`       | `decisions_total`                  | counter   | `upstream`, `outcome`                           |
+| `router`       | `forwarding_errors_total`          | counter   | `upstream`, `reason`                            |
+| `encryption`   | `vault_ops_total`                  | counter   | `operation`, `result`, `namespace`              |
+| `encryption`   | `vault_ops_duration_seconds`       | histogram | `operation`, `namespace`                        |
+| `encryption`   | `payloads_skipped_total`           | counter   | `operation`, `encoding`, `namespace`            |
+| `encryption`   | `vault_unbound_opens_total`        | counter   | `namespace`                                     |
+| `encryption`   | `vault_namespace_mismatches_total` | counter   | `namespace`                                     |
+| `encryption`   | `kek_ops_total`                    | counter   | `provider`, `operation`, `result`               |
+| `encryption`   | `kek_ops_duration_seconds`         | histogram | `provider`, `operation`                         |
+| `encryption`   | `dek_ops_total`                    | counter   | `operation`, `result`                           |
+| `encryption`   | `dek_ops_duration_seconds`         | histogram | `operation`                                     |
+| `encryption`   | `dek_rotations_total`              | counter   | `reason`                                        |
+| `encryption`   | `dek_cache_hits_total`             | counter   | none                                            |
+| `encryption`   | `dek_cache_misses_total`           | counter   | none                                            |
+| `encryption`   | `dek_cache_size`                   | gauge     | none                                            |
+| `compression`  | `ops_total`                        | counter   | `operation`, `algorithm`, `result`, `namespace` |
+| `compression`  | `ops_duration_seconds`             | histogram | `operation`, `algorithm`, `namespace`           |
+| `compression`  | `payload_bytes`                    | histogram | `stage`, `algorithm`, `namespace`               |
+| `compression`  | `payloads_skipped_total`           | counter   | `reason`, `algorithm`, `namespace`              |
+| `codec_server` | `requests_total`                   | counter   | `route`, `code`                                 |
+| `codec_server` | `request_duration_seconds`         | histogram | `route`                                         |
 
 The `encryption` subsystem only reports once encryption keys are configured, and `codec_server` only reports once the
 codec server is enabled. Its `route` label is the matched pattern (`/decode`, and so on), never the request path,
 since the Namespace-prefixed routes carry a Namespace there and labeling by it would be unbounded cardinality; there is
 no Namespace label on this subsystem for the same reason.
+
+`compression` reports whether or not compression is enabled, since compressed payloads are always restored, and it
+counts payloads rather than requests. `ops_total` reports `result="too_large"` for a payload that would decompress past
+the per-payload limit, and `result="unknown_algorithm"` for one naming an algorithm this build can't restore. On
+decompress, `algorithm` comes from the payload, which anyone writing to the Namespace controls, so a name the proxy
+doesn't know is reported as `unknown`. `payload_bytes` records each compressed payload's size at `stage="pre_compress"`
+and `stage="post_compress"`, including payloads that came out no smaller and were forwarded uncompressed, so the ratio
+of the two sums is what compression achieves. `payloads_skipped_total` counts payloads forwarded uncompressed while
+compression is on, with a `reason` of `below_min_bytes`, `already_compressed`, or `not_smaller`. A Namespace whose
+`not_smaller` count is close to its `ops_total` is spending CPU for nothing.
 
 ### Labels and cardinality
 
