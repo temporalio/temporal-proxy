@@ -7,6 +7,13 @@
 // Encodings listed through [WithSkipEncodings] are treated as already encrypted
 // and forwarded unchanged.
 //
+// [Compressor] compresses payloads through a [Compression] and restores them
+// again. A compressed payload names its algorithm, so decoding never depends on
+// how compression is configured now: any algorithm registered through
+// [WithDecoders] restores what it compressed, even when nothing new is being
+// compressed. Payloads under [WithMinBytes], and ones that wouldn't come out
+// smaller, are forwarded unchanged.
+//
 // [NewChain] assembles the codecs its options enable into a single [Chain] in the
 // order they have to be applied, so callers say what they want enabled rather
 // than what order it happens in.
