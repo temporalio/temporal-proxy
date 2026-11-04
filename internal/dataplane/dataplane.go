@@ -121,6 +121,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		Encrypt:        cfg.Encryption.Enabled,
 		EncodeFailures: cfg.Encryption.Failures,
 		SkipEncodings:  cfg.Encryption.SkipEncodings,
+		Compression:    &cfg.Compression,
 	}
 
 	// Only assign the vault once it is known to be there. o.vault is a concrete
