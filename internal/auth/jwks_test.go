@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/transport/meta"
 	"go.temporal.io/proxy/pkg/logger"
 )
@@ -147,6 +148,33 @@ func TestJWKSAuthenticate(t *testing.T) {
 		a := newJWKSAuthenticator(func(*jwt.Token) (any, error) { return &other.PublicKey, nil }, nil, "", "", "")
 		tok := sign(jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))})
 		require.Equal(t, codes.Unauthenticated, status.Code(a.Authenticate(t.Context(), meta.Target{}, bearer(tok))))
+	})
+
+	t.Run("blank scheme still requires Bearer", func(t *testing.T) {
+		t.Parallel()
+		a := newJWKSAuthenticator(goodKeyfunc, nil, "", "", "")
+		tok := sign(jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))})
+		md := metadata.Pairs("authorization", tok)
+		require.Equal(t, codes.Unauthenticated, status.Code(a.Authenticate(t.Context(), meta.Target{}, md)))
+	})
+
+	t.Run("none scheme accepts the bare token from a custom header", func(t *testing.T) {
+		t.Parallel()
+		a := newJWKSAuthenticator(goodKeyfunc, nil, "", "x-goog-iap-jwt-assertion", config.NoScheme)
+		tok := sign(jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))})
+		md := metadata.Pairs("x-goog-iap-jwt-assertion", tok)
+		require.NoError(t, a.Authenticate(t.Context(), meta.Target{}, md))
+	})
+
+	t.Run("none scheme passes a Bearer prefix through to verification", func(t *testing.T) {
+		t.Parallel()
+		a := newJWKSAuthenticator(goodKeyfunc, nil, "", "x-goog-iap-jwt-assertion", config.NoScheme)
+		tok := sign(jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))})
+		md := metadata.Pairs("x-goog-iap-jwt-assertion", "Bearer "+tok)
+		err := a.Authenticate(t.Context(), meta.Target{}, md)
+		require.Equal(t, codes.Unauthenticated, status.Code(err))
+		require.Equal(t, "invalid credentials", status.Convert(err).Message(),
+			"the prefixed value must reach the parser and fail there, not be stripped or rejected as malformed")
 	})
 
 	t.Run("missing header", func(t *testing.T) {

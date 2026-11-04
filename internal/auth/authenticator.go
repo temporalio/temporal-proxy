@@ -14,10 +14,7 @@ import (
 	"go.temporal.io/proxy/pkg/logger/tag"
 )
 
-const (
-	defaultHeader = "authorization"
-	defaultScheme = "Bearer"
-)
+const defaultHeader = "authorization"
 
 type (
 	// Authenticator authenticates an inbound request from what it is addressing

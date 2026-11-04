@@ -97,3 +97,26 @@ func TestCredentialConfigValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveScheme(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"blank defaults to Bearer", "", "Bearer"},
+		{"none means no prefix", "none", ""},
+		{"none is case-insensitive", "NONE", ""},
+		{"other values pass through", "Token", "Token"},
+		{"Bearer passes through", "Bearer", "Bearer"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, config.ResolveScheme(tt.in))
+		})
+	}
+}

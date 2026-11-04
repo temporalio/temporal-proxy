@@ -3,8 +3,18 @@ package config
 import (
 	"errors"
 	"net/url"
+	"strings"
 
 	"go.temporal.io/proxy/pkg/validation"
+)
+
+const (
+	// NoScheme is the scheme value that means the credential header carries the
+	// bare credential, with no prefix. A blank scheme can't mean this: blank has
+	// always defaulted to "Bearer".
+	NoScheme = "none"
+
+	defaultScheme = "Bearer"
 )
 
 type (
@@ -18,6 +28,7 @@ type (
 	}
 
 	// StaticTokenConfig compares an inbound bearer token against a fixed value.
+	// Scheme is resolved by [ResolveScheme].
 	StaticTokenConfig struct {
 		Token  string `yaml:"token"`
 		Header string `yaml:"header"`
@@ -25,6 +36,8 @@ type (
 	}
 
 	// JWKSConfig verifies an inbound JWT's signature and claims against a JWKS.
+	// Scheme is resolved by [ResolveScheme]; [NoScheme] suits identity-aware
+	// proxies that send a bare JWT, such as Google IAP's x-goog-iap-jwt-assertion.
 	JWKSConfig struct {
 		URL       string   `yaml:"url"`
 		Audiences []string `yaml:"audiences"`
@@ -60,13 +73,27 @@ type (
 	}
 
 	// StaticCredentialConfig injects a fixed API key as a bearer header on every
-	// outbound request to the upstream.
+	// outbound request to the upstream. Scheme is resolved by [ResolveScheme].
 	StaticCredentialConfig struct {
 		APIKey string `yaml:"apiKey"`
 		Header string `yaml:"header"`
 		Scheme string `yaml:"scheme"`
 	}
 )
+
+// ResolveScheme returns the prefix a credential header carries before the
+// credential: "Bearer" when s is blank, no prefix ("") when s is [NoScheme]
+// (case-insensitive), and s itself otherwise.
+func ResolveScheme(s string) string {
+	switch {
+	case s == "":
+		return defaultScheme
+	case strings.EqualFold(s, NoScheme):
+		return ""
+	default:
+		return s
+	}
+}
 
 // Validate requires exactly one authenticator and checks the selected one.
 func (a *AuthConfig) Validate() error {

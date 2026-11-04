@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 
+	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/rpc"
 	"go.temporal.io/proxy/internal/transport/meta"
 )
@@ -85,16 +86,12 @@ func NewJWKSAuthenticator(rawURL string, audiences []string, issuer, header, sch
 }
 
 func newJWKSAuthenticator(keyfn jwt.Keyfunc, audiences []string, issuer, header, scheme string) *JWKSAuthenticator {
-	if scheme == "" {
-		scheme = defaultScheme
-	}
-
 	return &JWKSAuthenticator{
 		keyfn:     keyfn,
 		audiences: audiences,
 		issuer:    issuer,
 		header:    canonicalHeader(header),
-		scheme:    scheme,
+		scheme:    config.ResolveScheme(scheme),
 	}
 }
 
