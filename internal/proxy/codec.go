@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
+	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/transport/meta"
 	"go.temporal.io/proxy/pkg/codec"
 )
@@ -47,6 +48,12 @@ type (
 		// Reporter records the duration and result of each vault operation. It is
 		// required whenever a Vault is set.
 		Reporter *Reporter
+
+		// Compression picks how outbound payloads are compressed, per local
+		// namespace. It must already be prepared by [config.Config.Prepare]. Inbound
+		// payloads are decompressed whatever it says, or with none at all, so
+		// payloads compressed earlier stay readable after compression is turned off.
+		Compression *config.Compression
 	}
 
 	// Codecs is the chain payloads travel through in both directions. It is the
@@ -54,6 +61,8 @@ type (
 	Codecs struct {
 		inbound         []codecOpt
 		outbound        []codecOpt
+		inboundLimit    int
+		outboundLimit   int
 		encodeFailures  bool
 		restoreFailures bool
 	}
@@ -94,8 +103,8 @@ type (
 
 // NewCodecs returns the [Codecs] opts select. Encoding is gated per codec;
 // decoding is not, so a decoder recognizes its own output and passes anything
-// else through. It errors when Encrypt is set without a Vault, or a Vault is
-// set without a Reporter.
+// else through. It errors when Encrypt is set without a Vault, a Vault is set
+// without a Reporter, or a compressor cannot be built.
 func NewCodecs(opts CodecOptions) (*Codecs, error) {
 	if opts.Encrypt && opts.Vault == nil {
 		return nil, errors.New("proxy: encryption requires a vault")
@@ -113,8 +122,47 @@ func NewCodecs(opts CodecOptions) (*Codecs, error) {
 		return nil, errors.New("proxy: a vault requires a reporter")
 	}
 
-	c := &Codecs{encodeFailures: opts.EncodeFailures, restoreFailures: opts.Vault != nil}
+	decode, encode, err := newCompression(opts.Compression)
+	if err != nil {
+		return nil, err
+	}
+
+	// Vault calls wait on a KMS, and compressed payloads are worth spreading over
+	// every core, so either visits payloads concurrently. With neither, inbound
+	// only checks each payload for a compression marker, where a goroutine per
+	// payload costs more than the check.
+	limit := 1
+	if len(encode) > 0 {
+		limit = runtime.NumCPU()
+	}
+
+	c := &Codecs{
+		inboundLimit:    limit,
+		outboundLimit:   limit,
+		encodeFailures:  opts.EncodeFailures,
+		restoreFailures: opts.Vault != nil,
+	}
+
+	// The options are prebuilt and hold no per-request state, so a request only
+	// picks one. A namespace that doesn't compress needs nothing outbound, which is
+	// what the decode-only option does on encode.
+	c.inbound = append(c.inbound, func(context.Context, scope) codec.Option { return decode })
+	if len(encode) > 0 {
+		c.outbound = append(c.outbound, func(_ context.Context, s scope) codec.Option {
+			if opt, ok := encode[opts.Compression.Settings(s.ns)]; ok {
+				return opt
+			}
+
+			return decode
+		})
+	}
+
 	if opts.Vault != nil {
+		c.inboundLimit = runtime.NumCPU()
+		if opts.Encrypt {
+			c.outboundLimit = runtime.NumCPU()
+		}
+
 		enc := func(ctx context.Context, s scope) codec.Option {
 			return codec.WithCipher(&cipher{ctx: ctx, s: s, v: opts.Vault, r: opts.Reporter})
 		}
@@ -164,8 +212,8 @@ func WithRemoteNamespace(remote func(string) string) InterceptorOption {
 }
 
 // Interceptor returns a unary client interceptor that encodes outbound requests
-// and decodes inbound responses. A direction with no codecs is skipped entirely
-// rather than walked for nothing.
+// and decodes inbound responses. Inbound always decompresses; outbound is
+// skipped entirely, rather than walked for nothing, when no codec encodes.
 //
 // Search attributes are never encoded, so they stay queryable upstream. The
 // namespace a codec is given is the one the request carries, read via
@@ -185,8 +233,8 @@ func (c *Codecs) Interceptor(opts ...InterceptorOption) (grpc.UnaryClientInterce
 	}
 
 	payloads, err := proxy.NewPayloadVisitorInterceptor(proxy.PayloadVisitorInterceptorOptions{
-		Inbound:  visitPayloads(c.inbound, codec.Chain.Decode, io.remote),
-		Outbound: visitPayloads(c.outbound, codec.Chain.Encode, io.remote),
+		Inbound:  visitPayloads(c.inbound, c.inboundLimit, codec.Chain.Decode, io.remote),
+		Outbound: visitPayloads(c.outbound, c.outboundLimit, codec.Chain.Encode, io.remote),
 	})
 	if err != nil || (!c.encodeFailures && !c.restoreFailures) {
 		return payloads, err
@@ -264,11 +312,13 @@ func chainUnary(outer, inner grpc.UnaryClientInterceptor) grpc.UnaryClientInterc
 	}
 }
 
-// visitPayloads returns the options that apply opts with fn per request, or nil
-// when opts is empty so that direction is left alone. remote maps the request's
-// local namespace to its upstream's, and may be nil.
+// visitPayloads returns the options that apply opts with fn per request, at
+// most limit visits at a time, or nil when opts is empty so that direction is
+// left alone. remote maps the request's local namespace to its upstream's, and
+// may be nil.
 func visitPayloads(
 	opts []codecOpt,
+	limit int,
 	fn func(codec.Chain, []*common.Payload) ([]*common.Payload, error),
 	remote func(string) string,
 ) *proxy.VisitPayloadsOptions {
@@ -277,7 +327,7 @@ func visitPayloads(
 	}
 
 	return &proxy.VisitPayloadsOptions{
-		ConcurrencyLimit:     runtime.NumCPU(),
+		ConcurrencyLimit:     limit,
 		SkipSearchAttributes: true,
 		ContextHook:          markCrossing,
 		Visitor: func(ctx *proxy.VisitPayloadsContext, payloads []*common.Payload) ([]*common.Payload, error) {

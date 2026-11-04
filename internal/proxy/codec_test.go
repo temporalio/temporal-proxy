@@ -12,9 +12,10 @@ import (
 	"go.temporal.io/proxy/internal/proxy"
 )
 
-// The codecs themselves are covered where they live: encryption through this
-// interceptor in encryption_test.go, and chain ordering in pkg/codec. What is left
-// to pin here is what the interceptor does when a direction has no codec at all.
+// The codecs themselves are covered where they live: encryption and compression
+// through this interceptor in encryption_test.go and compression_test.go, and
+// chain ordering in pkg/codec. What is left to pin here is what the interceptor
+// does when no codec is configured.
 
 func TestCodecInterceptorRejectsIncompleteOptions(t *testing.T) {
 	t.Parallel()
@@ -93,8 +94,8 @@ func TestCodecInterceptorWithoutCodecs(t *testing.T) {
 
 	require.NoError(t, interceptor(t.Context(), "/svc/Start", req, resp, nil, invoker))
 
-	// With no codec in either direction the payloads are not even rebuilt, so both
-	// sides travel by reference.
+	// Outbound has no codec and inbound only decompresses, which leaves anything
+	// uncompressed alone, so both sides travel by reference.
 	require.Same(t, out, sent)
 	require.Same(t, in, resp.Input.Payloads[0])
 }
