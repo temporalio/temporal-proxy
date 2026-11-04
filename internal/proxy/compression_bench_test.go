@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/common/v1"
 	"go.temporal.io/api/history/v1"
@@ -42,7 +43,10 @@ func BenchmarkCodecInterceptorDecodeHistory(b *testing.B) {
 	}
 	require.NoError(b, cfg.Prepare())
 
-	enabled, err := proxy.CodecInterceptor(proxy.CodecOptions{Compression: &cfg.Compression})
+	enabled, err := proxy.CodecInterceptor(proxy.CodecOptions{
+		Compression:         &cfg.Compression,
+		CompressionReporter: newCompressionReporter(prometheus.NewRegistry()),
+	})
 	require.NoError(b, err)
 
 	for _, bc := range []struct {

@@ -1,8 +1,10 @@
 package codec
 
 import (
+	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"go.temporal.io/api/common/v1"
 )
@@ -19,12 +21,38 @@ const (
 	CompressionEncoding = "binary/compressed"
 )
 
+// The ops and skip reasons a [CompressionObserver] is told.
+const (
+	// CompressionOpCompress is the op for a payload Encode compressed.
+	CompressionOpCompress = "compress"
+
+	// CompressionOpDecompress is the op for a payload Decode restored.
+	CompressionOpDecompress = "decompress"
+
+	// CompressionSkipAlreadyCompressed is why Encode left a payload already
+	// marked compressed, say by an earlier proxy hop.
+	CompressionSkipAlreadyCompressed = "already_compressed"
+
+	// CompressionSkipBelowMinBytes is why Encode left a payload whose data is
+	// under [WithMinBytes].
+	CompressionSkipBelowMinBytes = "below_min_bytes"
+
+	// CompressionSkipNotSmaller is why Encode forwarded the original of a payload
+	// that compressed to no smaller than it was.
+	CompressionSkipNotSmaller = "not_smaller"
+)
+
+// ErrUnknownAlgorithm is returned by [Compressor.Decode] for a payload naming an
+// algorithm it has no decoder for.
+var ErrUnknownAlgorithm = errors.New("unknown algorithm")
+
 type (
 	// Compressor compresses payloads and restores them again.
 	Compressor struct {
 		enc      Compression
 		dec      map[string]Compression
 		minBytes int
+		observer CompressionObserver
 	}
 
 	// CompressorOption configures a [Compressor].
@@ -36,6 +64,21 @@ type (
 		Encoding() string
 		Compress([]byte) ([]byte, error)
 		Decompress([]byte) ([]byte, error)
+	}
+
+	// CompressionObserver is told what a [Compressor] does with each payload. It
+	// is called from Encode and Decode as they run, so it should be cheap.
+	CompressionObserver interface {
+		// Observe is told about each payload compressed or restored. op is
+		// CompressionOpCompress or CompressionOpDecompress, in and out are the
+		// bytes either side of the algorithm, and d is how long that took. On
+		// decode, algorithm is whatever the payload names, so it is only as
+		// trustworthy as whoever wrote the payload.
+		Observe(op, algorithm string, in, out int, d time.Duration, err error)
+
+		// Skipped is told about each payload Encode forwarded uncompressed, and
+		// why, as one of the CompressionSkip reasons.
+		Skipped(reason, algorithm string)
 	}
 )
 
@@ -70,6 +113,12 @@ func WithMinBytes(n int) CompressorOption {
 	return func(c *Compressor) { c.minBytes = n }
 }
 
+// WithCompressionObserver reports what the [Compressor] does with each payload
+// to o. A nil o reports nothing.
+func WithCompressionObserver(o CompressionObserver) CompressorOption {
+	return func(c *Compressor) { c.observer = o }
+}
+
 // Encode compresses each payload whole, metadata included, so
 // [Compressor.Decode] restores it exactly. Payloads under [WithMinBytes], already
 // compressed, or that wouldn't come out smaller are returned as they are, as is
@@ -83,7 +132,13 @@ func (c *Compressor) Encode(payloads []*common.Payload) ([]*common.Payload, erro
 	res, copied := payloads, false
 	for i, p := range payloads {
 		// A payload compressed by an earlier proxy hop won't shrink again.
-		if len(p.GetData()) < c.minBytes || string(p.GetMetadata()[MetadataEncoding]) == CompressionEncoding {
+		if string(p.GetMetadata()[MetadataEncoding]) == CompressionEncoding {
+			c.skipped(CompressionSkipAlreadyCompressed)
+			continue
+		}
+
+		if len(p.GetData()) < c.minBytes {
+			c.skipped(CompressionSkipBelowMinBytes)
 			continue
 		}
 
@@ -92,7 +147,9 @@ func (c *Compressor) Encode(payloads []*common.Payload) ([]*common.Payload, erro
 			return nil, fmt.Errorf("failed to marshal payload: %w", err)
 		}
 
+		start := time.Now()
 		compressed, err := c.enc.Compress(data)
+		c.observe(CompressionOpCompress, c.enc.Encoding(), len(data), len(compressed), start, err)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compress payload: %w", err)
 		}
@@ -108,6 +165,7 @@ func (c *Compressor) Encode(payloads []*common.Payload) ([]*common.Payload, erro
 		// Data that doesn't compress comes out bigger once framing and our
 		// metadata are added, so forward the original instead.
 		if cp.Size() >= len(data) {
+			c.skipped(CompressionSkipNotSmaller)
 			continue
 		}
 
@@ -137,19 +195,11 @@ func (c *Compressor) Decode(payloads []*common.Payload) ([]*common.Payload, erro
 		}
 
 		name := string(md[MetadataCompressionAlgorithm])
-		cmp := c.decoder(name)
-		if cmp == nil {
-			return nil, fmt.Errorf("failed to decompress payload: unknown algorithm %q", name)
-		}
-
-		data, err := cmp.Decompress(p.Data)
+		start := time.Now()
+		og, n, err := c.restore(name, p.Data)
+		c.observe(CompressionOpDecompress, name, len(p.Data), n, start, err)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decompress payload: %w", err)
-		}
-
-		og := new(common.Payload)
-		if err := og.Unmarshal(data); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal payload: %w", err)
+			return nil, err
 		}
 
 		if !copied {
@@ -162,6 +212,27 @@ func (c *Compressor) Decode(payloads []*common.Payload) ([]*common.Payload, erro
 	return res, nil
 }
 
+// restore decompresses data with the algorithm name and unmarshals the payload
+// it held, returning it and the decompressed size.
+func (c *Compressor) restore(name string, data []byte) (*common.Payload, int, error) {
+	cmp := c.decoder(name)
+	if cmp == nil {
+		return nil, 0, fmt.Errorf("failed to decompress payload: %w %q", ErrUnknownAlgorithm, name)
+	}
+
+	raw, err := cmp.Decompress(data)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to decompress payload: %w", err)
+	}
+
+	og := new(common.Payload)
+	if err := og.Unmarshal(raw); err != nil {
+		return nil, len(raw), fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+
+	return og, len(raw), nil
+}
+
 // decoder returns the compression that restores payloads compressed with name,
 // or nil when there is none. The shared decoder set never holds enc, so it is
 // checked first.
@@ -171,4 +242,20 @@ func (c *Compressor) decoder(name string) Compression {
 	}
 
 	return c.dec[name]
+}
+
+// observe tells the observer, if there is one, about a payload compressed or
+// restored since start.
+func (c *Compressor) observe(op, algorithm string, in, out int, start time.Time, err error) {
+	if c.observer != nil {
+		c.observer.Observe(op, algorithm, in, out, time.Since(start), err)
+	}
+}
+
+// skipped tells the observer, if there is one, that Encode left a payload
+// uncompressed.
+func (c *Compressor) skipped(reason string) {
+	if c.observer != nil {
+		c.observer.Skipped(reason, c.enc.Encoding())
+	}
 }
