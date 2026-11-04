@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/stretchr/testify/require"
+	"go.temporal.io/api/common/v1"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"go.temporal.io/proxy/internal/auth"
@@ -20,6 +21,7 @@ import (
 	"go.temporal.io/proxy/internal/protoutil"
 	"go.temporal.io/proxy/internal/services"
 	"go.temporal.io/proxy/internal/transport/connect"
+	"go.temporal.io/proxy/pkg/codec"
 	"go.temporal.io/proxy/pkg/crypto"
 	"go.temporal.io/proxy/pkg/logger"
 )
@@ -141,6 +143,27 @@ func TestNewRejectsConfiguredKeysWithoutVault(t *testing.T) {
 			require.ErrorContains(t, err, "no vault was provided")
 		})
 	}
+}
+
+// TestNewCompressesWithConfiguredSettings shows the compression block reaches
+// the chain every upstream and the codec server apply. Leaving it out of the
+// codec options New builds fails it.
+func TestNewCompressesWithConfiguredSettings(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	cfg.Compression = config.Compression{
+		Enabled: true,
+		Default: &config.CompressionPolicy{Algorithm: config.CompressionLZ4, MinBytes: new(0)},
+	}
+
+	dp, err := dataplane.New(t.Context(), cfg, newTestDeps(t, cfg).opts()...)
+	require.NoError(t, err)
+
+	payload := &common.Payload{Data: bytes.Repeat([]byte("compressible "), 100)}
+	got, err := dp.Codecs().Encode(t.Context(), "orders", "orders", []*common.Payload{payload})
+	require.NoError(t, err)
+	require.Equal(t, "lz4", string(got[0].Metadata[codec.MetadataCompressionAlgorithm]))
 }
 
 func TestNewRejectsAMetadataLabelCollidingWithACollectorsOwn(t *testing.T) {
