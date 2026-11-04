@@ -54,6 +54,11 @@ type (
 		// payloads are decompressed whatever it says, or with none at all, so
 		// payloads compressed earlier stay readable after compression is turned off.
 		Compression *config.Compression
+
+		// CompressionReporter records each payload compressed, restored, or
+		// skipped. It is required whenever Compression is set; without
+		// Compression, payloads are still restored but nothing is recorded.
+		CompressionReporter *CompressionReporter
 	}
 
 	// Codecs is the chain payloads travel through in both directions. It is the
@@ -104,7 +109,8 @@ type (
 // NewCodecs returns the [Codecs] opts select. Encoding is gated per codec;
 // decoding is not, so a decoder recognizes its own output and passes anything
 // else through. It errors when Encrypt is set without a Vault, a Vault is set
-// without a Reporter, or a compressor cannot be built.
+// without a Reporter, Compression is set without a CompressionReporter, or a
+// compressor cannot be built.
 func NewCodecs(opts CodecOptions) (*Codecs, error) {
 	if opts.Encrypt && opts.Vault == nil {
 		return nil, errors.New("proxy: encryption requires a vault")
@@ -122,7 +128,11 @@ func NewCodecs(opts CodecOptions) (*Codecs, error) {
 		return nil, errors.New("proxy: a vault requires a reporter")
 	}
 
-	decode, encode, err := newCompression(opts.Compression)
+	if opts.Compression != nil && opts.CompressionReporter == nil {
+		return nil, errors.New("proxy: compression requires a compression reporter")
+	}
+
+	cmp, err := newCompression(opts.Compression, opts.CompressionReporter)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +142,7 @@ func NewCodecs(opts CodecOptions) (*Codecs, error) {
 	// only checks each payload for a compression marker, where a goroutine per
 	// payload costs more than the check.
 	limit := 1
-	if len(encode) > 0 {
+	if len(cmp.encoders) > 0 {
 		limit = runtime.NumCPU()
 	}
 
@@ -143,18 +153,9 @@ func NewCodecs(opts CodecOptions) (*Codecs, error) {
 		restoreFailures: opts.Vault != nil,
 	}
 
-	// The options are prebuilt and hold no per-request state, so a request only
-	// picks one. A namespace that doesn't compress needs nothing outbound, which is
-	// what the decode-only option does on encode.
-	c.inbound = append(c.inbound, func(context.Context, scope) codec.Option { return decode })
-	if len(encode) > 0 {
-		c.outbound = append(c.outbound, func(_ context.Context, s scope) codec.Option {
-			if opt, ok := encode[opts.Compression.Settings(s.ns)]; ok {
-				return opt
-			}
-
-			return decode
-		})
+	c.inbound = append(c.inbound, cmp.decode)
+	if len(cmp.encoders) > 0 {
+		c.outbound = append(c.outbound, cmp.encode)
 	}
 
 	if opts.Vault != nil {

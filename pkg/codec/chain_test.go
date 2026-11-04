@@ -215,6 +215,26 @@ func TestNewChainSkipsBeforeCompressing(t *testing.T) {
 	require.Empty(t, c.encrypted)
 }
 
+// TestNewChainSkipObserved shows a payload WithSkip forwards is reported as a
+// skipped_encoding skip and nothing else. Dropping the skipped call from the
+// WithSkip check in Compressor.Encode fails it.
+func TestNewChainSkipObserved(t *testing.T) {
+	t.Parallel()
+
+	p := compressiblePayload()
+	p.Metadata[codec.MetadataEncoding] = []byte("acme/aes-gcm")
+
+	obs := &recordingObserver{}
+	chain := codec.NewChain(
+		codec.WithCompression(newSnappy(t), codec.WithCompressionObserver(obs)),
+		codec.WithSkip("acme/aes-gcm"),
+	)
+
+	_, err := chain.Encode([]*common.Payload{p})
+	require.NoError(t, err)
+	require.Equal(t, []string{"skip skipped_encoding snappy"}, obs.events)
+}
+
 // TestNewChainSkipDoesNotLeak shows WithSkip on one chain leaves another chain
 // built from the same WithCompression option compressing as before. Setting the
 // skip set on the shared Compressor instead of a copy fails it.

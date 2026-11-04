@@ -14,9 +14,10 @@ import (
 // reporters holds the metric reporters, each built once. A per-upstream build
 // would register the same Prometheus collectors twice and panic.
 type reporters struct {
-	router     *router.Reporter
-	server     *server.Reporter
-	encryption *proxy.Reporter
+	router      *router.Reporter
+	server      *server.Reporter
+	encryption  *proxy.Reporter
+	compression *proxy.CompressionReporter
 }
 
 // newReporters builds every reporter against f. Prometheus panics rather than
@@ -59,17 +60,21 @@ func newReporters(f *metrics.Factory, c *config.Config, encryption bool) (r *rep
 	// metadata is in scope to read them from.
 	labels := metrics.NewMetadataLabels(c.Metrics.Labels.Metadata)
 
+	reqLabels := []proxy.ReporterOption{
+		proxy.WithMetadataLabels(labels),
+		proxy.WithNamespaceLabels(c.Metrics.Labels.Namespace),
+	}
+
+	// Compression is always reported, since payloads are always restored whether
+	// or not compression is on.
 	out := &reporters{
-		router: router.NewReporter(f.ForSubsystem("router"), names, labels),
-		server: server.NewReporter(f.ForSubsystem("server"), labels),
+		router:      router.NewReporter(f.ForSubsystem("router"), names, labels),
+		server:      server.NewReporter(f.ForSubsystem("server"), labels),
+		compression: proxy.NewCompressionReporter(f.ForSubsystem("compression"), reqLabels...),
 	}
 
 	if encryption {
-		out.encryption = proxy.NewReporter(
-			f.ForSubsystem("encryption"),
-			proxy.WithMetadataLabels(labels),
-			proxy.WithNamespaceLabels(c.Metrics.Labels.Namespace),
-		)
+		out.encryption = proxy.NewReporter(f.ForSubsystem("encryption"), reqLabels...)
 	}
 
 	return out, nil
