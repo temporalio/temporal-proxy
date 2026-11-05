@@ -20,6 +20,7 @@ type (
 		APITranslations  APITranslations     `yaml:"apiTranslations"`
 		AllowedServices  Services            `yaml:"allowedServices"`
 		Auth             *AuthConfig         `yaml:"auth"`
+		Compression      Compression         `yaml:"compression"`
 		Encryption       Encryption          `yaml:"encryption"`
 		ExtensionServers ExtensionServerList `yaml:"extensionServers"`
 		Health           Health              `yaml:"health"`
@@ -123,6 +124,7 @@ func (c *Config) validate() error {
 				}}
 			},
 		),
+		validation.Nested("compression", &c.Compression),
 		validation.Nested("encryption", &c.Encryption),
 		validation.Nested("extensionServers", &c.ExtensionServers),
 		validation.Nested("health", &c.Health),
@@ -164,6 +166,8 @@ func (c *Config) compile() error {
 		return fmt.Errorf("routing: %w", err)
 	}
 
+	c.Compression.compile()
+
 	return nil
 }
 
@@ -174,6 +178,7 @@ func (c *Config) reset() {
 	}
 
 	c.Routing.reset()
+	c.Compression.reset()
 }
 
 // applyDefaults fills the fields that most configs omit. An absent block never
