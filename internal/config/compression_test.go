@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -217,6 +218,31 @@ func TestCompressionSettings(t *testing.T) {
 			require.NoError(t, cfg.Prepare())
 			require.Equal(t, tt.want, cfg.Compression.Settings(tt.ns))
 		})
+	}
+}
+
+// TestCompressionAll shows All yields the settings Settings can return for any
+// namespace, so a caller that prebuilds per-settings state from it finds every
+// lookup. Dropping the overrides from All fails the staging lookup.
+func TestCompressionAll(t *testing.T) {
+	t.Parallel()
+
+	cfg := minimalConfig()
+	cfg.Compression = config.Compression{
+		Enabled: true,
+		Default: &config.CompressionPolicy{Algorithm: config.CompressionZstd},
+		Overrides: map[string]config.CompressionPolicy{
+			"staging":       {Algorithm: config.CompressionLZ4},
+			"precompressed": {Enabled: new(false)},
+		},
+	}
+	require.NoError(t, cfg.Prepare())
+
+	all := slices.Collect(cfg.Compression.All())
+	require.Len(t, all, 3)
+
+	for _, ns := range []string{"orders", "staging", "precompressed"} {
+		require.Contains(t, all, cfg.Compression.Settings(ns), ns)
 	}
 }
 
