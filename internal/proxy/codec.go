@@ -66,6 +66,7 @@ type (
 	Codecs struct {
 		inbound         []codecOpt
 		outbound        []codecOpt
+		inboundSkip     func([]*common.Payload) bool
 		inboundLimit    int
 		outboundLimit   int
 		encodeFailures  bool
@@ -158,6 +159,12 @@ func NewCodecs(opts CodecOptions) (*Codecs, error) {
 		c.outbound = append(c.outbound, cmp.encode)
 	}
 
+	// Without a vault, decompressing is all inbound does, so a batch with nothing
+	// compressed in it is passed back without building a chain at all.
+	if opts.Vault == nil {
+		c.inboundSkip = uncompressed
+	}
+
 	if opts.Vault != nil {
 		c.inboundLimit = runtime.NumCPU()
 		if opts.Encrypt {
@@ -234,8 +241,8 @@ func (c *Codecs) Interceptor(opts ...InterceptorOption) (grpc.UnaryClientInterce
 	}
 
 	payloads, err := proxy.NewPayloadVisitorInterceptor(proxy.PayloadVisitorInterceptorOptions{
-		Inbound:  visitPayloads(c.inbound, c.inboundLimit, codec.Chain.Decode, io.remote),
-		Outbound: visitPayloads(c.outbound, c.outboundLimit, codec.Chain.Encode, io.remote),
+		Inbound:  visitPayloads(c.inbound, c.inboundSkip, c.inboundLimit, codec.Chain.Decode, io.remote),
+		Outbound: visitPayloads(c.outbound, nil, c.outboundLimit, codec.Chain.Encode, io.remote),
 	})
 	if err != nil || (!c.encodeFailures && !c.restoreFailures) {
 		return payloads, err
@@ -262,7 +269,9 @@ func (c *Codecs) Decode(
 	local, remote string,
 	payloads []*common.Payload,
 ) ([]*common.Payload, error) {
-	return apply(ctx, scope{ns: local, label: remote, check: remote != ""}, c.inbound, codec.Chain.Decode, payloads)
+	s := scope{ns: local, label: remote, check: remote != ""}
+
+	return apply(ctx, s, c.inbound, c.inboundSkip, codec.Chain.Decode, payloads)
 }
 
 // Encode runs payloads through the outbound chain, the same chain
@@ -273,19 +282,25 @@ func (c *Codecs) Encode(
 	local, remote string,
 	payloads []*common.Payload,
 ) ([]*common.Payload, error) {
-	return apply(ctx, scope{ns: local, label: remote}, c.outbound, codec.Chain.Encode, payloads)
+	return apply(ctx, scope{ns: local, label: remote}, c.outbound, nil, codec.Chain.Encode, payloads)
 }
 
 // apply builds the chain opts imply for ctx and s and runs payloads through it
-// with fn. Every caller reaches the chain through here, so no two of them can
-// apply different chains.
+// with fn, unless skip, which may be nil, reports the chain would change none of
+// them. Every caller reaches the chain through here, so no two of them can apply
+// different chains.
 func apply(
 	ctx context.Context,
 	s scope,
 	opts []codecOpt,
+	skip func([]*common.Payload) bool,
 	fn func(codec.Chain, []*common.Payload) ([]*common.Payload, error),
 	payloads []*common.Payload,
 ) ([]*common.Payload, error) {
+	if skip != nil && skip(payloads) {
+		return payloads, nil
+	}
+
 	chain := make([]codec.Option, len(opts))
 	for i, opt := range opts {
 		chain[i] = opt(ctx, s)
@@ -315,10 +330,11 @@ func chainUnary(outer, inner grpc.UnaryClientInterceptor) grpc.UnaryClientInterc
 
 // visitPayloads returns the options that apply opts with fn per request, at
 // most limit visits at a time, or nil when opts is empty so that direction is
-// left alone. remote maps the request's local namespace to its upstream's, and
-// may be nil.
+// left alone. skip is passed to [apply], and remote maps the request's local
+// namespace to its upstream's; either may be nil.
 func visitPayloads(
 	opts []codecOpt,
+	skip func([]*common.Payload) bool,
 	limit int,
 	fn func(codec.Chain, []*common.Payload) ([]*common.Payload, error),
 	remote func(string) string,
@@ -335,7 +351,7 @@ func visitPayloads(
 			ns := meta.NamespaceFrom(ctx)
 			s := scope{ns: ns, label: remoteName(remote, ns), check: !crosses(ctx, payloads)}
 
-			return apply(ctx, s, opts, fn, payloads)
+			return apply(ctx, s, opts, skip, fn, payloads)
 		},
 	}
 }
@@ -424,4 +440,10 @@ func visitFailures(on bool, fn func(*failure.Failure) error) *proxy.VisitFailure
 	return &proxy.VisitFailuresOptions{
 		Visitor: func(_ *proxy.VisitFailuresContext, f *failure.Failure) error { return fn(f) },
 	}
+}
+
+// uncompressed reports whether none of payloads is compressed, so decompressing
+// would change nothing.
+func uncompressed(payloads []*common.Payload) bool {
+	return !slices.ContainsFunc(payloads, codec.IsCompressed)
 }

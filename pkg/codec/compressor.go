@@ -119,6 +119,14 @@ func WithCompressionObserver(o CompressionObserver) CompressorOption {
 	return func(c *Compressor) { c.observer = o }
 }
 
+// IsCompressed reports whether p carries the full compressed-payload contract,
+// the payloads [Compressor.Decode] restores. The marker alone is not proof we
+// compressed it; without an algorithm entry there is nothing to restore it with.
+func IsCompressed(p *common.Payload) bool {
+	md := p.GetMetadata()
+	return string(md[MetadataEncoding]) == CompressionEncoding && len(md[MetadataCompressionAlgorithm]) > 0
+}
+
 // Encode compresses each payload whole, metadata included, so
 // [Compressor.Decode] restores it exactly. Payloads under [WithMinBytes], already
 // compressed, or that wouldn't come out smaller are returned as they are, as is
@@ -187,14 +195,11 @@ func (c *Compressor) Decode(payloads []*common.Payload) ([]*common.Payload, erro
 	// and the caller's slice is never modified.
 	res, copied := payloads, false
 	for i, p := range payloads {
-		// The marker alone is not proof we compressed this; without an algorithm
-		// entry there is nothing to restore it with.
-		md := p.GetMetadata()
-		if string(md[MetadataEncoding]) != CompressionEncoding || len(md[MetadataCompressionAlgorithm]) == 0 {
+		if !IsCompressed(p) {
 			continue
 		}
 
-		name := string(md[MetadataCompressionAlgorithm])
+		name := string(p.GetMetadata()[MetadataCompressionAlgorithm])
 		start := time.Now()
 		og, n, err := c.restore(name, p.Data)
 		c.observe(CompressionOpDecompress, name, len(p.Data), n, start, err)
