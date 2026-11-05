@@ -11,10 +11,12 @@ type (
 	}
 
 	options struct {
-		insecure bool
-		ca       string
-		cert     string
-		key      string
+		insecure   bool
+		ca         string
+		cert       string
+		key        string
+		reloader   *Reloader
+		credential string
 	}
 
 	optFunc func(*options)

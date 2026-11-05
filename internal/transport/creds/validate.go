@@ -30,26 +30,36 @@ var preferredCipherSuites = []uint16{
 // guaranteed for the mode in question. Modes with no files (insecure, system
 // roots) validate trivially.
 func validateMaterial(o *options, mode Mode) error {
+	f, err := readFiles(o, mode)
+	if err != nil {
+		return err
+	}
+
+	return validateBytes(mode, f)
+}
+
+// validateBytes runs the per-mode checks on file contents already in memory.
+func validateBytes(mode Mode, f files) error {
 	switch mode {
 	case ModeCustomCA:
 		// A client trust anchor may be a pinned self-signed leaf, so it is not
 		// required to carry the CA basic constraint.
 		return validation.Validate(
 			"",
-			validation.Field("ca", o.ca, trustAnchorChecks),
+			validation.Field("ca", f.ca, trustAnchorChecks),
 		)
 	case ModeServerTLS:
 		return validation.Validate(
 			"",
-			validation.Field("cert", o.cert, leafChecks),
-			validation.Field("key", o.key, certs.ValidatePEMKeyFile),
+			validation.Field("cert", f.cert, leafChecks),
+			validation.Field("key", f.key, certs.ValidatePEMKey),
 		)
 	case ModeMutualTLS:
 		return validation.Validate(
 			"",
-			validation.Field("cert", o.cert, leafChecks),
-			validation.Field("key", o.key, certs.ValidatePEMKeyFile),
-			validation.Field("ca", o.ca, caChecks),
+			validation.Field("cert", f.cert, leafChecks),
+			validation.Field("key", f.key, certs.ValidatePEMKey),
+			validation.Field("ca", f.ca, caChecks),
 		)
 	default: // ModeInsecure, ModeSystemTLS
 		return nil
@@ -59,9 +69,9 @@ func validateMaterial(o *options, mode Mode) error {
 // leafChecks validates a presented certificate: unexpired, signed with a strong
 // algorithm, using a key type compatible with the allowed cipher suites, and of
 // a sufficient size.
-func leafChecks(path string) error {
-	return certs.ValidatePEMFile(
-		path,
+func leafChecks(data []byte) error {
+	return certs.ValidatePEM(
+		data,
 		certs.NotExpired(),
 		certs.SecureAlgorithm(preferredCipherSuites...),
 		certs.SufficientKeySize(),
@@ -70,9 +80,9 @@ func leafChecks(path string) error {
 
 // caChecks validates a certificate authority: unexpired, an actual CA, signed
 // with a strong algorithm, and of a sufficient size.
-func caChecks(path string) error {
-	return certs.ValidatePEMFile(
-		path,
+func caChecks(data []byte) error {
+	return certs.ValidatePEM(
+		data,
 		certs.NotExpired(),
 		certs.IsCA(),
 		certs.SecureAlgorithm(),
@@ -83,9 +93,9 @@ func caChecks(path string) error {
 // trustAnchorChecks validates a client-side trust anchor: unexpired, signed with
 // a strong algorithm, and of a sufficient size. Unlike caChecks it does not
 // require the CA basic constraint, so a pinned self-signed leaf is accepted.
-func trustAnchorChecks(path string) error {
-	return certs.ValidatePEMFile(
-		path,
+func trustAnchorChecks(data []byte) error {
+	return certs.ValidatePEM(
+		data,
 		certs.NotExpired(),
 		certs.SecureAlgorithm(),
 		certs.SufficientKeySize(),

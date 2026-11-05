@@ -15,6 +15,7 @@ import (
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/template"
 	"go.temporal.io/proxy/internal/transport/connect"
+	"go.temporal.io/proxy/internal/transport/creds"
 	"go.temporal.io/proxy/internal/transport/meta"
 	"go.temporal.io/proxy/internal/transport/resolve"
 	"go.temporal.io/proxy/pkg/logger"
@@ -99,12 +100,19 @@ func WithResolverLogger(l logger.Logger) ResolverOption {
 // opts holds the request-independent dial options (namespace translation and
 // outbound credentials); the upstream's connection settings and the srv:///
 // resolver are appended here. log, when non-nil, is threaded into the
-// DynamicResolver for per-request debug entries.
-func ResolverFor(upstream *config.Upstream, opts []grpc.DialOption, log logger.Logger) (connect.Resolver, error) {
+// DynamicResolver for per-request debug entries. credOpts are passed to the
+// upstream's dialer, which is how a caller registers its TLS material with a
+// [creds.Reloader].
+func ResolverFor(
+	upstream *config.Upstream,
+	opts []grpc.DialOption,
+	log logger.Logger,
+	credOpts ...creds.Option,
+) (connect.Resolver, error) {
 	// One Dialer per upstream owns the TLS-mode decision and parses its
 	// certificate material once, so a templated upstream reuses it across every
 	// per-request dial (only the rendered server name varies).
-	dialer := upstream.Listen.Dialer()
+	dialer := upstream.Listen.Dialer(credOpts...)
 	opts = append(slices.Clone(opts), ConnectionDialOptions(&upstream.Connection)...)
 	opts = append(opts, grpc.WithResolvers(resolve.NewSRVBuilder()))
 

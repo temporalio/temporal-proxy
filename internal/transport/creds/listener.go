@@ -2,7 +2,6 @@ package creds
 
 import (
 	"crypto/tls"
-	"fmt"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -13,8 +12,9 @@ import (
 // owns the inbound TLS-mode decision (insecure, server TLS, or mutual TLS) and
 // builds the corresponding [google.golang.org/grpc.ServerOption].
 type Listener struct {
-	opts *options
-	mode Mode
+	opts     *options
+	mode     Mode
+	material *material
 }
 
 // NewListener builds a server-side credential from opts. With no material
@@ -23,8 +23,9 @@ type Listener struct {
 // file problems surface at Validate and ServerOption.
 func NewListener(opts ...Option) *Listener {
 	o := newOptions(opts)
+	mode := resolveServer(o)
 
-	return &Listener{opts: o, mode: resolveServer(o)}
+	return &Listener{opts: o, mode: mode, material: newMaterial(o, mode)}
 }
 
 // Mode reports the resolved inbound TLS mode.
@@ -59,10 +60,13 @@ func (l *Listener) ServerOption() (grpc.ServerOption, error) {
 }
 
 // TLSConfig returns the server TLS configuration for inbound connections, or nil
-// for the insecure mode. The same legality guard as Validate runs first. Server
-// TLS presents the configured certificate; mutual TLS additionally requires and
-// verifies client certificates against the configured CA. Both require at least
-// TLS 1.2 and restrict TLS 1.2 sessions to the preferred AES-GCM cipher suites.
+// for the insecure mode. The same legality guard as Validate runs first. Each
+// handshake builds its configuration from the material's current snapshot via
+// GetConfigForClient, so the returned config carries no certificates itself.
+// Server TLS presents the configured certificate; mutual TLS additionally
+// requires and verifies client certificates against the configured CA. Both
+// require at least TLS 1.2 and restrict TLS 1.2 sessions to the preferred
+// AES-GCM cipher suites.
 func (l *Listener) TLSConfig() (*tls.Config, error) {
 	if err := l.opts.validateServer(); err != nil {
 		return nil, err
@@ -72,32 +76,40 @@ func (l *Listener) TLSConfig() (*tls.Config, error) {
 		return nil, nil
 	}
 
-	cert, err := tls.LoadX509KeyPair(l.opts.cert, l.opts.key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load server key pair: %w", err)
+	if err := l.material.load(); err != nil {
+		return nil, err
 	}
 
-	cfg := &tls.Config{
-		Certificates: []tls.Certificate{cert},
+	return &tls.Config{
 		MinVersion:   minTLSVersion,
 		CipherSuites: preferredCipherSuites,
-	}
-
-	if l.mode == ModeMutualTLS {
-		pool, err := loadCAPool(l.opts.ca)
-		if err != nil {
-			return nil, err
-		}
-
-		cfg.ClientAuth = tls.RequireAndVerifyClientCert
-		cfg.ClientCAs = pool
-	}
-
-	return cfg, nil
+		GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+			return serverConfig(l.material.current(), l.mode), nil
+		},
+	}, nil
 }
 
 // Encrypted reports whether the inbound transport is encrypted. Only the
 // insecure mode is unencrypted.
 func (l *Listener) Encrypted() bool {
 	return l.mode != ModeInsecure
+}
+
+// serverConfig builds the inbound TLS configuration for one handshake. The
+// returned config replaces the base one entirely, so NextProtos is pinned here:
+// the ALPN list grpc-go and net/http add to the base config never reaches it.
+func serverConfig(s *snapshot, mode Mode) *tls.Config {
+	cfg := &tls.Config{
+		Certificates: []tls.Certificate{*s.cert},
+		MinVersion:   minTLSVersion,
+		CipherSuites: preferredCipherSuites,
+		NextProtos:   []string{"h2", "http/1.1"},
+	}
+
+	if mode == ModeMutualTLS {
+		cfg.ClientAuth = tls.RequireAndVerifyClientCert
+		cfg.ClientCAs = s.pool
+	}
+
+	return cfg
 }

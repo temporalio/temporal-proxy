@@ -49,24 +49,26 @@ func (l *ListenConfig) Validate() error {
 
 // Listener resolves the inbound (server) credential for this target. A listener
 // has no certificate to fall back on, so it serves plaintext until a TLS block
-// supplies one.
-func (l *ListenConfig) Listener() *creds.Listener {
+// supplies one. opts are applied after the config-derived options, which is
+// how a serving site registers the material with a [creds.Reloader].
+func (l *ListenConfig) Listener(opts ...creds.Option) *creds.Listener {
 	if l.Insecure {
-		return creds.NewListener(creds.Insecure())
+		return creds.NewListener(append([]creds.Option{creds.Insecure()}, opts...)...)
 	}
 
-	return l.TLS.listener()
+	return l.TLS.listener(opts...)
 }
 
 // Dialer resolves the outbound (client) credential for this target. Insecure
 // yields plaintext; otherwise the TLS block decides, and an absent one verifies
-// the peer against the system root pool.
-func (l *ListenConfig) Dialer() *creds.Dialer {
+// the peer against the system root pool. opts are applied after the
+// config-derived options, as with [ListenConfig.Listener].
+func (l *ListenConfig) Dialer(opts ...creds.Option) *creds.Dialer {
 	if l.Insecure {
-		return creds.NewDialer(creds.Insecure())
+		return creds.NewDialer(append([]creds.Option{creds.Insecure()}, opts...)...)
 	}
 
-	return l.TLS.dialer()
+	return l.TLS.dialer(opts...)
 }
 
 // insecureRule rejects opting out of transport security while also supplying TLS
@@ -97,20 +99,22 @@ func (t *TLSConfig) validateOutbound() validation.Errors {
 	return validation.Nested("tls", t.dialer())()
 }
 
-// listener resolves the inbound (server) credential for this TLS block. A nil
-// receiver has no certificate to present, so it yields an insecure listener.
-func (t *TLSConfig) listener() *creds.Listener {
+// listener resolves the inbound (server) credential for this TLS block, with
+// opts applied last. A nil receiver has no certificate to present, so it yields
+// an insecure listener.
+func (t *TLSConfig) listener(opts ...creds.Option) *creds.Listener {
 	if t == nil {
-		return creds.NewListener(creds.Insecure())
+		return creds.NewListener(append([]creds.Option{creds.Insecure()}, opts...)...)
 	}
 
-	return creds.NewListener(t.credsOptions()...)
+	return creds.NewListener(append(t.credsOptions(), opts...)...)
 }
 
-// dialer resolves the outbound (client) credential for this TLS block. A nil
-// receiver supplies no material, which the client resolves to system-root TLS.
-func (t *TLSConfig) dialer() *creds.Dialer {
-	return creds.NewDialer(t.credsOptions()...)
+// dialer resolves the outbound (client) credential for this TLS block, with
+// opts applied last. A nil receiver supplies no material, which the client
+// resolves to system-root TLS.
+func (t *TLSConfig) dialer(opts ...creds.Option) *creds.Dialer {
+	return creds.NewDialer(append(t.credsOptions(), opts...)...)
 }
 
 // credsOptions maps the TLS block onto a set of creds options shared by both

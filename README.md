@@ -260,6 +260,38 @@ different Namespace with the same 400 as any other failure. That includes the re
 another Namespace, which the Web UI therefore shows as encrypted. Under `permissive`, such payloads decode and are
 counted in `vault_namespace_mismatches_total`.
 
+## TLS certificate rotation
+
+Every file a `tls:` block references, on the gateway, the HTTP server, an upstream, the Cloud API, or an extension
+server, is re-read every minute. Changed material is picked up without a restart, and there is nothing to configure.
+
+A file that fails validation, or a cert and key that don't match because one was replaced before the other, leaves
+the previous material in use. The proxy logs one error for it and retries every minute until the files are valid
+again. The certificate, key, and CA of one `tls:` block swap together, never one at a time.
+
+Existing connections are not interrupted: only new handshakes see the new material. An outbound connection to an
+upstream keeps its current TLS session until it reconnects for its own reasons.
+
+Reload checks that material is well formed, not that it is right. A certificate missing a SAN your Clients dial, one
+from the wrong issuer, or a CA dropped while Clients still present certificates it signed is picked up by every
+instance within about a minute, with no restart to stage it behind.
+
+`tls_cert_expiry_timestamp_seconds` reports when the material in use expires, per credential and file (`cert`
+or `ca`), which is enough for an expiry alert:
+
+```promql
+tmprl_proxy_tls_cert_expiry_timestamp_seconds - time() < 7 * 86400
+```
+
+The `credential` label is `gateway`, `http`, `upstream/<name>`, `cloud_api`, or `extension/<name>`. A file set shared
+by several of these is reported once, labelled with their sorted ids joined by commas (for example `gateway,http` when
+both use the same files), so match on a regex such as `credential=~".*gateway.*"` rather than an exact value. To catch
+a rotation that keeps failing:
+
+```promql
+increase(tmprl_proxy_tls_reloads_total{result="failure"}[10m]) > 0
+```
+
 ## Namespace binding
 
 With binding on, the proxy records the Namespace a payload was sealed under in its `encryption-namespace` metadata and
@@ -420,6 +452,8 @@ Namespace binding, and `result="mismatch"` for one `strict` refused for being bo
 | `encryption`   | `dek_cache_size`                   | gauge     | none                                 |
 | `codec_server` | `requests_total`                   | counter   | `route`, `code`                      |
 | `codec_server` | `request_duration_seconds`         | histogram | `route`                              |
+| `tls`          | `reloads_total`                    | counter   | `credential`, `result`               |
+| `tls`          | `cert_expiry_timestamp_seconds`    | gauge     | `credential`, `file`                 |
 
 The `encryption` subsystem only reports once encryption keys are configured, and `codec_server` only reports once the
 codec server is enabled. Its `route` label is the matched pattern (`/decode`, and so on), never the request path,
