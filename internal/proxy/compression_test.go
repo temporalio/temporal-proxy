@@ -126,6 +126,40 @@ func TestCodecInterceptorAlwaysDecompresses(t *testing.T) {
 	}
 }
 
+// TestCodecsDecodeUncompressedAllocations shows that, without a vault, payloads
+// with nothing compressed among them pass through without building a chain,
+// the cost every response pays now that inbound always decompresses. Building
+// the chain before checking for a compressed payload fails it. AllocsPerRun
+// counts every allocation in the process, so it can't run in parallel.
+func TestCodecsDecodeUncompressedAllocations(t *testing.T) {
+	tests := []struct {
+		name string
+		c    config.Compression
+	}{
+		{name: "compression disabled", c: config.Compression{}},
+		{
+			name: "compression enabled",
+			c: config.Compression{
+				Enabled: true,
+				Default: &config.CompressionPolicy{Algorithm: config.CompressionZstd},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := proxy.NewCodecs(compressionOpts(t, tc.c))
+			require.NoError(t, err)
+
+			in := []*common.Payload{testPayload("json/plain", `"a"`), testPayload("json/plain", `"b"`)}
+			allocs := testing.AllocsPerRun(100, func() {
+				_, _ = c.Decode(t.Context(), "orders", "", in)
+			})
+			require.Zero(t, allocs)
+		})
+	}
+}
+
 // TestCodecInterceptorCompressesBeforeSealing shows a payload is compressed and
 // then sealed on the way out, and opened and then restored on the way back,
 // since ciphertext does not compress. Swapping the two in the chain fails the
@@ -276,7 +310,7 @@ func TestCodecInterceptorReportsDecodeFailures(t *testing.T) {
 
 // compressionOpts returns options that compress as c says, recording to a
 // registry of their own.
-func compressionOpts(t *testing.T, c config.Compression) proxy.CodecOptions {
+func compressionOpts(t testing.TB, c config.Compression) proxy.CodecOptions {
 	t.Helper()
 
 	return proxy.CodecOptions{
@@ -296,7 +330,7 @@ func newCompressionReporter(reg *prometheus.Registry) *proxy.CompressionReporter
 
 // preparedCompression returns c as it is once its config is prepared, which is
 // how [proxy.CodecOptions] needs it.
-func preparedCompression(t *testing.T, c config.Compression) *config.Compression {
+func preparedCompression(t testing.TB, c config.Compression) *config.Compression {
 	t.Helper()
 
 	cfg := &config.Config{

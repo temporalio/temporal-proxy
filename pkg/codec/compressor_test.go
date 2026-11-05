@@ -74,6 +74,38 @@ func TestCompressorDecodePassesThroughForeignPayloads(t *testing.T) {
 	}
 }
 
+// TestIsCompressed shows only the full contract, marker and algorithm, counts.
+// Checking the marker alone fails the "marker without algorithm" case.
+func TestIsCompressed(t *testing.T) {
+	t.Parallel()
+
+	compressed, err := codec.NewCompressor(newSnappy(t)).Encode([]*common.Payload{compressiblePayload()})
+	require.NoError(t, err)
+
+	algorithmOnly := testPayload("json/plain", `"hi"`)
+	algorithmOnly.Metadata[codec.MetadataCompressionAlgorithm] = []byte("snappy")
+
+	tests := []struct {
+		name    string
+		payload *common.Payload
+		want    bool
+	}{
+		{name: "compressed", payload: compressed[0], want: true},
+		{name: "not compressed", payload: testPayload("json/plain", `"hi"`)},
+		{name: "marker without algorithm", payload: testPayload(codec.CompressionEncoding, "not ours")},
+		{name: "algorithm without marker", payload: algorithmOnly},
+		{name: "nil", payload: nil},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			require.Equal(t, tc.want, codec.IsCompressed(tc.payload))
+		})
+	}
+}
+
 func TestCompressorDecodeUsesRecordedAlgorithm(t *testing.T) {
 	t.Parallel()
 
