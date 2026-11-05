@@ -29,8 +29,9 @@ type (
 	Option func(*options)
 
 	options struct {
-		cipher    Cipher
-		encryptor []EncryptorOption
+		cipher     Cipher
+		encryptor  []EncryptorOption
+		compressor *Compressor
 	}
 )
 
@@ -45,6 +46,10 @@ func NewChain(opts ...Option) Chain {
 	// Application order, outbound. Compression belongs ahead of encryption
 	// because ciphertext does not compress.
 	var codecs []Codec
+	if cmp := o.compressor; cmp != nil {
+		codecs = append(codecs, cmp)
+	}
+
 	if o.cipher != nil {
 		codecs = append(codecs, NewEncryptor(o.cipher, o.encryptor...))
 	}
@@ -60,6 +65,16 @@ func WithCipher(c Cipher) Option {
 			o.cipher = c
 		}
 	}
+}
+
+// WithCompression compresses payloads with c, and opts configure the
+// [Compressor] it builds. A nil c still adds a Compressor, one that only
+// decodes, so payloads compressed earlier are restored with compression off.
+// The Compressor is built once, here, and holds no per-request state, so one
+// option can be shared by every chain.
+func WithCompression(c Compression, opts ...CompressorOption) Option {
+	cmp := NewCompressor(c, opts...)
+	return func(o *options) { o.compressor = cmp }
 }
 
 // WithEncryptorOptions passes opts to the [Encryptor] the chain builds. Without

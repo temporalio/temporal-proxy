@@ -2,6 +2,7 @@ package codec_test
 
 import (
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -113,4 +114,79 @@ func TestNewChainForwardsEncryptorOptions(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.Same(t, p, got[0])
+}
+
+// TestNewChainCompressesBeforeEncrypting shows the chain compresses payloads
+// before sealing them, since ciphertext does not compress. Appending the
+// compressor after the encryptor in NewChain fails it.
+func TestNewChainCompressesBeforeEncrypting(t *testing.T) {
+	t.Parallel()
+
+	original := []*common.Payload{compressiblePayload()}
+	want := proto.Clone(original[0]).(*common.Payload)
+
+	chain := codec.NewChain(
+		codec.WithCipher(&fakeCipher{}),
+		codec.WithCompression(newSnappy(t)),
+	)
+
+	sealed, err := chain.Encode(original)
+	require.NoError(t, err)
+	require.Len(t, sealed, 1)
+	require.Equal(t, codec.EncryptionEncoding, string(sealed[0].Metadata[codec.MetadataEncoding]))
+
+	// Opening the seal reveals the compressed payload, not the original.
+	opened, err := codec.NewEncryptor(&fakeCipher{}).Decode(sealed)
+	require.NoError(t, err)
+	require.Equal(t, codec.CompressionEncoding, string(opened[0].Metadata[codec.MetadataEncoding]))
+
+	restored, err := chain.Decode(sealed)
+	require.NoError(t, err)
+	require.Len(t, restored, 1)
+	require.True(t, proto.Equal(want, restored[0]), "payload did not round-trip")
+}
+
+// TestNewChainDecodesWithCompressionOff shows a nil Compression still restores
+// compressed payloads. Skipping the compressor when the Compression is nil, the
+// way WithCipher treats a nil cipher, fails it.
+func TestNewChainDecodesWithCompressionOff(t *testing.T) {
+	t.Parallel()
+
+	snappy := newSnappy(t)
+	original := []*common.Payload{compressiblePayload()}
+	want := proto.Clone(original[0]).(*common.Payload)
+
+	compressed, err := codec.NewChain(codec.WithCompression(snappy)).Encode(original)
+	require.NoError(t, err)
+
+	restored, err := codec.NewChain(codec.WithCompression(nil, codec.WithDecoders(snappy))).Decode(compressed)
+	require.NoError(t, err)
+	require.Len(t, restored, 1)
+	require.True(t, proto.Equal(want, restored[0]), "payload did not round-trip")
+}
+
+// TestNewChainSharesCompressionOption shows one WithCompression option, built
+// once, can back chains built concurrently, the way a chain is built per
+// request. A Compressor that writes to its own state while decoding fails it
+// under the race detector.
+func TestNewChainSharesCompressionOption(t *testing.T) {
+	t.Parallel()
+
+	snappy, zstd := newSnappy(t), newZstd(t)
+	compressed, err := codec.NewChain(codec.WithCompression(zstd)).Encode([]*common.Payload{compressiblePayload()})
+	require.NoError(t, err)
+
+	opt := codec.WithCompression(snappy, codec.WithDecoders(zstd))
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			restored, err := codec.NewChain(opt).Decode(compressed)
+			if err != nil || !proto.Equal(compressiblePayload(), restored[0]) {
+				t.Errorf("payload did not round-trip: %v", err)
+			}
+		})
+	}
+
+	wg.Wait()
 }
