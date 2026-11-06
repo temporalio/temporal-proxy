@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/transport/meta"
 	"go.temporal.io/proxy/pkg/logger"
 )
 
@@ -36,14 +37,14 @@ func TestClientAuthenticatesOverTheFullStack(t *testing.T) {
 	svr := httptest.NewServer(routes[0].Handler)
 	t.Cleanup(svr.Close)
 
-	resp, err := svr.Client().Get(svr.URL + route)
+	resp, err := svr.Client().Get(svr.URL + meta.PProfRoute)
 	require.NoError(t, err)
 	_ = responseBody(t, resp)
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
 	// The static token scheme reads a Bearer credential from the
 	// Authorization header, its default when config names no other.
-	req, err := http.NewRequest(http.MethodGet, svr.URL+route, nil)
+	req, err := http.NewRequest(http.MethodGet, svr.URL+meta.PProfRoute, nil)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer s3cret")
 

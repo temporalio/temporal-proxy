@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.temporal.io/proxy/internal/config"
+	"go.temporal.io/proxy/internal/transport/meta"
 	"go.temporal.io/proxy/pkg/logger"
 )
 
@@ -33,7 +34,7 @@ func TestNewFromParamsEnabled(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, routes, 1)
-	require.Equal(t, route, routes[0].Pattern)
+	require.Equal(t, meta.PProfRoute, routes[0].Pattern)
 }
 
 func TestNewFromParamsWithAuth(t *testing.T) {
@@ -57,7 +58,7 @@ func TestNewFromParamsWithAuth(t *testing.T) {
 
 	// An unauthenticated caller is rejected before any handler runs.
 	rec := httptest.NewRecorder()
-	routes[0].Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, route, nil))
+	routes[0].Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, meta.PProfRoute, nil))
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
@@ -87,7 +88,7 @@ func TestHandlerRawEndpoints(t *testing.T) {
 	// quote style around href differs between Go releases, so the assertion
 	// sticks to the part that does not.
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, route, nil))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, meta.PProfRoute, nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "heap?debug=1")
 	require.Contains(t, rec.Body.String(), "goroutine?debug=1")
@@ -95,6 +96,6 @@ func TestHandlerRawEndpoints(t *testing.T) {
 	// heap has no pattern of its own: the index handler dispatches it, which
 	// is the path the README's curl recipe takes.
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, route+"heap", nil))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, meta.PProfRoute+"heap", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 }
