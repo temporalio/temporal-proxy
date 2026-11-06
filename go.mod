@@ -18,7 +18,7 @@ require (
 	github.com/rs/zerolog v1.35.1
 	github.com/stretchr/testify v1.12.1
 	github.com/urfave/cli/v3 v3.14.0
-	go.temporal.io/api v1.63.5
+	go.temporal.io/api v1.64.3
 	go.temporal.io/cloud-sdk v0.23.0
 	go.uber.org/fx v1.24.0
 	gocloud.dev v0.49.0

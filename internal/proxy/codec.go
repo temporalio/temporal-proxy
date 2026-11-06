@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"runtime"
 	"slices"
+	"sync"
 
+	"go.temporal.io/api/command/v1"
 	"go.temporal.io/api/common/v1"
 	"go.temporal.io/api/failure/v1"
 	"go.temporal.io/api/history/v1"
@@ -15,12 +17,24 @@ import (
 	"go.temporal.io/api/workflow/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/transport/meta"
 	"go.temporal.io/proxy/pkg/codec"
 )
+
+// systemNexusEndpoint is the Nexus Endpoint a Workflow's system operations are
+// scheduled on. Its input is an envelope around another request, whose payloads
+// are sealed as that request's own (see [systemEnvelopeIn]).
+const systemNexusEndpoint = "__temporal_system"
+
+// singularPayloadFields caches [payloadFieldsOf] by message type.
+var singularPayloadFields sync.Map
 
 type (
 	// CodecOptions selects the codecs a [Codecs] applies.
@@ -101,6 +115,10 @@ type (
 		label string
 		check bool
 	}
+
+	// systemEnvelopeKey marks a context with the input of the system Nexus
+	// operation it sits under (see [systemEnvelopeIn]).
+	systemEnvelopeKey struct{}
 
 	// codecOpt builds the [codec.Option] for one codec, given the request the
 	// payloads belong to. A codec with no per-request state ignores both
@@ -270,8 +288,8 @@ func (c *Codecs) Interceptor(opts ...InterceptorOption) (grpc.UnaryClientInterce
 	}
 
 	payloads, err := proxy.NewPayloadVisitorInterceptor(proxy.PayloadVisitorInterceptorOptions{
-		Inbound:  visitPayloads(c.inbound, c.inboundSkip, c.inboundLimit, codec.Chain.Decode, io.remote),
-		Outbound: visitPayloads(c.outbound, nil, c.outboundLimit, codec.Chain.Encode, io.remote),
+		Inbound:  visitPayloads(c.inbound, c.inboundSkip, c.inboundLimit, codec.Chain.Decode, io.remote, markCrossing),
+		Outbound: visitPayloads(c.outbound, nil, c.outboundLimit, codec.Chain.Encode, io.remote, c.markOutbound),
 	})
 	if err != nil {
 		return nil, err
@@ -411,29 +429,191 @@ func chainUnary(outer, inner grpc.UnaryClientInterceptor) grpc.UnaryClientInterc
 // visitPayloads returns the options that apply opts with fn per request, at
 // most limit visits at a time, or nil when opts is empty so that direction is
 // left alone. skip is passed to [apply], and remote maps the request's local
-// namespace to its upstream's; either may be nil.
+// namespace to its upstream's; either may be nil. hook marks the context of
+// each message entered, for the visitor to read back.
+//
+// A system Nexus envelope hook marked is opened up and the payloads of the
+// request inside visited in turn (see [visitEnvelope]).
 func visitPayloads(
 	opts []codecOpt,
 	skip func([]*common.Payload) bool,
 	limit int,
 	fn func(codec.Chain, []*common.Payload) ([]*common.Payload, error),
 	remote func(string) string,
+	hook func(context.Context, proto.Message) (context.Context, error),
 ) *proxy.VisitPayloadsOptions {
 	if len(opts) == 0 {
 		return nil
 	}
 
-	return &proxy.VisitPayloadsOptions{
+	vo := &proxy.VisitPayloadsOptions{
 		ConcurrencyLimit:     limit,
 		SkipSearchAttributes: true,
-		ContextHook:          markCrossing,
-		Visitor: func(ctx *proxy.VisitPayloadsContext, payloads []*common.Payload) ([]*common.Payload, error) {
-			ns := meta.NamespaceFrom(ctx)
-			s := scope{ns: ns, label: remoteName(remote, ns), check: !crosses(ctx, payloads)}
-
-			return apply(ctx, s, opts, skip, fn, payloads)
-		},
+		ContextHook:          hook,
 	}
+
+	vo.Visitor = func(ctx *proxy.VisitPayloadsContext, payloads []*common.Payload) ([]*common.Payload, error) {
+		if env, ok := ctx.Value(systemEnvelopeKey{}).(*common.Payload); ok && len(payloads) == 1 && payloads[0] == env {
+			p, err := visitEnvelope(ctx, vo, env)
+			if err != nil {
+				return nil, err
+			}
+
+			return []*common.Payload{p}, nil
+		}
+
+		ns := meta.NamespaceFrom(ctx)
+		s := scope{ns: ns, label: remoteName(remote, ns), check: !crosses(ctx, payloads)}
+
+		return apply(ctx, s, opts, skip, fn, payloads)
+	}
+
+	return vo
+}
+
+// visitEnvelope visits the payloads of the request env wraps with vo, the
+// options env itself is visited with, and returns a copy of env holding that
+// request re-marshaled. Its payloads are sealed as the request's own would be.
+func visitEnvelope(ctx context.Context, vo *proxy.VisitPayloadsOptions, env *common.Payload) (*common.Payload, error) {
+	md := env.GetMetadata()
+
+	if enc := string(md[codec.MetadataEncoding]); enc != "binary/protobuf" {
+		return nil, fmt.Errorf("system Nexus envelope must be encoded as binary/protobuf but got %q", enc)
+	}
+
+	name := string(md["messageType"])
+	if name == "" {
+		return nil, errors.New("system Nexus envelope is missing the messageType metadata")
+	}
+
+	mt, err := protoregistry.GlobalTypes.FindMessageByName(protoreflect.FullName(name))
+	if err != nil {
+		return nil, fmt.Errorf("system Nexus envelope references unknown message type %q: %w", name, err)
+	}
+
+	msg := mt.New().Interface()
+	if err := proto.Unmarshal(env.GetData(), msg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal system Nexus envelope: %w", err)
+	}
+
+	if err := proxy.VisitPayloads(ctx, msg, *vo); err != nil {
+		return nil, err
+	}
+
+	data, err := proto.Marshal(msg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal system Nexus envelope: %w", err)
+	}
+
+	out := proto.Clone(env).(*common.Payload)
+	out.Data = data
+
+	return out, nil
+}
+
+// markOutbound is the context hook for sealing. Beyond [markCrossing], it
+// refuses a payload carrying the system payload marker anywhere the marker is
+// not expected (see [refuseSystemMarker]), and records the input of a system
+// Nexus operation for the visitor to open up. An error ends the visit, so the
+// upstream is never invoked.
+func (c *Codecs) markOutbound(ctx context.Context, m proto.Message) (context.Context, error) {
+	ctx, err := markCrossing(ctx, m)
+	if err != nil {
+		return ctx, err
+	}
+
+	if err := refuseSystemMarker(m); err != nil {
+		return ctx, err
+	}
+
+	if env := systemEnvelopeIn(m); env != nil {
+		return context.WithValue(ctx, systemEnvelopeKey{}, env), nil
+	}
+
+	return ctx, nil
+}
+
+// systemEnvelopeIn returns the input of the system Nexus operation m schedules,
+// when the payload visitor would otherwise seal it whole. From v1.64.0,
+// go.temporal.io/api opens only an envelope marked with
+// [proxy.SystemPayloadMetadataKey], which the Go SDK (v1.50.0) does not set on
+// an operation's input, so an unmarked one is opened here instead, as the
+// visitor did before.
+func systemEnvelopeIn(m proto.Message) *common.Payload {
+	attrs, ok := m.(*command.ScheduleNexusOperationCommandAttributes)
+	if !ok || attrs.GetEndpoint() != systemNexusEndpoint || attrs.GetInput() == nil {
+		return nil
+	}
+
+	if isSystemMarked(attrs.GetInput()) {
+		return nil
+	}
+
+	return attrs.GetInput()
+}
+
+// refuseSystemMarker returns InvalidArgument when a single payload field of m
+// carries the system payload marker, other than the input of a system Nexus
+// operation. The payload visitor in go.temporal.io/api hands a marked payload
+// to no codec, opening it as an envelope instead, so a marked payload anywhere
+// else would reach the upstream unsealed, or fail every read of it. Payload
+// lists and maps are not checked, as the visitor seals their payloads marked or
+// not.
+func refuseSystemMarker(m proto.Message) error {
+	rm := m.ProtoReflect()
+	for _, fd := range payloadFieldsOf(rm.Descriptor()) {
+		if !rm.Has(fd) {
+			continue
+		}
+
+		p, _ := rm.Get(fd).Message().Interface().(*common.Payload)
+		if !isSystemMarked(p) || isSystemInput(m, fd) {
+			continue
+		}
+
+		return status.Errorf(codes.InvalidArgument,
+			"payload metadata %q is reserved for the input of a %s Nexus operation, but %s carries it",
+			proxy.SystemPayloadMetadataKey, systemNexusEndpoint, fd.FullName())
+	}
+
+	return nil
+}
+
+// isSystemInput reports whether fd is the input field of a system Nexus
+// operation m schedules, the one place the system payload marker belongs.
+func isSystemInput(m proto.Message, fd protoreflect.FieldDescriptor) bool {
+	attrs, ok := m.(*command.ScheduleNexusOperationCommandAttributes)
+
+	return ok && attrs.GetEndpoint() == systemNexusEndpoint && fd.Name() == "input"
+}
+
+// isSystemMarked reports whether p carries the system payload marker the
+// payload visitor in go.temporal.io/api opens as an envelope.
+func isSystemMarked(p *common.Payload) bool {
+	return string(p.GetMetadata()[proxy.SystemPayloadMetadataKey]) == "true"
+}
+
+// payloadFieldsOf returns the fields of md holding a single payload, oneof
+// members included, computed once per message type.
+func payloadFieldsOf(md protoreflect.MessageDescriptor) []protoreflect.FieldDescriptor {
+	if fds, ok := singularPayloadFields.Load(md.FullName()); ok {
+		return fds.([]protoreflect.FieldDescriptor)
+	}
+
+	want := (&common.Payload{}).ProtoReflect().Descriptor().FullName()
+
+	var fds []protoreflect.FieldDescriptor
+	fields := md.Fields()
+	for i := range fields.Len() {
+		fd := fields.Get(i)
+		if !fd.IsList() && !fd.IsMap() && fd.Message() != nil && fd.Message().FullName() == want {
+			fds = append(fds, fd)
+		}
+	}
+
+	got, _ := singularPayloadFields.LoadOrStore(md.FullName(), fds)
+
+	return got.([]protoreflect.FieldDescriptor)
 }
 
 // remoteName maps ns through remote. An absent namespace stays absent rather
