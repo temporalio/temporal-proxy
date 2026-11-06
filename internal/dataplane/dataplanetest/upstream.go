@@ -21,10 +21,11 @@ import (
 	"go.temporal.io/proxy/pkg/testutil"
 )
 
-// Upstream is a fake Temporal frontend standing in for the service a
-// dataplane forwards to. It records every request and its metadata, answers
-// GetSystemInfo with an empty response, and echoes QueryWorkflow's arguments
-// back as its result unless [Upstream.SetQueryResult] gave it a canned one.
+// Upstream is a fake Temporal frontend standing in for the service a dataplane
+// forwards to. It records every request and its metadata, answers
+// GetSystemInfo and StartNexusOperationExecution with an empty response, and
+// echoes QueryWorkflow's arguments back as its result unless
+// [Upstream.SetQueryResult] gave it a canned one.
 type Upstream struct {
 	workflowservice.UnimplementedWorkflowServiceServer
 
@@ -88,6 +89,18 @@ func (u *Upstream) GetSystemInfo(
 	u.record(ctx, req)
 
 	return &workflowservice.GetSystemInfoResponse{}, nil
+}
+
+// StartNexusOperationExecution records the call and answers with an empty
+// response. Its request carries a namespace and an input payload, so it
+// exercises namespace translation and the payload codecs in the outbound
+// direction.
+func (u *Upstream) StartNexusOperationExecution(
+	ctx context.Context, req *workflowservice.StartNexusOperationExecutionRequest,
+) (*workflowservice.StartNexusOperationExecutionResponse, error) {
+	u.record(ctx, req)
+
+	return &workflowservice.StartNexusOperationExecutionResponse{}, nil
 }
 
 // Metadata is the incoming metadata of the most recent request, or nil before

@@ -20,6 +20,13 @@ const (
 	// VersionHeader is the outgoing metadata key that carries the proxy's own
 	// build version to the upstream. Only a Temporal Cloud upstream is sent one.
 	VersionHeader = "x-temporal-proxy-version"
+
+	// TemporalNamespaceHeader is the gRPC metadata key a Temporal SDK sets to
+	// the target namespace of every request (for routing and authorization).
+	// The per-upstream proxy rewrites it local-to-remote alongside the
+	// message-body namespace so upstreams that key off the header (for example
+	// Temporal Cloud) see the translated name.
+	TemporalNamespaceHeader = "temporal-namespace"
 )
 
 const (

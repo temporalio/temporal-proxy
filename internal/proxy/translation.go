@@ -11,13 +11,8 @@ import (
 
 	"go.temporal.io/proxy/internal/protoutil"
 	"go.temporal.io/proxy/internal/rpc"
+	"go.temporal.io/proxy/internal/transport/meta"
 )
-
-// temporalNamespaceHeader is the gRPC metadata key the Temporal SDK sets to the
-// target namespace of a request (for routing and authorization). The proxy
-// rewrites it local-to-remote alongside the message-body namespace so upstreams
-// that key off the header (for example Temporal Cloud) see the translated name.
-const temporalNamespaceHeader = "temporal-namespace"
 
 // translatingClientStream wraps a ClientStream to translate sent messages local
 // to remote and received messages remote to local.
@@ -119,16 +114,17 @@ func streamClientInterceptor(t *protoutil.Translator, out, in func(string) strin
 	}
 }
 
-// rewriteNamespaceHeader returns ctx with any outgoing temporalNamespaceHeader
-// values mapped through fn (local to remote). It is a no-op when the header is
-// absent, so upstreams the SDK never stamps it on are unaffected.
+// rewriteNamespaceHeader returns ctx with any outgoing
+// [meta.TemporalNamespaceHeader] values mapped through fn (local to remote). It
+// is a no-op when the header is absent, so upstreams the SDK never stamps it on
+// are unaffected.
 func rewriteNamespaceHeader(ctx context.Context, fn func(string) string) context.Context {
 	md, ok := metadata.FromOutgoingContext(ctx)
 	if !ok {
 		return ctx
 	}
 
-	vals := md.Get(temporalNamespaceHeader)
+	vals := md.Get(meta.TemporalNamespaceHeader)
 	if len(vals) == 0 {
 		return ctx
 	}
@@ -139,7 +135,7 @@ func rewriteNamespaceHeader(ctx context.Context, fn func(string) string) context
 			mapped[i] = fn(v)
 		}
 
-		out.Set(temporalNamespaceHeader, mapped...)
+		out.Set(meta.TemporalNamespaceHeader, mapped...)
 	})
 }
 

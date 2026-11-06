@@ -211,6 +211,10 @@ func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 // the one [StartApp] wires is bound to an ephemeral port nothing reports.
 func (f *Fixture) Gatherer() prometheus.Gatherer { return f.reg }
 
+// Dataplane is the running dataplane, for a test that drives it other than
+// through the gateway.
+func (f *Fixture) Dataplane() *dataplane.Dataplane { return f.dp }
+
 // Addr is the address the gateway is accepting on.
 func (f *Fixture) Addr() string { return f.dp.Addr().String() }
 

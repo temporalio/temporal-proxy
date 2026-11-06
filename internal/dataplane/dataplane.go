@@ -39,6 +39,9 @@ type (
 		hostPort  string
 		ready     []*connect.Conn
 		codecs    *proxy.Codecs
+		mux       *router.Mux
+		conns     map[string]*connect.Conn
+		allowlist services.Allowlist
 		abort     func(error)
 		abortOnce sync.Once
 		logger    logger.Logger
@@ -154,28 +157,39 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 	}
 
 	dp := &Dataplane{
-		ctx:      ctx,
-		hostPort: cfg.Listen.HostPort,
-		codecs:   codecs,
-		abort:    o.abort,
-		logger:   o.logger,
+		ctx:       ctx,
+		hostPort:  cfg.Listen.HostPort,
+		codecs:    codecs,
+		mux:       mux,
+		conns:     make(map[string]*connect.Conn, len(cfg.Upstreams)),
+		allowlist: o.allowlist,
+		abort:     o.abort,
+		logger:    o.logger,
 	}
 
 	handlers := make(map[string]grpc.StreamHandler, len(cfg.Upstreams))
 	for i := range cfg.Upstreams {
 		up := &cfg.Upstreams[i]
 
-		fw, ready, err := newUpstreamForwarder(cfg, o, up, codecs)
+		conn, static, err := newUpstreamConn(cfg, o, up, codecs)
 		if err != nil {
 			return nil, err
 		}
 
-		if ready != nil {
-			dp.ready = append(dp.ready, ready)
+		// Only a static upstream holds a connection worth opening before serving;
+		// a templated one resolves its target per request.
+		if static {
+			dp.ready = append(dp.ready, conn)
 		}
 
-		// The gateway calls this upstream's forwarder directly with the stream it
-		// accepted.
+		fw, err := proxy.NewForwarder(conn, proxy.WithProtoTypes(o.types))
+		if err != nil {
+			return nil, err
+		}
+
+		// The gateway calls this upstream's per-upstream proxy directly with
+		// the stream it accepted; ConnFor hands out the connection beneath it.
+		dp.conns[up.Name] = conn
 		handlers[up.Name] = fw.Handle
 	}
 
@@ -328,16 +342,16 @@ func validate(ctx context.Context, cfg *config.Config, o *options) error {
 	return nil
 }
 
-// newUpstreamForwarder builds one upstream's forwarder. It returns the
-// forwarder, the connection to open eagerly at start (nil for a templated
-// upstream, which resolves per request and has nothing to open yet), and any
-// error.
-func newUpstreamForwarder(
+// newUpstreamConn builds the connection one upstream's per-upstream proxy
+// forwards over, with every per-upstream interceptor installed. It reports
+// whether the connection is static, and so worth opening at start; a templated
+// upstream resolves per request and has nothing to open yet.
+func newUpstreamConn(
 	cfg *config.Config,
 	o *options,
 	up *config.Upstream,
 	codecs *proxy.Codecs,
-) (*proxy.Forwarder, *connect.Conn, error) {
+) (*connect.Conn, bool, error) {
 	// Request-independent dial options: namespace translation and outbound
 	// credentials. Per-request credentials are added by the resolver.
 	var dialOpts []grpc.DialOption
@@ -364,7 +378,7 @@ func newUpstreamForwarder(
 
 	cp, err := outbound.CredentialProviderFor(up.Credentials)
 	if err != nil {
-		return nil, nil, fmt.Errorf("invalid credentials for upstream %q: %w", up.Name, err)
+		return nil, false, fmt.Errorf("invalid credentials for upstream %q: %w", up.Name, err)
 	}
 	if cp != nil {
 		dialOpts = append(dialOpts, outbound.DialOptions(cp)...)
@@ -387,7 +401,7 @@ func newUpstreamForwarder(
 
 	cdc, err := codecs.Interceptor(codecOpts...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to build codec interceptor for upstream %q: %w", up.Name, err)
+		return nil, false, fmt.Errorf("failed to build codec interceptor for upstream %q: %w", up.Name, err)
 	}
 
 	dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(cdc))
@@ -406,7 +420,7 @@ func newUpstreamForwarder(
 	if up.IsCloud() {
 		reg, conn, err := cloudAPIConn(cfg, o, up)
 		if err != nil {
-			return nil, nil, err
+			return nil, false, err
 		}
 
 		dialOpts = append(dialOpts, translation.DialOptions(reg, translation.Via(conn))...)
@@ -414,27 +428,15 @@ func newUpstreamForwarder(
 
 	res, err := proxy.ResolverFor(up, dialOpts, o.logger, creds.WithReloader(o.reloader, "upstream/"+up.Name))
 	if err != nil {
-		return nil, nil, err
+		return nil, false, err
 	}
 
 	conn, err := connect.NewConn(o.pool.ConnOrCreate, res, connect.WithConnections(up.Connection.PoolSize(up.IsTemplated())))
 	if err != nil {
-		return nil, nil, err
+		return nil, false, err
 	}
 
-	fw, err := proxy.NewForwarder(conn, proxy.WithProtoTypes(o.types))
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Only a static upstream holds a connection worth opening before serving; a
-	// templated one resolves its target per request.
-	var ready *connect.Conn
-	if res.IsStatic() {
-		ready = conn
-	}
-
-	return fw, ready, nil
+	return conn, res.IsStatic(), nil
 }
 
 // Resolve returns the overriding cache key with the wrapped resolver's target and
@@ -446,7 +448,7 @@ func (r keyedResolver) Resolve(ctx context.Context) (string, string, []grpc.Dial
 
 // translates reports whether any upstream will have method translation
 // installed, which is any upstream being Temporal Cloud. It is the same question
-// newUpstreamForwarder asks of one upstream, so a configuration this answers
+// newUpstreamConn asks of one upstream, so a configuration this answers
 // false for installs nothing anywhere.
 func translates(cfg *config.Config) bool {
 	return slices.ContainsFunc(cfg.Upstreams, func(up config.Upstream) bool {
