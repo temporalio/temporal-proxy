@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"go.temporal.io/proxy/internal/cloud"
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/pkg/testutil"
 	"go.temporal.io/proxy/pkg/validation"
@@ -785,6 +786,26 @@ func TestUpstream_Validate_Cloud(t *testing.T) {
 			upstream: upstream(config.NamespaceRules{Suffix: ".a1b2c"}),
 		},
 		{
+			name:     "combined name and account suffix",
+			upstream: upstream(config.NamespaceRules{Suffix: "-dev.a1b2c"}),
+		},
+		{
+			name:     "name fragment can begin with a digit",
+			upstream: upstream(config.NamespaceRules{Suffix: "1.a1b2c"}),
+		},
+		{
+			name:     "longest name fragment leaves room for two local letters",
+			upstream: upstream(config.NamespaceRules{Suffix: strings.Repeat("a", 37) + ".a1b2c"}),
+		},
+		{
+			name:     "longest account id",
+			upstream: upstream(config.NamespaceRules{Suffix: "-dev." + strings.Repeat("a", 20)}),
+		},
+		{
+			name:     "existing account character semantics",
+			upstream: upstream(config.NamespaceRules{Suffix: ".A_2xy"}),
+		},
+		{
 			name:     "no rules at all",
 			upstream: upstream(config.NamespaceRules{}),
 		},
@@ -803,6 +824,61 @@ func TestUpstream_Validate_Cloud(t *testing.T) {
 		{
 			name:       "suffix account id too short",
 			upstream:   upstream(config.NamespaceRules{Suffix: ".a1b"}),
+			wantTuples: [][2]string{{"namespaces.rules", "suffix"}},
+		},
+		{
+			name:       "combined suffix account id too short",
+			upstream:   upstream(config.NamespaceRules{Suffix: "-dev.a1b"}),
+			wantTuples: [][2]string{{"namespaces.rules", "suffix"}},
+		},
+		{
+			name:       "suffix account id too long",
+			upstream:   upstream(config.NamespaceRules{Suffix: "-dev." + strings.Repeat("a", 21)}),
+			wantTuples: [][2]string{{"namespaces.rules", "suffix"}},
+		},
+		{
+			name:       "combined suffix has no account id",
+			upstream:   upstream(config.NamespaceRules{Suffix: "-dev."}),
+			wantTuples: [][2]string{{"namespaces.rules", "suffix"}},
+		},
+		{
+			name:       "combined suffix has an extra dot",
+			upstream:   upstream(config.NamespaceRules{Suffix: "-dev.a1b2c.extra"}),
+			wantTuples: [][2]string{{"namespaces.rules", "suffix"}},
+		},
+		{
+			name:       "account-only suffix has an extra dot",
+			upstream:   upstream(config.NamespaceRules{Suffix: ".a1b2c.extra"}),
+			wantTuples: [][2]string{{"namespaces.rules", "suffix"}},
+		},
+		{
+			name:       "name fragment ends in a hyphen",
+			upstream:   upstream(config.NamespaceRules{Suffix: "-dev-.a1b2c"}),
+			wantTuples: [][2]string{{"namespaces.rules", "suffix"}},
+		},
+		{
+			name:       "name fragment is only a hyphen",
+			upstream:   upstream(config.NamespaceRules{Suffix: "-.a1b2c"}),
+			wantTuples: [][2]string{{"namespaces.rules", "suffix"}},
+		},
+		{
+			name:       "name fragment contains uppercase letters",
+			upstream:   upstream(config.NamespaceRules{Suffix: "-DEV.a1b2c"}),
+			wantTuples: [][2]string{{"namespaces.rules", "suffix"}},
+		},
+		{
+			name:       "name fragment contains an underscore",
+			upstream:   upstream(config.NamespaceRules{Suffix: "_dev.a1b2c"}),
+			wantTuples: [][2]string{{"namespaces.rules", "suffix"}},
+		},
+		{
+			name:       "name fragment leaves room for only one local letter",
+			upstream:   upstream(config.NamespaceRules{Suffix: strings.Repeat("a", 38) + ".a1b2c"}),
+			wantTuples: [][2]string{{"namespaces.rules", "suffix"}},
+		},
+		{
+			name:       "name fragment leaves no room for a local letter",
+			upstream:   upstream(config.NamespaceRules{Suffix: strings.Repeat("a", 39) + ".a1b2c"}),
 			wantTuples: [][2]string{{"namespaces.rules", "suffix"}},
 		},
 		{
@@ -885,6 +961,77 @@ func TestUpstream_Validate_Cloud(t *testing.T) {
 	}
 }
 
+func TestUpstreamCloudSuffixRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name, prefix, suffix, local, remote string
+	}{
+		{name: "empty suffix", local: "orders.a1b2c", remote: "orders.a1b2c"},
+		{name: "account suffix", suffix: ".a1b2c", local: "orders", remote: "orders.a1b2c"},
+		{name: "combined suffix", suffix: "-dev.a1b2c", local: "orders", remote: "orders-dev.a1b2c"},
+		{name: "prefix and combined suffix", prefix: "team-", suffix: "-dev.a1b2c", local: "orders", remote: "team-orders-dev.a1b2c"},
+		{name: "one-letter local name", suffix: "1.a1b2c", local: "a", remote: "a1.a1b2c"},
+		{name: "longest name fragment", suffix: strings.Repeat("a", 37) + ".a1b2c", local: "aa", remote: strings.Repeat("a", 39) + ".a1b2c"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &config.Config{
+				Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"},
+				Upstreams: config.UpstreamList{{
+					Name:       "cloud",
+					Listen:     config.ListenConfig{HostPort: "{{ .RemoteNamespace }}.tmprl.cloud:7233"},
+					Namespaces: config.NamespaceConfig{Rules: config.NamespaceRules{Prefix: tt.prefix, Suffix: tt.suffix}},
+				}},
+			}
+			require.NoError(t, cfg.Prepare())
+			rules := &cfg.Upstreams[0].Namespaces.Rules
+			require.Equal(t, tt.remote, rules.Remote(tt.local))
+			require.NoError(t, cloud.ValidateNamespace(rules.Remote(tt.local)))
+			require.Equal(t, tt.local, rules.Local(tt.remote))
+			require.Equal(t, tt.local, rules.Local(rules.Remote(tt.local)))
+			require.Equal(t, tt.remote, rules.Remote(rules.Local(tt.remote)))
+		})
+	}
+}
+
+func TestUpstreamCloudSuffixEnvironment(t *testing.T) {
+	// Setenv is process-wide, so these cases cannot run in parallel.
+	tests := []struct {
+		name, nameSuffix, account string
+		wantErr                   bool
+	}{
+		{name: "account only", account: "a1b2c"},
+		{name: "combined", nameSuffix: "-dev", account: "a1b2c"},
+		{name: "unset account", nameSuffix: "-dev", wantErr: true},
+		{name: "both unset", wantErr: true},
+		{name: "invalid name fragment", nameSuffix: "_dev", account: "a1b2c", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TEST_TEMPORAL_NAME_SUFFIX", tt.nameSuffix)
+			t.Setenv("TEST_TEMPORAL_ACCOUNT", tt.account)
+			cfg, err := config.Load(strings.NewReader(`
+hostPort: 127.0.0.1:7233
+upstreams:
+  - name: cloud
+    hostPort: '{{ .RemoteNamespace }}.tmprl.cloud:7233'
+    namespaces:
+      rules:
+        suffix: '${TEST_TEMPORAL_NAME_SUFFIX}.${TEST_TEMPORAL_ACCOUNT}'
+`))
+			if tt.wantErr {
+				require.ErrorContains(t, err, "upstreams[0].namespaces.rules: suffix:")
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.nameSuffix+"."+tt.account, cfg.Upstreams[0].Namespaces.Rules.Suffix)
+		})
+	}
+}
+
 func TestUpstreamCloudErrorPath(t *testing.T) {
 	t.Parallel()
 
@@ -903,7 +1050,7 @@ upstreams:
 	require.EqualError(
 		t,
 		err,
-		`upstreams[0].namespaces.rules: suffix: must be ".<account-id>" for a Temporal Cloud upstream`,
+		`upstreams[0].namespaces.rules: suffix: must be "[<name-suffix>].<account-id>" for a Temporal Cloud upstream`,
 	)
 }
 
