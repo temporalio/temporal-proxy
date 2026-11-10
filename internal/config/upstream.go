@@ -60,6 +60,9 @@ type (
 	// Remote("payments") returns Prefix+"payments"+Suffix, and Local of that
 	// returns "payments". When an explicit Overrides entry matches, the
 	// override takes precedence over the prefix/suffix rule.
+	//
+	// A Cloud Suffix may include a namespace-name fragment before the account
+	// label: "-dev.a1b2c" maps "payments" to "payments-dev.a1b2c".
 	NamespaceRules struct {
 		Prefix    string             `yaml:"prefix"`
 		Suffix    string             `yaml:"suffix"`
@@ -156,15 +159,16 @@ func (u *Upstream) cloudRules() []validation.Rule {
 
 	return []validation.Rule{
 		func() validation.Errors {
-			id, found := strings.CutPrefix(nsRules.Suffix, ".")
-			if nsRules.Suffix == "" || (found && cloud.ValidateAccountID(id) == nil) {
+			// Use a two-character example base name, Cloud's minimum, to validate
+			// the suffix before the real namespace is known.
+			if nsRules.Suffix == "" || cloud.ValidateNamespace("aa"+nsRules.Suffix) == nil {
 				return nil
 			}
 
 			return validation.Errors{{
 				Subject: "namespaces.rules",
 				Field:   "suffix",
-				Message: `must be ".<account-id>" for a Temporal Cloud upstream`,
+				Message: `must be "[<name-suffix>].<account-id>" for a Temporal Cloud upstream`,
 			}}
 		},
 		func() validation.Errors {
