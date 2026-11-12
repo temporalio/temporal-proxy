@@ -190,3 +190,95 @@ func TestNewChainSharesCompressionOption(t *testing.T) {
 
 	wg.Wait()
 }
+
+// TestNewChainSkipsBeforeCompressing shows a payload under a skipped encoding is
+// neither compressed nor sealed, even when it would compress. Dropping the skip
+// check from Compressor.Encode fails it, since the encryptor then sees
+// CompressionEncoding instead of the skipped one.
+func TestNewChainSkipsBeforeCompressing(t *testing.T) {
+	t.Parallel()
+
+	p := compressiblePayload()
+	p.Metadata[codec.MetadataEncoding] = []byte("acme/aes-gcm")
+
+	c := &fakeCipher{}
+	chain := codec.NewChain(
+		codec.WithCipher(c),
+		codec.WithCompression(newSnappy(t)),
+		codec.WithSkip("acme/aes-gcm"),
+	)
+
+	got, err := chain.Encode([]*common.Payload{p})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Same(t, p, got[0])
+	require.Empty(t, c.encrypted)
+}
+
+// TestNewChainSkipDoesNotLeak shows WithSkip on one chain leaves another chain
+// built from the same WithCompression option compressing as before. Setting the
+// skip set on the shared Compressor instead of a copy fails it.
+func TestNewChainSkipDoesNotLeak(t *testing.T) {
+	t.Parallel()
+
+	opt := codec.WithCompression(newSnappy(t))
+	_ = codec.NewChain(opt, codec.WithSkip("acme/aes-gcm"))
+
+	p := compressiblePayload()
+	p.Metadata[codec.MetadataEncoding] = []byte("acme/aes-gcm")
+
+	got, err := codec.NewChain(opt).Encode([]*common.Payload{p})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, codec.CompressionEncoding, string(got[0].Metadata[codec.MetadataEncoding]))
+}
+
+// TestNewChainSkipReachesEncryptor shows WithSkip sets the encryptor's list
+// without WithEncryptorOptions, and that WithSkipEncodings given there replaces
+// it. Not passing o.skip to NewEncryptor fails the first row; appending it after
+// the caller's options instead of before fails the second.
+func TestNewChainSkipReachesEncryptor(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		opts     []codec.Option
+		wantSkip bool
+	}{
+		{
+			name:     "WithSkip alone",
+			opts:     []codec.Option{codec.WithSkip("acme/aes-gcm")},
+			wantSkip: true,
+		},
+		{
+			name: "WithSkipEncodings overrides",
+			opts: []codec.Option{
+				codec.WithSkip("acme/aes-gcm"),
+				codec.WithEncryptorOptions(codec.WithSkipEncodings("other/enc")),
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			c := &fakeCipher{}
+			chain := codec.NewChain(append([]codec.Option{codec.WithCipher(c)}, tc.opts...)...)
+
+			p := testPayload("acme/aes-gcm", "ciphertext-from-a-worker")
+			got, err := chain.Encode([]*common.Payload{p})
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+
+			if tc.wantSkip {
+				require.Same(t, p, got[0])
+				require.Empty(t, c.encrypted)
+
+				return
+			}
+
+			require.Equal(t, codec.EncryptionEncoding, string(got[0].Metadata[codec.MetadataEncoding]))
+		})
+	}
+}

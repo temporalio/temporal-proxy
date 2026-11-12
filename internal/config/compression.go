@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"iter"
 	"maps"
 	"slices"
 
@@ -73,6 +74,27 @@ type (
 		MinBytes  int
 	}
 )
+
+// All yields the settings of Default and of every override, in no particular
+// order, so every value [Compression.Settings] can return is among them. Panics
+// if the config was never prepared by [Config.Prepare].
+func (c *Compression) All() iter.Seq[CompressionSettings] {
+	if c.settings == nil {
+		panic("config: Compression used before Config.Prepare")
+	}
+
+	return func(yield func(CompressionSettings) bool) {
+		if !yield(c.settings.def) {
+			return
+		}
+
+		for _, s := range c.settings.overrides {
+			if !yield(s) {
+				return
+			}
+		}
+	}
+}
 
 // Settings returns the compression settings for the local namespace ns: its
 // override merged over Default, or Default alone when it has none. Panics if

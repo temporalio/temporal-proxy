@@ -82,10 +82,10 @@ reaches a different upstream with no change to the Worker.
   existing one until it follows [Namespace binding](#namespace-binding).
 
   Payloads a Worker's own codec already encrypted, or that an earlier proxy sealed, can be forwarded as they are by
-  listing their encoding under `encryption.skipEncodings`. Listing an encoding trusts every Worker that sets it: the
-  proxy cannot tell ciphertext from plaintext labeled that way. Listing `binary/encrypted` also returns responses sealed
-  under a KEK this proxy doesn't hold, including its own if a key was removed from config, rather than failing the
-  call, so alert on `vault_ops_total{result="unknown_key"}`.
+  listing their encoding under `encryption.skipEncodings`; they are not compressed either. Listing an encoding trusts
+  every Worker that sets it: the proxy cannot tell ciphertext from plaintext labeled that way. Listing
+  `binary/encrypted` also returns responses sealed under a KEK this proxy doesn't hold, including its own if a key was
+  removed from config, rather than failing the call, so alert on `vault_ops_total{result="unknown_key"}`.
 - **Pluggable key management.** For a backend the proxy has no built-in support for, such as an on-prem HSM or an
   internal key service, point it at an extension server you run and it wraps DEKs through that instead. Only key
   material is exchanged; payloads never reach it.

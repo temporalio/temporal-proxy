@@ -77,14 +77,7 @@ func NewEncryptor(c Cipher, opts ...EncryptorOption) *Encryptor {
 // forwards unchanged. Blank entries are dropped, since one would match every
 // payload that carries no encoding. A later use replaces an earlier one.
 func WithSkipEncodings(encodings ...string) EncryptorOption {
-	set := make(map[string]struct{}, len(encodings))
-	for _, enc := range encodings {
-		if enc != "" {
-			set[enc] = struct{}{}
-		}
-	}
-
-	return func(e *Encryptor) { e.skip = set }
+	return withSkipSet(encodingSet(encodings))
 }
 
 // WithSkipObserver reports each payload the [Encryptor] skips to fn. A nil fn
@@ -206,4 +199,22 @@ func (c *Encryptor) skipped(op, enc string) {
 	if c.onSkip != nil {
 		c.onSkip(op, enc)
 	}
+}
+
+// withSkipSet sets the encodings an Encryptor skips to a set already built.
+func withSkipSet(set map[string]struct{}) EncryptorOption {
+	return func(e *Encryptor) { e.skip = set }
+}
+
+// encodingSet returns encodings as a set, dropping blank entries, since one
+// would match every payload that carries no encoding.
+func encodingSet(encodings []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(encodings))
+	for _, enc := range encodings {
+		if enc != "" {
+			set[enc] = struct{}{}
+		}
+	}
+
+	return set
 }

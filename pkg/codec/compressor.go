@@ -24,6 +24,7 @@ type (
 	Compressor struct {
 		enc      Compression
 		dec      map[string]Compression
+		skip     map[string]struct{}
 		minBytes int
 	}
 
@@ -72,8 +73,9 @@ func WithMinBytes(n int) CompressorOption {
 
 // Encode compresses each payload whole, metadata included, so
 // [Compressor.Decode] restores it exactly. Payloads under [WithMinBytes], already
-// compressed, or that wouldn't come out smaller are returned as they are, as is
-// everything when the Compressor only decodes.
+// compressed, under an encoding listed through [WithSkip], or that wouldn't come
+// out smaller are returned as they are, as is everything when the Compressor
+// only decodes.
 func (c *Compressor) Encode(payloads []*common.Payload) ([]*common.Payload, error) {
 	if c.enc == nil {
 		return payloads, nil
@@ -82,8 +84,14 @@ func (c *Compressor) Encode(payloads []*common.Payload) ([]*common.Payload, erro
 	// As in Decode, the input is only copied once a payload changes.
 	res, copied := payloads, false
 	for i, p := range payloads {
-		// A payload compressed by an earlier proxy hop won't shrink again.
-		if len(p.GetData()) < c.minBytes || string(p.GetMetadata()[MetadataEncoding]) == CompressionEncoding {
+		// A payload compressed by an earlier proxy hop won't shrink again, and a
+		// skipped one has to reach the encryptor under its own encoding.
+		enc := string(p.GetMetadata()[MetadataEncoding])
+		if len(p.GetData()) < c.minBytes || enc == CompressionEncoding {
+			continue
+		}
+
+		if _, ok := c.skip[enc]; ok {
 			continue
 		}
 
@@ -160,6 +168,16 @@ func (c *Compressor) Decode(payloads []*common.Payload) ([]*common.Payload, erro
 	}
 
 	return res, nil
+}
+
+// skipping returns a copy of c that forwards payloads under an encoding in set.
+// The receiver is shared by every chain built from one option, so it is never
+// modified.
+func (c *Compressor) skipping(set map[string]struct{}) *Compressor {
+	cp := *c
+	cp.skip = set
+
+	return &cp
 }
 
 // decoder returns the compression that restores payloads compressed with name,
