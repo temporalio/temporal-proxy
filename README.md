@@ -205,7 +205,8 @@ which is a deliberate divergence from the Temporal SDK's own codec handler, whos
 
 The codec server is a route group on the proxy's HTTP server, which listens on its own port, separate from the
 gateway's. The listener is configured under `http:`, and the codec server under `http.codecServer:`. Nothing binds
-unless a route group is enabled.
+unless a route group is enabled. A load balancer in front of the codec server can probe the listener's
+[health check](#http-health-check).
 
 | Key                                 | Default | Meaning                                                                                                     |
 | ----------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------- |
@@ -259,6 +260,26 @@ Under `strict`, a request naming no Namespace answers 400 saying so, and `/decod
 different Namespace with the same 400 as any other failure. That includes the results of Nexus operations handled in
 another Namespace, which the Web UI therefore shows as encrypted. Under `permissive`, such payloads decode and are
 counted in `vault_namespace_mismatches_total`.
+
+## HTTP health check
+
+The HTTP server answers `GET /healthz` with `200 OK` and the body `ok`, for a load balancer or probe that sits in front
+of the HTTP port and holds no credential for the route groups. It is never authenticated, whatever a route group's
+`auth` says, and it is served whenever any route group is enabled, since that is when the listener binds. `HEAD` is
+answered the same way without a body, and any other method answers 405.
+
+A 200 means the HTTP listener accepted the connection and served the request, and nothing more. It says nothing about
+the gateway, which reports its own status through the gRPC health service on the gateway's port, and it does not check
+encryption keys or a KMS, so losing a dependency cannot take every replica out of rotation at once.
+
+Beyond loopback the listener serves TLS, so the probe has to speak HTTPS; in Kubernetes that is `scheme: HTTPS` on the
+probe's `httpGet`. A listener with `http.tls.ca` set requires a client certificate from every caller, the probe
+included, which a Kubernetes `httpGet` probe cannot present.
+
+The route keeps answering 200 until the listener closes. Shutdown closes the listener before it drains in-flight
+requests, so a probe is refused, or finds its kept-alive connection closed, and never sees a failing status. To take a
+replica out of rotation before it stops accepting, keep the proxy running while the balancer deregisters it, for
+example with a `preStop` sleep.
 
 ## TLS certificate rotation
 

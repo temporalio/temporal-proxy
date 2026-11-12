@@ -57,6 +57,53 @@ func TestModuleMountsEveryRouteGroup(t *testing.T) {
 	require.Equal(t, "other", get(t, base+"/other/thing"))
 }
 
+func TestModuleServesHealth(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		HTTP: config.HTTP{Listen: config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true}},
+	}
+
+	var svr *httpserver.Server
+
+	// A group at the root, as the codec server mounts. Were /healthz registered
+	// for GET alone, this group would take every other method on that path.
+	app := fx.New(
+		fx.Supply(cfg, creds.NewReloader()),
+		fx.Provide(func() logger.Logger { return logger.NewNoopLogger() }),
+		fx.Provide(httpserver.AsRoutes(func() []httpserver.Route {
+			return []httpserver.Route{{Pattern: "/", Handler: body("root")}}
+		})),
+		httpserver.Module,
+		fx.Populate(&svr),
+		fx.NopLogger,
+	)
+	require.NoError(t, app.Err())
+	require.NoError(t, app.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, app.Stop(context.WithoutCancel(t.Context()))) })
+
+	base := "http://" + svr.Addr().String()
+
+	res, got := request(t, http.MethodGet, base+"/healthz")
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	require.Equal(t, "no-store", res.Header.Get("Cache-Control"))
+	require.Equal(t, "ok\n", got)
+
+	// A client never sees a body on HEAD, so the header is what shows the same
+	// handler answered.
+	res, _ = request(t, http.MethodHead, base+"/healthz")
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	require.Equal(t, "no-store", res.Header.Get("Cache-Control"))
+
+	res, _ = request(t, http.MethodPost, base+"/healthz")
+	require.Equal(t, http.StatusMethodNotAllowed, res.StatusCode)
+	require.Equal(t, "GET, HEAD", res.Header.Get("Allow"))
+
+	// The codec server also serves each route under a namespace path segment,
+	// so a namespace named healthz must still reach the group.
+	require.Equal(t, "root", get(t, base+"/healthz/decode"))
+}
+
 func TestModuleFailsToStartWhenThePortIsTaken(t *testing.T) {
 	t.Parallel()
 
@@ -175,14 +222,26 @@ func body(s string) http.Handler {
 func get(t *testing.T, url string) string {
 	t.Helper()
 
-	res, err := http.Get(url)
+	res, got := request(t, http.MethodGet, url)
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	return got
+}
+
+// request sends a bodiless request and returns the response with the body it
+// carried, already read and closed.
+func request(t *testing.T, method, url string) (*http.Response, string) {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(t.Context(), method, url, nil)
+	require.NoError(t, err)
+
+	res, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer func() { _ = res.Body.Close() }()
-
-	require.Equal(t, http.StatusOK, res.StatusCode)
 
 	b, err := io.ReadAll(res.Body)
 	require.NoError(t, err)
 
-	return string(b)
+	return res, string(b)
 }
