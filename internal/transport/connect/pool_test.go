@@ -287,6 +287,46 @@ func TestPoolConnOrCreate(t *testing.T) {
 	})
 }
 
+// TestPoolScoped proves a scope confines keys to their owner: two owners whose
+// resolvers produce the same key get separate connections, each dialed with its
+// own options, while one owner keeps reusing its own.
+func TestPoolScoped(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		scopeA string
+		scopeB string
+		same   bool
+	}{
+		{name: "same scope shares the connection", scopeA: "upstream/a", scopeB: "upstream/a", same: true},
+		{name: "different scopes get their own", scopeA: "upstream/a", scopeB: "upstream/b"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			p := connect.NewPool()
+			t.Cleanup(func() { _ = p.Close() })
+
+			creds := grpc.WithTransportCredentials(insecure.NewCredentials())
+			a, err := p.Scoped(tt.scopeA)("key", "127.0.0.1:7233", creds)
+			require.NoError(t, err)
+
+			b, err := p.Scoped(tt.scopeB)("key", "127.0.0.1:7233", creds)
+			require.NoError(t, err)
+
+			if tt.same {
+				require.Same(t, a, b)
+				return
+			}
+
+			require.NotSame(t, a, b)
+		})
+	}
+}
+
 func newConn(t *testing.T) *grpc.ClientConn {
 	t.Helper()
 

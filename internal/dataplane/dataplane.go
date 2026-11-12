@@ -65,17 +65,6 @@ type (
 		logger     logger.Logger
 		abort      func(error)
 	}
-
-	// keyedResolver overrides a resolver's pool cache key. A static resolver keys
-	// by dial target, which is unique among upstreams but not among control-plane
-	// connections: every Cloud upstream dials the same address, so without this
-	// they would share whichever was created first, and with it whichever
-	// credentials that one carried.
-	keyedResolver struct {
-		connect.Resolver
-
-		key string
-	}
 )
 
 // New prepares cfg (see [config.Config.Prepare]), builds the routing mux from
@@ -417,7 +406,7 @@ func newUpstreamForwarder(
 		return nil, nil, err
 	}
 
-	conn, err := connect.NewConn(o.pool.ConnOrCreate, res, connect.WithConnections(up.Connection.PoolSize(up.IsTemplated())))
+	conn, err := connect.NewConn(o.pool.Scoped("upstream/"+up.Name), res, connect.WithConnections(up.Connection.PoolSize(up.IsTemplated())))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -435,13 +424,6 @@ func newUpstreamForwarder(
 	}
 
 	return fw, ready, nil
-}
-
-// Resolve returns the overriding cache key with the wrapped resolver's target and
-// options.
-func (r keyedResolver) Resolve(ctx context.Context) (string, string, []grpc.DialOption, error) {
-	_, target, opts, err := r.Resolver.Resolve(ctx)
-	return r.key, target, opts, err
 }
 
 // translates reports whether any upstream will have method translation
@@ -495,7 +477,7 @@ func cloudAPIConn(cfg *config.Config, o *options, up *config.Upstream) (*transla
 
 	// A single connection, whatever maxConnections says: translated calls are
 	// short control-plane requests, not the long polls a pool spreads out.
-	conn, err := connect.NewConn(o.pool.ConnOrCreate, keyedResolver{Resolver: res, key: api.Name})
+	conn, err := connect.NewConn(o.pool.Scoped("cloud_api/"+up.Name), res)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create the Cloud API client of upstream %q: %w", up.Name, err)
 	}

@@ -168,14 +168,14 @@ func TestEndToEndANonCloudUpstreamTranslatesNothing(t *testing.T) {
 	require.Nil(t, cloud.request(), "a non-Cloud upstream must translate nothing")
 }
 
-// newCloudUpstream starts a fake CloudService on a loopback port and stops it
-// when the test ends.
-func newCloudUpstream(t *testing.T) *cloudUpstream {
+// newCloudUpstream starts a fake CloudService on a loopback port, served with
+// opts, and stops it when the test ends.
+func newCloudUpstream(t *testing.T, opts ...grpc.ServerOption) *cloudUpstream {
 	t.Helper()
 
 	up := new(cloudUpstream)
 
-	svr := grpc.NewServer()
+	svr := grpc.NewServer(opts...)
 	cloudservice.RegisterCloudServiceServer(svr, up)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -204,15 +204,18 @@ func (u *cloudUpstream) GetNamespaces(
 	return &cloudservice.GetNamespacesResponse{Namespaces: u.page}, nil
 }
 
-// GetNamespace records the namespace it was asked for and answers with one custom
+// GetNamespace records the namespace and metadata it was asked with and answers with one custom
 // search attribute.
 func (u *cloudUpstream) GetNamespace(
-	_ context.Context, req *cloudservice.GetNamespaceRequest,
+	ctx context.Context, req *cloudservice.GetNamespaceRequest,
 ) (*cloudservice.GetNamespaceResponse, error) {
+	md, _ := metadata.FromIncomingContext(ctx)
+
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
 	u.getNS = req.GetNamespace()
+	u.md = md
 
 	return &cloudservice.GetNamespaceResponse{Namespace: &cloudnamespace.Namespace{
 		Namespace: req.GetNamespace(),
