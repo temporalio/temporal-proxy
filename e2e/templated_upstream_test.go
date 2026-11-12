@@ -24,7 +24,7 @@ func TestEndToEndTemplatedUpstreamRoutesByRenderedAddress(t *testing.T) {
 	upA := dataplanetest.NewUpstream(t)
 	upB := dataplanetest.NewUpstream(t)
 
-	f := dataplanetest.StartApp(t, &config.Config{
+	f := dataplanetest.Start(t, &config.Config{
 		Routing: config.Routing{DefaultUpstream: "dynamic"},
 		Upstreams: config.UpstreamList{{
 			Name:   "dynamic",

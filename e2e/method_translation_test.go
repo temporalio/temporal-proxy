@@ -65,7 +65,7 @@ func TestEndToEndListNamespacesTranslatesOntoCloudService(t *testing.T) {
 		},
 	})
 
-	f := dataplanetest.StartApp(t, &config.Config{
+	f := dataplanetest.Start(t, &config.Config{
 		Routing: config.Routing{DefaultUpstream: "frontend", SystemUpstream: "frontend"},
 		Upstreams: config.UpstreamList{{
 			Name:   "frontend",
@@ -113,7 +113,7 @@ func TestEndToEndOnlyTranslatedMethodsReachTheCloudAPI(t *testing.T) {
 	frontend := dataplanetest.NewUpstream(t)
 	cloud := newCloudUpstream(t)
 
-	f := dataplanetest.StartApp(t, &config.Config{
+	f := dataplanetest.Start(t, &config.Config{
 		Routing: config.Routing{DefaultUpstream: "frontend", SystemUpstream: "frontend"},
 		Upstreams: config.UpstreamList{{
 			Name:   "frontend",
@@ -148,7 +148,7 @@ func TestEndToEndANonCloudUpstreamTranslatesNothing(t *testing.T) {
 
 	cloud := newCloudUpstream(t)
 
-	f := dataplanetest.StartApp(t, &config.Config{
+	f := dataplanetest.Start(t, &config.Config{
 		Routing: config.Routing{DefaultUpstream: "frontend", SystemUpstream: "frontend"},
 		Upstreams: config.UpstreamList{{
 			Name:   "frontend",
@@ -273,7 +273,7 @@ func TestEndToEndNamespaceRulesApplyToATranslatedReply(t *testing.T) {
 		State:     resource.ResourceState_RESOURCE_STATE_ACTIVE,
 	})
 
-	f := dataplanetest.StartApp(t, &config.Config{
+	f := dataplanetest.Start(t, &config.Config{
 		Routing: config.Routing{DefaultUpstream: "frontend", SystemUpstream: "frontend"},
 		Upstreams: config.UpstreamList{{
 			Name:       "frontend",
@@ -316,7 +316,7 @@ func TestEndToEndACloudUpstreamServingNoNamespacelessRequestsTranslatesNothing(t
 
 	cloud := newCloudUpstream(t)
 
-	f := dataplanetest.StartApp(t, &config.Config{
+	f := dataplanetest.Start(t, &config.Config{
 		Routing: config.Routing{
 			DefaultUpstream: "onprem",
 			SystemUpstream:  "onprem",
@@ -353,7 +353,7 @@ func TestEndToEndANamespacedTranslationFiresOnTheCloudUpstreamItLandsOn(t *testi
 
 	cloud := newCloudUpstream(t)
 
-	f := dataplanetest.StartApp(t, &config.Config{
+	f := dataplanetest.Start(t, &config.Config{
 		Routing: config.Routing{
 			DefaultUpstream: "onprem",
 			SystemUpstream:  "onprem",
@@ -403,7 +403,7 @@ func TestEndToEndTheDefaultUpstreamCarriesNamespacelessRequests(t *testing.T) {
 		State:     resource.ResourceState_RESOURCE_STATE_ACTIVE,
 	})
 
-	f := dataplanetest.StartApp(t, &config.Config{
+	f := dataplanetest.Start(t, &config.Config{
 		Routing: config.Routing{DefaultUpstream: "frontend"},
 		Upstreams: config.UpstreamList{{
 			Name:   "frontend",

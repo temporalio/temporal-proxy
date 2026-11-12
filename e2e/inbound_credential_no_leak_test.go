@@ -37,7 +37,7 @@ func TestEndToEndInboundHeaderStrippedNotLeakedUpstream(t *testing.T) {
 		Static: &config.StaticCredentialConfig{APIKey: "k3y"},
 	}
 
-	f := dataplanetest.StartApp(t, cfg)
+	f := dataplanetest.Start(t, cfg)
 
 	ctx := metadata.AppendToOutgoingContext(f.Context(), "x-worker-auth", "Bearer worker-secret")
 	_, err := f.Client().GetSystemInfo(ctx, &workflowservice.GetSystemInfoRequest{}, grpc.WaitForReady(true))

@@ -48,7 +48,7 @@ func TestEndToEndPayloadEncryption(t *testing.T) {
 		Default:          &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
 	}
 
-	f := dataplanetest.StartApp(t, cfg)
+	f := dataplanetest.Start(t, cfg)
 
 	secret := &common.Payload{
 		Metadata: map[string][]byte{wireEncoding: []byte("json/plain")},
@@ -108,7 +108,7 @@ func TestEndToEndSkipsWorkerEncryptedPayloads(t *testing.T) {
 		Default:          &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
 	}
 
-	f := dataplanetest.StartApp(t, cfg)
+	f := dataplanetest.Start(t, cfg)
 
 	workerSealed := &common.Payload{
 		Metadata: map[string][]byte{wireEncoding: []byte("acme/aes-gcm")},
@@ -143,7 +143,7 @@ func TestEndToEndChainedProxiesSealOnce(t *testing.T) {
 		SkipEncodings:    []string{wireEncryptedMarker},
 		Default:          &config.KeyPolicy{URI: testingKeyURIOf(t, 0x0b), Duration: time.Hour},
 	}
-	hopB := dataplanetest.StartApp(t, cfgB)
+	hopB := dataplanetest.Start(t, cfgB)
 
 	cfgA := dataplanetest.Config(up)
 	cfgA.Upstreams[0].Listen = config.ListenConfig{HostPort: hopB.Addr(), Insecure: true}
@@ -152,7 +152,7 @@ func TestEndToEndChainedProxiesSealOnce(t *testing.T) {
 		NamespaceBinding: config.NamespaceBindingStrict,
 		Default:          &config.KeyPolicy{URI: testingKeyURIOf(t, 0x0a), Duration: time.Hour},
 	}
-	hopA := dataplanetest.StartApp(t, cfgA)
+	hopA := dataplanetest.Start(t, cfgA)
 
 	secret := &common.Payload{
 		Metadata: map[string][]byte{wireEncoding: []byte("json/plain")},
@@ -258,7 +258,7 @@ func TestEndToEndNamespaceBinding(t *testing.T) {
 				NamespaceBinding: tc.reader,
 				Default:          &config.KeyPolicy{URI: key, Duration: time.Hour},
 			}
-			reader := dataplanetest.StartApp(t, rcfg)
+			reader := dataplanetest.Start(t, rcfg)
 
 			plain := &common.Payload{Metadata: map[string][]byte{wireEncoding: []byte("json/plain")}, Data: []byte(`"q"`)}
 			resp, err := reader.Client().QueryWorkflow(reader.Context(), queryWith(plain), grpc.WaitForReady(true))
@@ -335,7 +335,7 @@ func TestEndToEndNamespaceComparison(t *testing.T) {
 				NamespaceBinding: tc.reader,
 				Default:          &config.KeyPolicy{URI: key, Duration: time.Hour},
 			}
-			reader := dataplanetest.StartApp(t, rcfg)
+			reader := dataplanetest.Start(t, rcfg)
 
 			plain := &common.Payload{Metadata: map[string][]byte{wireEncoding: []byte("json/plain")}, Data: []byte(`"q"`)}
 			resp, err := reader.Client().QueryWorkflow(reader.Context(), queryIn(tc.readerNS, plain), grpc.WaitForReady(true))
@@ -382,7 +382,7 @@ func TestEndToEndChainedStrictHopPassesForeignPayloads(t *testing.T) {
 		SkipEncodings:    []string{wireEncryptedMarker},
 		Default:          &config.KeyPolicy{URI: testingKeyURIOf(t, 0x0b), Duration: time.Hour},
 	}
-	hopB := dataplanetest.StartApp(t, cfgB)
+	hopB := dataplanetest.Start(t, cfgB)
 
 	cfgA := dataplanetest.Config(up)
 	cfgA.Upstreams[0].Listen = config.ListenConfig{HostPort: hopB.Addr(), Insecure: true}
@@ -391,7 +391,7 @@ func TestEndToEndChainedStrictHopPassesForeignPayloads(t *testing.T) {
 		NamespaceBinding: config.NamespaceBindingPermissive,
 		Default:          &config.KeyPolicy{URI: keyA, Duration: time.Hour},
 	}
-	hopA := dataplanetest.StartApp(t, cfgA)
+	hopA := dataplanetest.Start(t, cfgA)
 
 	resp, err := hopA.Client().QueryWorkflow(hopA.Context(), queryWith(secret), grpc.WaitForReady(true))
 	require.NoError(t, err)
@@ -428,7 +428,7 @@ func sealThroughIn(
 		NamespaceBinding: mode,
 		Default:          &config.KeyPolicy{URI: key, Duration: time.Hour},
 	}
-	f := dataplanetest.StartApp(t, cfg)
+	f := dataplanetest.Start(t, cfg)
 
 	_, err := f.Client().QueryWorkflow(f.Context(), queryIn(ns, secret), grpc.WaitForReady(true))
 	require.NoError(t, err)
@@ -484,7 +484,7 @@ func TestEndToEndBindingLabelsFrom(t *testing.T) {
 				NamespaceBinding: config.NamespaceBindingStrict,
 				Default:          &config.KeyPolicy{URI: key, Duration: time.Hour},
 			}
-			writer := dataplanetest.StartApp(t, wcfg)
+			writer := dataplanetest.Start(t, wcfg)
 
 			_, err := writer.Client().QueryWorkflow(writer.Context(), queryIn("ns1", secret), grpc.WaitForReady(true))
 			require.NoError(t, err)
@@ -507,7 +507,7 @@ func TestEndToEndBindingLabelsFrom(t *testing.T) {
 				NamespaceBinding: config.NamespaceBindingStrict,
 				Default:          &config.KeyPolicy{URI: key, Duration: time.Hour},
 			}
-			reader := dataplanetest.StartApp(t, rcfg)
+			reader := dataplanetest.Start(t, rcfg)
 
 			plain := &common.Payload{Metadata: map[string][]byte{wireEncoding: []byte("json/plain")}, Data: []byte(`"q"`)}
 			resp, err := reader.Client().QueryWorkflow(reader.Context(), queryIn("ns1", plain), grpc.WaitForReady(true))

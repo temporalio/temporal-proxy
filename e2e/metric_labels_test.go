@@ -40,7 +40,7 @@ func TestEndToEndMetadataLabels(t *testing.T) {
 		Default:          &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
 	}
 
-	f := dataplanetest.StartApp(t, cfg)
+	f := dataplanetest.Start(t, cfg)
 
 	ctx := metadata.AppendToOutgoingContext(f.Context(), "x-tenant", "acme")
 	_, err := f.Client().QueryWorkflow(ctx, queryWithPayload(), grpc.WaitForReady(true))
@@ -70,7 +70,7 @@ func TestEndToEndMetadataLabelsWithoutTheHeader(t *testing.T) {
 		Default:          &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
 	}
 
-	f := dataplanetest.StartApp(t, cfg)
+	f := dataplanetest.Start(t, cfg)
 
 	_, err := f.Client().QueryWorkflow(f.Context(), queryWithPayload(), grpc.WaitForReady(true))
 	require.NoError(t, err)
@@ -97,7 +97,7 @@ func TestEndToEndFixedLabels(t *testing.T) {
 		Default:          &config.KeyPolicy{URI: testingKeyURI(t), Duration: time.Hour},
 	}
 
-	f := dataplanetest.StartApp(t, cfg)
+	f := dataplanetest.Start(t, cfg)
 
 	ctx := metadata.AppendToOutgoingContext(f.Context(), "x-tenant", "acme")
 	_, err := f.Client().QueryWorkflow(ctx, queryWithPayload(), grpc.WaitForReady(true))
