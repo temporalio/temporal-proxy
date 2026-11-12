@@ -16,7 +16,8 @@
 //
 // [NewChain] assembles the codecs its options enable into a single [Chain] in the
 // order they have to be applied, so callers say what they want enabled rather
-// than what order it happens in.
+// than what order it happens in. Encodings listed through [WithSkip] pass through
+// the whole chain unchanged, neither compressed nor sealed.
 //
 // [EncodeFailure] and [RestoreFailure] move a failure's message and stack trace
 // into its encoded attributes and back, in the form the Temporal SDK's

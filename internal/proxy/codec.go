@@ -172,18 +172,21 @@ func NewCodecs(opts CodecOptions) (*Codecs, error) {
 			c.outbound = append(c.outbound, enc)
 		}
 
-		// The set is built once here; only the observer is bound per request.
+		// The set is built once here; only the observer is bound per request. It
+		// goes to the whole chain, not just the encryptor, since a compressed
+		// payload no longer carries the encoding the encryptor checks.
 		if len(opts.SkipEncodings) > 0 {
-			encodings := codec.WithSkipEncodings(opts.SkipEncodings...)
-			skip := func(ctx context.Context, s scope) codec.Option {
-				return codec.WithEncryptorOptions(encodings, codec.WithSkipObserver(func(op, encoding string) {
+			encodings := codec.WithSkip(opts.SkipEncodings...)
+			skip := func(context.Context, scope) codec.Option { return encodings }
+			observe := func(ctx context.Context, s scope) codec.Option {
+				return codec.WithEncryptorOptions(codec.WithSkipObserver(func(op, encoding string) {
 					opts.Reporter.PayloadSkipped(ctx, op, encoding, s.ns)
 				}))
 			}
 
-			c.inbound = append(c.inbound, skip)
+			c.inbound = append(c.inbound, skip, observe)
 			if opts.Encrypt {
-				c.outbound = append(c.outbound, skip)
+				c.outbound = append(c.outbound, skip, observe)
 			}
 		}
 	}

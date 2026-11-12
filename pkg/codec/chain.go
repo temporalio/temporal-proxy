@@ -32,6 +32,7 @@ type (
 		cipher     Cipher
 		encryptor  []EncryptorOption
 		compressor *Compressor
+		skip       map[string]struct{}
 	}
 )
 
@@ -47,11 +48,23 @@ func NewChain(opts ...Option) Chain {
 	// because ciphertext does not compress.
 	var codecs []Codec
 	if cmp := o.compressor; cmp != nil {
+		// Only a Compressor that encodes can wrap a skipped payload, and the
+		// copy is all this costs per chain.
+		if len(o.skip) > 0 && cmp.enc != nil {
+			cmp = cmp.skipping(o.skip)
+		}
+
 		codecs = append(codecs, cmp)
 	}
 
 	if o.cipher != nil {
-		codecs = append(codecs, NewEncryptor(o.cipher, o.encryptor...))
+		opts := o.encryptor
+		if len(o.skip) > 0 {
+			// Ahead of the caller's options, so WithSkipEncodings still wins.
+			opts = append([]EncryptorOption{withSkipSet(o.skip)}, opts...)
+		}
+
+		codecs = append(codecs, NewEncryptor(o.cipher, opts...))
 	}
 
 	return Chain{codecs: codecs}
@@ -75,6 +88,16 @@ func WithCipher(c Cipher) Option {
 func WithCompression(c Compression, opts ...CompressorOption) Option {
 	cmp := NewCompressor(c, opts...)
 	return func(o *options) { o.compressor = cmp }
+}
+
+// WithSkip lists encodings already encrypted before they reach the chain, so
+// Encode forwards them unchanged: neither compressed nor sealed. It sets the
+// encryptor's list as [WithSkipEncodings] does, which overrides it when also
+// given. The set is built here, once, so one option can be shared by every
+// chain. A later use replaces an earlier one.
+func WithSkip(encodings ...string) Option {
+	set := encodingSet(encodings)
+	return func(o *options) { o.skip = set }
 }
 
 // WithEncryptorOptions passes opts to the [Encryptor] the chain builds. Without

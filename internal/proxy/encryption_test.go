@@ -405,6 +405,53 @@ func TestEncryptionSkipsListedEncodings(t *testing.T) {
 	}))
 }
 
+// TestEncryptionSkipsListedEncodingsWhenCompressing shows a listed encoding is
+// forwarded as it is with compression on, even when it would compress, and the
+// skip is counted once. Not passing codec.WithSkip into the chain in NewCodecs
+// fails the Same check.
+func TestEncryptionSkipsListedEncodingsWhenCompressing(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	reporter := proxy.NewReporter(
+		metrics.New("proxy", promauto.With(reg)).ForSubsystem("encryption"),
+		proxy.WithNamespaceLabels(true),
+	)
+
+	v := &fakeVault{}
+	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{
+		Vault:         v,
+		Encrypt:       true,
+		Reporter:      reporter,
+		SkipEncodings: []string{"acme/aes-gcm"},
+		Compression: preparedCompression(t, config.Compression{
+			Enabled: true,
+			Default: &config.CompressionPolicy{Algorithm: config.CompressionSnappy},
+		}),
+	})
+	require.NoError(t, err)
+
+	workerSealed := compressiblePayload()
+	workerSealed.Metadata[codec.MetadataEncoding] = []byte("acme/aes-gcm")
+	invoker := func(_ context.Context, _ string, gotReq, _ any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
+		sent := gotReq.(*workflowservice.StartWorkflowExecutionRequest).Input.Payloads
+		require.Len(t, sent, 1)
+		require.Same(t, workerSealed, sent[0])
+		return nil
+	}
+
+	ctx := metadata.AppendToOutgoingContext(t.Context(), meta.NamespaceHeader, "ns1")
+	resp := &workflowservice.StartWorkflowExecutionRequest{}
+	require.NoError(t, interceptor(ctx, "/method", startRequest(workerSealed), resp, nil, invoker))
+
+	require.Empty(t, v.namespaces, "a listed encoding must not reach the vault")
+
+	skipped := gatherFamily(t, reg, "proxy_encryption_payloads_skipped_total")
+	require.NotNil(t, skipped)
+	require.Len(t, skipped.GetMetric(), 1)
+	require.InDelta(t, 1, skipped.GetMetric()[0].GetCounter().GetValue(), 0)
+}
+
 // TestEncryptionUnknownKey pins both sides of the decode rule at the interceptor,
 // and the unknown_key result label. Removing the ErrUnknownKey case from
 // resultLabel fails both rows' vault_ops check.
