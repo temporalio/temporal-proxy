@@ -96,6 +96,19 @@ func TestModule_ErrorPropagates(t *testing.T) {
 	require.ErrorIs(t, app.Err(), os.ErrNotExist)
 }
 
+func TestFile_LoadsTheConfigAtPath(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("hostPort: :7233\n"+upstreamYAML), 0o600))
+
+	var got *config.Config
+	app := fx.New(config.File(path), fx.Populate(&got), fx.NopLogger)
+
+	require.NoError(t, app.Err())
+	require.Equal(t, ":7233", got.Listen.HostPort)
+}
+
 func TestSupply(t *testing.T) {
 	t.Parallel()
 

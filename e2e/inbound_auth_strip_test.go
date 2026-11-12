@@ -35,7 +35,7 @@ func TestEndToEndInboundAuthStrippedOutboundCredentialAttached(t *testing.T) {
 		Static: &config.StaticCredentialConfig{APIKey: "k3y"},
 	}
 
-	f := dataplanetest.StartApp(t, cfg)
+	f := dataplanetest.Start(t, cfg)
 
 	// The client presents the worker's own token. The inbound authenticator
 	// consumes it (proving inbound auth is wired end to end); the router then

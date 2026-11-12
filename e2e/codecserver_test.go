@@ -45,7 +45,7 @@ func TestCodecServerDecodesWhatTheGatewaySealed(t *testing.T) {
 		CodecServer: config.CodecServer{Enabled: true},
 	}
 
-	f := dataplanetest.StartApp(t, cfg)
+	f := dataplanetest.Start(t, cfg)
 
 	secret := &common.Payload{
 		Metadata: map[string][]byte{wireEncoding: []byte("json/plain")},
@@ -101,7 +101,7 @@ func TestCodecServerEncodeOpensThroughTheGateway(t *testing.T) {
 		CodecServer: config.CodecServer{Enabled: true},
 	}
 
-	f := dataplanetest.StartApp(t, cfg)
+	f := dataplanetest.Start(t, cfg)
 
 	secret := &common.Payload{
 		Metadata: map[string][]byte{wireEncoding: []byte("json/plain")},
@@ -157,7 +157,7 @@ func TestCodecServerDecodesTheRemoteNamespaceCloudSendsAfterTranslation(t *testi
 		CodecServer: config.CodecServer{Enabled: true},
 	}
 
-	f := dataplanetest.StartApp(t, cfg)
+	f := dataplanetest.Start(t, cfg)
 
 	secret := &common.Payload{
 		Metadata: map[string][]byte{wireEncoding: []byte("json/plain")},
@@ -219,7 +219,7 @@ func TestCodecServerRequiresConfiguredAuth(t *testing.T) {
 		},
 	}
 
-	f := dataplanetest.StartApp(t, cfg)
+	f := dataplanetest.Start(t, cfg)
 
 	t.Run("no Authorization header is rejected", func(t *testing.T) {
 		t.Parallel()
@@ -259,7 +259,7 @@ func TestCodecServerEncodeRequiresNamespaceWhenOverridesConfigured(t *testing.T)
 		CodecServer: config.CodecServer{Enabled: true},
 	}
 
-	f := dataplanetest.StartApp(t, cfg)
+	f := dataplanetest.Start(t, cfg)
 
 	res := postCodecServer(t, f, "/encode", `{"payloads":[]}`, nil)
 	require.Equal(t, http.StatusBadRequest, res.StatusCode)
@@ -412,7 +412,7 @@ func TestCodecServerStrictRefusesUnboundPayloads(t *testing.T) {
 		Listen:      config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
 		CodecServer: config.CodecServer{Enabled: true},
 	}
-	f := dataplanetest.StartApp(t, cfg)
+	f := dataplanetest.Start(t, cfg)
 
 	body, err := protojson.Marshal(legacy)
 	require.NoError(t, err)
@@ -446,7 +446,7 @@ func TestCodecServerComparesTheNamedNamespace(t *testing.T) {
 		Listen:      config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
 		CodecServer: config.CodecServer{Enabled: true},
 	}
-	f := dataplanetest.StartApp(t, cfg)
+	f := dataplanetest.Start(t, cfg)
 
 	secret := &common.Payload{
 		Metadata: map[string][]byte{wireEncoding: []byte("json/plain")},
@@ -506,7 +506,7 @@ func TestCodecServerEncodeLabelsTheRemoteName(t *testing.T) {
 		Listen:      config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true},
 		CodecServer: config.CodecServer{Enabled: true},
 	}
-	f := dataplanetest.StartApp(t, cfg)
+	f := dataplanetest.Start(t, cfg)
 
 	secret := &common.Payload{
 		Metadata: map[string][]byte{wireEncoding: []byte("json/plain")},

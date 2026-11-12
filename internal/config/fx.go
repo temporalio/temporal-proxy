@@ -22,6 +22,13 @@ type ConfigParams struct {
 	File string `name:"configFile"`
 }
 
+// File provides the *Config loaded and prepared from path, and the allowlist
+// derived from it, so callers never supply the named "configFile" value [Module]
+// reads by hand.
+func File(path string) fx.Option {
+	return fx.Options(fx.Supply(fx.Annotate(path, ConfigFileTag)), Module)
+}
+
 // Supply provides cfg, prepared, and the allowlist derived from it, for an
 // application that builds its Config in code rather than loading a file. A
 // config that fails [Config.Prepare] fails the graph. It prepares cfg in place,

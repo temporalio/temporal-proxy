@@ -3,7 +3,6 @@ package dataplanetest_test
 import (
 	"net"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/workflowservice/v1"
@@ -12,6 +11,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"go.temporal.io/proxy/internal/auth"
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/dataplane/dataplanetest"
 )
@@ -46,55 +46,17 @@ func TestStartReportsTheKernelAssignedGatewayPort(t *testing.T) {
 	require.NotEqual(t, first.Addr(), second.Addr())
 }
 
-// TestStartRejectsConfigItCannotHonour guards the direct path against silently
-// passing a test whose subject it never wired up.
-func TestStartRejectsConfigItCannotHonour(t *testing.T) {
-	t.Parallel()
-
-	cases := map[string]func(*config.Config){
-		"auth": func(cfg *config.Config) {
-			cfg.Auth = &config.AuthConfig{StaticToken: &config.StaticTokenConfig{Token: "s3cret"}}
-		},
-		"encryption": func(cfg *config.Config) {
-			cfg.Encryption = config.Encryption{Default: &config.KeyPolicy{Duration: time.Hour}}
-		},
-	}
-
-	for name, configure := range cases {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			cfg := dataplanetest.Config(dataplanetest.NewUpstream(t))
-			configure(cfg)
-
-			// Start fails its argument, which unwinds the calling goroutine, so
-			// the attempt runs on one of its own. It rejects before building
-			// anything, so the throwaway T is never asked to clean up.
-			fake := new(testing.T)
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-
-				dataplanetest.Start(fake, cfg)
-			}()
-			<-done
-
-			require.True(t, fake.Failed(), "Start must reject a config only StartApp can honour")
-		})
-	}
-}
-
-// TestStartAppBuildsConfigDrivenCollaborators proves the fx path assembles the
-// modules Start cannot: the inbound authenticator here comes from the Auth
-// block, so a wrong token is rejected before the request is routed anywhere.
-func TestStartAppBuildsConfigDrivenCollaborators(t *testing.T) {
+// TestStartBuildsConfigDrivenCollaborators proves the fixture runs the
+// production graph: the inbound authenticator here comes from the Auth block,
+// so a wrong token is rejected before the request is routed anywhere.
+func TestStartBuildsConfigDrivenCollaborators(t *testing.T) {
 	t.Parallel()
 
 	up := dataplanetest.NewUpstream(t)
 	cfg := dataplanetest.Config(up)
 	cfg.Auth = &config.AuthConfig{StaticToken: &config.StaticTokenConfig{Token: "s3cret"}}
 
-	f := dataplanetest.StartApp(t, cfg)
+	f := dataplanetest.Start(t, cfg)
 
 	ctx := metadata.AppendToOutgoingContext(f.Context(), "authorization", "Bearer s3cret")
 	_, err := f.Client().GetSystemInfo(ctx, &workflowservice.GetSystemInfoRequest{}, grpc.WaitForReady(true))
@@ -103,4 +65,20 @@ func TestStartAppBuildsConfigDrivenCollaborators(t *testing.T) {
 	bad := metadata.AppendToOutgoingContext(f.Context(), "authorization", "Bearer nope")
 	_, err = f.Client().GetSystemInfo(bad, &workflowservice.GetSystemInfoRequest{})
 	require.Equal(t, codes.Unauthenticated, status.Code(err))
+}
+
+// TestWithAuthReplacesTheConfiguredAuthenticator proves an injected
+// authenticator wins over the config's Auth block, so a test setting both never
+// silently runs the configured one.
+func TestWithAuthReplacesTheConfiguredAuthenticator(t *testing.T) {
+	t.Parallel()
+
+	up := dataplanetest.NewUpstream(t)
+	cfg := dataplanetest.Config(up)
+	cfg.Auth = &config.AuthConfig{StaticToken: &config.StaticTokenConfig{Token: "s3cret"}}
+
+	f := dataplanetest.Start(t, cfg, dataplanetest.WithAuth(auth.AdmitAll()))
+
+	_, err := f.Client().GetSystemInfo(f.Context(), &workflowservice.GetSystemInfoRequest{}, grpc.WaitForReady(true))
+	require.NoError(t, err)
 }

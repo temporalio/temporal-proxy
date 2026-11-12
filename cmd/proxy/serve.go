@@ -3,42 +3,14 @@ package main
 import (
 	"context"
 	"os"
-	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/urfave/cli/v3"
-	"go.uber.org/fx"
-	"go.uber.org/fx/fxevent"
-	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/reflect/protoregistry"
 
-	"go.temporal.io/proxy/internal/api"
-	"go.temporal.io/proxy/internal/auth"
-	"go.temporal.io/proxy/internal/certreload"
-	"go.temporal.io/proxy/internal/codecserver"
+	"go.temporal.io/proxy/internal/app"
 	"go.temporal.io/proxy/internal/config"
-	"go.temporal.io/proxy/internal/dataplane"
-	"go.temporal.io/proxy/internal/httpserver"
-	"go.temporal.io/proxy/internal/kms"
-	"go.temporal.io/proxy/internal/metrics"
-	"go.temporal.io/proxy/internal/pprofserver"
-	"go.temporal.io/proxy/internal/protoutil"
-	"go.temporal.io/proxy/internal/transport/connect"
 	"go.temporal.io/proxy/pkg/logger"
 	"go.temporal.io/proxy/pkg/logger/tag"
 )
-
-// shutdownTimeout bounds the whole stop sequence: the serving tiers, which drain
-// concurrently within their own budgets, and every lifecycle hook queued behind
-// them.
-const shutdownTimeout = 30 * time.Second
-
-// fxLogger swallows fx's event stream except for Started/Stopped failures,
-// which it forwards to the app logger. Configuration errors are caught
-// separately via app.Err() so they are visible at startup.
-type fxLogger struct {
-	log logger.Logger
-}
 
 func serve() *cli.Command {
 	return &cli.Command{
@@ -68,45 +40,12 @@ func serve() *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			log := logger.NewZeroLogger(os.Stderr, logger.ParseLevel(cmd.String("level")))
 
-			fxApp := fx.New(
-				fx.Supply(
-					fx.Annotate(ctx, fx.As(new(context.Context))),
-					fx.Annotate(cmd.String("config"), config.ConfigFileTag),
-					fx.Annotate(protoregistry.GlobalFiles, fx.As(new(protoutil.Files))),
-					fx.Annotate(protoregistry.GlobalTypes, fx.As(new(protoutil.Types))),
-					// Services whose request and response types have their namespace
-					// translation plans warmed at startup.
-					[]protoreflect.FullName{"temporal.api.workflowservice.v1.WorkflowService"},
-				),
-				fx.Provide(
-					func() logger.Logger { return log },
-					func() prometheus.Gatherer { return prometheus.DefaultGatherer },
-					func() prometheus.Registerer { return prometheus.DefaultRegisterer },
-				),
-				api.Module,
-				auth.Module,
-				certreload.Module,
-				codecserver.Module,
-				config.Module,
-				config.RequireKey(cmd.Bool("require-encryption")),
-				connect.Module,
-				dataplane.Module,
-				httpserver.Module,
-				kms.Module,
-				metrics.Module,
-				pprofserver.Module,
-				protoutil.Module,
-				fx.WithLogger(func(l logger.Logger) fxevent.Logger { return &fxLogger{log: l} }),
-
-				// Stated rather than inherited, because the relationship is what
-				// matters and it is otherwise invisible: each serving tier drains
-				// within its own budget, this bounds all of them plus the hooks behind
-				// them, and whatever supervises the process has to allow more than
-				// this before it resorts to SIGKILL. fx abandons the hooks still
-				// queued when this expires.
-				fx.StopTimeout(shutdownTimeout),
-			)
-
+			fxApp := app.New(app.Inputs{
+				Context:           ctx,
+				Logger:            log,
+				Config:            config.File(cmd.String("config")),
+				RequireEncryption: cmd.Bool("require-encryption"),
+			})
 			if err := fxApp.Err(); err != nil {
 				log.Error("Misconfigured fx app", tag.Error(err))
 				return err
@@ -115,18 +54,5 @@ func serve() *cli.Command {
 			fxApp.Run()
 			return nil
 		},
-	}
-}
-
-func (l *fxLogger) LogEvent(e fxevent.Event) {
-	switch e := e.(type) {
-	case *fxevent.Started:
-		if e.Err != nil {
-			l.log.Error("Failed to start", tag.Error(e.Err))
-		}
-	case *fxevent.Stopped:
-		if e.Err != nil {
-			l.log.Error("Failed to stop cleanly", tag.Error(e.Err))
-		}
 	}
 }

@@ -26,7 +26,7 @@ func TestEndToEndTheCloudAPIConnectionCarriesTheProxyVersion(t *testing.T) {
 	cloud := newCloudUpstream(t)
 	cloud.setPage(&cloudnamespace.Namespace{Namespace: "payments.a1b2c"})
 
-	f := dataplanetest.StartApp(t, &config.Config{
+	f := dataplanetest.Start(t, &config.Config{
 		Routing: config.Routing{DefaultUpstream: "frontend", SystemUpstream: "frontend"},
 		Upstreams: config.UpstreamList{{
 			Name:   "frontend",
@@ -59,7 +59,7 @@ func TestEndToEndOnlyTheCloudUpstreamIsSentTheProxyVersion(t *testing.T) {
 	onprem := dataplanetest.NewUpstream(t)
 	cloud := dataplanetest.NewUpstream(t)
 
-	f := dataplanetest.StartApp(t, &config.Config{
+	f := dataplanetest.Start(t, &config.Config{
 		Routing: config.Routing{
 			DefaultUpstream: "onprem",
 			SystemUpstream:  "onprem",

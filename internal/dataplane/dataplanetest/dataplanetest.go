@@ -8,26 +8,18 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.uber.org/fx"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/protobuf/reflect/protoregistry"
 
-	"go.temporal.io/proxy/internal/api"
+	"go.temporal.io/proxy/internal/app"
 	"go.temporal.io/proxy/internal/auth"
-	"go.temporal.io/proxy/internal/certreload"
-	"go.temporal.io/proxy/internal/codecserver"
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/dataplane"
 	"go.temporal.io/proxy/internal/httpserver"
-	"go.temporal.io/proxy/internal/kms"
-	"go.temporal.io/proxy/internal/metrics"
-	"go.temporal.io/proxy/internal/protoutil"
 	"go.temporal.io/proxy/internal/services"
-	"go.temporal.io/proxy/internal/transport/connect"
 	"go.temporal.io/proxy/pkg/logger"
 )
 
@@ -57,20 +49,22 @@ type Fixture struct {
 }
 
 type (
-	// Option adjusts what [Start] builds the dataplane with.
+	// Option adjusts what [Start] builds the application with.
 	Option func(*options)
 
 	options struct {
-		auth auth.Authenticator
+		fx []fx.Option
 	}
 )
 
-// WithAuth replaces the authenticator [Start] would otherwise admit every
-// request with. The gateway runs it from a stream interceptor, on every stream
+// WithAuth replaces the gateway's authenticator, and wins over any Auth block in
+// the config. The gateway runs it from a stream interceptor, on every stream
 // including the ones it serves itself, so it is also how a test wedges the
 // interceptor chain that carries every forwarded request.
 func WithAuth(a auth.Authenticator) Option {
-	return func(o *options) { o.auth = a }
+	return func(o *options) {
+		o.fx = append(o.fx, fx.Decorate(func(auth.Authenticator) auth.Authenticator { return a }))
+	}
 }
 
 // Config returns a minimal valid configuration: an ephemeral gateway port and
@@ -103,62 +97,16 @@ func DeadUpstream(t *testing.T) string {
 	return addr
 }
 
-// Start constructs a dataplane directly, the way the production fx module
-// does, and starts it. Every request is admitted unless [WithAuth] says
-// otherwise, and no vault is built, so a cfg configuring inbound auth or
-// encryption is rejected rather than silently exercised without them; use
-// [StartApp] for those.
+// Start assembles and starts the production application around cfg, so every
+// collaborator, from the inbound authenticator to the encryption vault and the
+// HTTP server, comes from the same graph the binary runs.
 func Start(t *testing.T, cfg *config.Config, opts ...Option) *Fixture {
 	t.Helper()
 
-	require.Nil(t, cfg.Auth, "Start admits every request; use StartApp to exercise inbound auth")
-	require.Nil(t, cfg.Encryption.Default, "Start builds no vault; use StartApp to exercise encryption")
-
-	o := &options{auth: auth.AdmitAll()}
+	o := &options{}
 	for _, opt := range opts {
 		opt(o)
 	}
-
-	setTestDefaults(cfg)
-
-	pool := connect.NewPool()
-	t.Cleanup(func() { _ = pool.Close() })
-
-	reg := prometheus.NewRegistry()
-
-	dp, err := dataplane.New(t.Context(), cfg,
-		dataplane.WithExtractor(protoutil.NewExtractor(protoregistry.GlobalFiles, protoregistry.GlobalTypes)),
-		dataplane.WithTranslator(protoutil.NewTranslator(protoregistry.GlobalFiles)),
-		dataplane.WithPool(pool),
-		dataplane.WithMetrics(metrics.New("test", promauto.With(
-			metrics.WithFixedLabels(reg, cfg.Metrics.Labels.Fixed),
-		))),
-		dataplane.WithAllowlist(config.NewAllowlist(cfg)),
-		dataplane.WithAuth(o.auth),
-		dataplane.WithLogger(logger.NewNoopLogger()),
-	)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(t.Context(), lifecycleTimeout)
-	defer cancel()
-	require.NoError(t, dp.Start(ctx))
-
-	// Only Stop stops a plane: the context handed to New drives the health
-	// check and nothing else. t.Context is already cancelled by the time
-	// cleanups run, and a shutdown must not inherit that.
-	t.Cleanup(func() { requireCleanStop(t, dp.Stop(stopContext(t))) })
-
-	// Start builds no HTTP server: it is a fx-only module, so HTTPAddr reads
-	// nil here rather than dereferencing one that was never built.
-	return newFixture(t, dp, reg, nil)
-}
-
-// StartApp assembles and starts the whole production module graph around cfg,
-// so config-driven collaborators the dataplane cannot build for itself, an
-// inbound authenticator and an encryption vault, come from the same modules
-// production uses. Prefer [Start] when a test needs neither.
-func StartApp(t *testing.T, cfg *config.Config) *Fixture {
-	t.Helper()
 
 	setTestDefaults(cfg)
 
@@ -169,46 +117,33 @@ func StartApp(t *testing.T, cfg *config.Config) *Fixture {
 
 	var dp *dataplane.Dataplane
 	var httpSvr *httpserver.Server
-	app := fx.New(
-		fx.Supply(fx.Annotate(t.Context(), fx.As(new(context.Context)))),
-		config.Supply(cfg),
-		fx.Provide(
-			func() logger.Logger { return logger.NewNoopLogger() },
-			func() prometheus.Gatherer { return reg },
-			func() prometheus.Registerer { return reg },
-		),
-		api.Module,
-		auth.Module,
-		certreload.Module,
-		codecserver.Module,
-		connect.Module,
-		dataplane.Module,
-		httpserver.Module,
-		kms.Module,
-		metrics.Module,
-		protoutil.Module,
-		fx.Populate(&dp, &httpSvr),
-		fx.NopLogger,
-	)
-	require.NoError(t, app.Err())
+	a := app.New(app.Inputs{
+		Context:  t.Context(),
+		Logger:   logger.NewNoopLogger(),
+		Config:   config.Supply(cfg),
+		Registry: reg,
+	}, append(o.fx, fx.Populate(&dp, &httpSvr))...)
+	require.NoError(t, a.Err())
 
 	ctx, cancel := context.WithTimeout(t.Context(), lifecycleTimeout)
 	defer cancel()
-	require.NoError(t, app.Start(ctx))
+	require.NoError(t, a.Start(ctx))
 
+	// t.Context is already cancelled by the time cleanups run, and a shutdown
+	// must not inherit that.
 	t.Cleanup(func() {
 		stopCtx, stopCancel := context.WithTimeout(stopContext(t), lifecycleTimeout)
 		defer stopCancel()
 
-		requireCleanStop(t, app.Stop(stopCtx))
+		requireCleanStop(t, a.Stop(stopCtx))
 	})
 
 	return newFixture(t, dp, reg, httpSvr)
 }
 
 // Gatherer is the registry every collector in this plane registered with. A
-// test asserts against it directly: [Start] serves no /metrics endpoint, and
-// the one [StartApp] wires is bound to an ephemeral port nothing reports.
+// test asserts against it directly: the /metrics endpoint is bound to an
+// ephemeral port nothing reports.
 func (f *Fixture) Gatherer() prometheus.Gatherer { return f.reg }
 
 // Addr is the address the gateway is accepting on.
@@ -219,8 +154,7 @@ func (f *Fixture) Addr() string { return f.dp.Addr().String() }
 func (f *Fixture) Conn() *grpc.ClientConn { return f.conn }
 
 // HTTPAddr is the address the HTTP server is accepting on, empty when the
-// configuration enabled no route group, or when the fixture was built through
-// [Start], which never wires the HTTP server module at all.
+// configuration enabled no route group.
 func (f *Fixture) HTTPAddr() string {
 	if f.httpServer == nil {
 		return ""
@@ -258,9 +192,8 @@ func setTestDefaults(cfg *config.Config) {
 }
 
 // newFixture dials the running gateway. gRPC connects lazily, so this opens
-// nothing until the first request. httpSvr is nil whenever the caller built
-// no HTTP server, either because [Start] never wires the module or because
-// the configuration enabled no route group.
+// nothing until the first request. httpSvr is nil when the configuration
+// enabled no route group.
 func newFixture(
 	t *testing.T, dp *dataplane.Dataplane, reg prometheus.Gatherer, httpSvr *httpserver.Server,
 ) *Fixture {
