@@ -13,9 +13,10 @@ import (
 // Reporters exposes the metric reporters built for one dataplane so tests can
 // pin the exact metric surface they register.
 type Reporters struct {
-	Router     *router.Reporter
-	Server     *server.Reporter
-	Encryption *proxy.Reporter
+	Router      *router.Reporter
+	Server      *server.Reporter
+	Encryption  *proxy.Reporter
+	Compression *proxy.CompressionReporter
 }
 
 // NewReporters builds the reporters for c against f, exported so tests can
@@ -26,7 +27,7 @@ func NewReporters(f *metrics.Factory, c *config.Config, encryption bool) (*Repor
 		return nil, err
 	}
 
-	return &Reporters{Router: r.router, Server: r.server, Encryption: r.encryption}, nil
+	return &Reporters{Router: r.router, Server: r.server, Encryption: r.encryption, Compression: r.compression}, nil
 }
 
 // Listener is the gateway listener Start bound, exported for tests that break

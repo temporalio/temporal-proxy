@@ -420,10 +420,11 @@ func TestEncryptionSkipsListedEncodingsWhenCompressing(t *testing.T) {
 
 	v := &fakeVault{}
 	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{
-		Vault:         v,
-		Encrypt:       true,
-		Reporter:      reporter,
-		SkipEncodings: []string{"acme/aes-gcm"},
+		Vault:               v,
+		Encrypt:             true,
+		Reporter:            reporter,
+		SkipEncodings:       []string{"acme/aes-gcm"},
+		CompressionReporter: newCompressionReporter(prometheus.NewRegistry()),
 		Compression: preparedCompression(t, config.Compression{
 			Enabled: true,
 			Default: &config.CompressionPolicy{Algorithm: config.CompressionSnappy},

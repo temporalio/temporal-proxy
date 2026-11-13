@@ -9,6 +9,7 @@ import (
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/grpc"
 
+	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/proxy"
 )
 
@@ -39,6 +40,11 @@ func TestCodecInterceptorRejectsIncompleteOptions(t *testing.T) {
 			name: "encoding failures without encryption",
 			opts: proxy.CodecOptions{Vault: &fakeVault{}, EncodeFailures: true, Reporter: newTestReporter(t)},
 			want: "failure encoding requires encryption",
+		},
+		{
+			name: "compression without a reporter",
+			opts: proxy.CodecOptions{Compression: &config.Compression{}},
+			want: "compression requires a compression reporter",
 		},
 	}
 

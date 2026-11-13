@@ -31,6 +31,10 @@ var wantSurface = map[string][]string{
 	"tmprl_proxy_encryption_vault_ops_duration_seconds":       {"namespace", "operation"},
 	"tmprl_proxy_encryption_vault_unbound_opens_total":        {"namespace"},
 	"tmprl_proxy_encryption_vault_namespace_mismatches_total": {"namespace"},
+	"tmprl_proxy_compression_ops_total":                       {"algorithm", "namespace", "operation", "result"},
+	"tmprl_proxy_compression_ops_duration_seconds":            {"algorithm", "namespace", "operation"},
+	"tmprl_proxy_compression_payload_bytes":                   {"algorithm", "namespace", "stage"},
+	"tmprl_proxy_compression_payloads_skipped_total":          {"algorithm", "namespace", "reason"},
 }
 
 // wantMetadataSurface is the same contract for a dataplane running one metadata
@@ -53,6 +57,10 @@ var wantFixedSurface = map[string][]string{
 	"tmprl_proxy_encryption_vault_ops_duration_seconds":       {"namespace", "operation", "region"},
 	"tmprl_proxy_encryption_vault_unbound_opens_total":        {"namespace", "region"},
 	"tmprl_proxy_encryption_vault_namespace_mismatches_total": {"namespace", "region"},
+	"tmprl_proxy_compression_ops_total":                       {"algorithm", "namespace", "operation", "region", "result"},
+	"tmprl_proxy_compression_ops_duration_seconds":            {"algorithm", "namespace", "operation", "region"},
+	"tmprl_proxy_compression_payload_bytes":                   {"algorithm", "namespace", "region", "stage"},
+	"tmprl_proxy_compression_payloads_skipped_total":          {"algorithm", "namespace", "reason", "region"},
 }
 
 var wantMetadataSurface = map[string][]string{
@@ -65,6 +73,10 @@ var wantMetadataSurface = map[string][]string{
 	"tmprl_proxy_encryption_vault_ops_duration_seconds":       {"namespace", "operation", "tenant"},
 	"tmprl_proxy_encryption_vault_unbound_opens_total":        {"namespace", "tenant"},
 	"tmprl_proxy_encryption_vault_namespace_mismatches_total": {"namespace", "tenant"},
+	"tmprl_proxy_compression_ops_total":                       {"algorithm", "namespace", "operation", "result", "tenant"},
+	"tmprl_proxy_compression_ops_duration_seconds":            {"algorithm", "namespace", "operation", "tenant"},
+	"tmprl_proxy_compression_payload_bytes":                   {"algorithm", "namespace", "stage", "tenant"},
+	"tmprl_proxy_compression_payloads_skipped_total":          {"algorithm", "namespace", "reason", "tenant"},
 }
 
 func TestReportersMetricSurface(t *testing.T) {
@@ -158,6 +170,9 @@ func driveReporters(t *testing.T, reg *prometheus.Registry, m config.Metrics, md
 	reps.Encryption.VaultOp(ctx, "encrypt", "success", "ns1", 0.01)
 	reps.Encryption.UnboundOpen(ctx, "ns1")
 	reps.Encryption.NamespaceMismatch(ctx, "ns1")
+	reps.Compression.Op(ctx, "compress", "zstd", "success", "ns1", 0.001)
+	reps.Compression.PayloadBytes(ctx, "pre_compress", "zstd", "ns1", 2048)
+	reps.Compression.PayloadSkipped(ctx, "not_smaller", "zstd", "ns1")
 }
 
 // surfaceOf maps every gathered metric family to its sorted label names.
