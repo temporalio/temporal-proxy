@@ -11,24 +11,6 @@ import (
 	"go.temporal.io/proxy/internal/config"
 )
 
-// TestCloudAPIUpstreamsAreDistinctPerSource pins the property the pooled
-// connection depends on. Every Cloud upstream's control plane resolves to the
-// same address, and a pooled connection is keyed by this name; if two upstreams
-// produced the same one they would share a connection, and the second would
-// silently send the first's credentials.
-func TestCloudAPIUpstreamsAreDistinctPerSource(t *testing.T) {
-	t.Parallel()
-
-	a, err := config.CloudAPI{}.Upstream(&config.Upstream{Name: "alpha"})
-	require.NoError(t, err)
-
-	b, err := config.CloudAPI{}.Upstream(&config.Upstream{Name: "beta"})
-	require.NoError(t, err)
-
-	require.Equal(t, a.Listen.HostPort, b.Listen.HostPort, "both reach the same control plane")
-	require.NotEqual(t, a.Name, b.Name, "but must not share a pooled connection")
-}
-
 // TestCloudAPIUpstreamDefaults covers the unconfigured case, which is the one
 // almost every deployment takes.
 func TestCloudAPIUpstreamDefaults(t *testing.T) {

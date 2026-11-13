@@ -23,8 +23,10 @@ type (
 	// caller-supplied logical key, which is distinct from the dial target.
 	// Callers that need two connections to the same dial target (e.g. the same
 	// host:port with different TLS server names) must use different keys, or
-	// they will collapse onto whichever connection was dialed first.
-	// The zero value is not usable; create one with NewPool.
+	// they will collapse onto whichever connection was dialed first. Owners that
+	// dial with their own options share a Pool through [Pool.Scoped], so no key
+	// one chooses can reach another's connection. The zero value is not usable;
+	// create one with NewPool.
 	Pool struct {
 		mu        sync.RWMutex
 		conns     map[string]*grpc.ClientConn
@@ -82,6 +84,15 @@ func (p *Pool) ConnOrCreate(key, target string, opts ...grpc.DialOption) (*grpc.
 	}
 
 	return conn, nil
+}
+
+// Scoped returns a [ConnFactory] whose keys are confined to scope, so two
+// owners whose resolvers produce the same key still get separate connections,
+// each dialed with its own options. Distinct owners must use distinct scopes.
+func (p *Pool) Scoped(scope string) ConnFactory {
+	return func(key, target string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+		return p.ConnOrCreate(scope+"\x00"+key, target, opts...)
+	}
 }
 
 // Set registers conn for key. It returns ErrDuplicateKey if a connection is

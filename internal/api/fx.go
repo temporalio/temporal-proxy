@@ -13,13 +13,6 @@ import (
 	"go.temporal.io/proxy/internal/transport/creds"
 )
 
-// extensionKeyPrefix namespaces extension-server entries in the shared
-// connection pool. A static resolver keys the pool by dial address and
-// Pool.ConnOrCreate ignores the options for an existing key, so without the
-// prefix an extension server on an upstream's host:port would share that
-// connection and silently inherit its TLS settings and credentials.
-const extensionKeyPrefix = "extension:"
-
 // Module provides the pooled connection for every configured extension server,
 // built when the provider runs rather than on first use, so a bad dial target
 // surfaces at construction instead of on the first call, and opened on
@@ -111,10 +104,11 @@ func extensionConn(pool *connect.Pool, s *config.ExtensionServer, r *creds.Reloa
 		return nil, fmt.Errorf("failed to build credentials for extension server %q: %w", s.Name, err)
 	}
 
+	// Scoped to the server, so an upstream or another server on the same
+	// host:port never hands it a connection carrying different TLS settings or
+	// credentials.
 	return connect.NewConn(
-		func(key, target string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
-			return pool.ConnOrCreate(extensionKeyPrefix+key, target, opts...)
-		},
+		pool.Scoped("extension/"+s.Name),
 		connect.StaticResolver(s.Listen.HostPort, append(opts, cred)...),
 	)
 }
