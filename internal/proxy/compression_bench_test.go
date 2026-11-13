@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/common/v1"
 	"go.temporal.io/api/history/v1"
@@ -21,7 +20,9 @@ import (
 // BenchmarkCodecInterceptorDecodeHistory measures what always decompressing
 // costs a large history page with no vault, the case where compression decode
 // is the only inbound work. "direct" is the invoker alone, so the difference to
-// "uncompressed" is the walk every response now pays. The "disabled" and
+// "uncompressed" is the walk every response now pays. Both interceptors are
+// built as the dataplane builds them, with a compression block and a reporter,
+// whether compression is on or not. The "disabled" and
 // "enabled" cases decode the same compressed page one payload at a time and
 // concurrently, which is what turning compression on changes.
 func BenchmarkCodecInterceptorDecodeHistory(b *testing.B) {
@@ -30,23 +31,13 @@ func BenchmarkCodecInterceptorDecodeHistory(b *testing.B) {
 	lz4, err := compress.NewLZ4()
 	require.NoError(b, err)
 
-	disabled, err := proxy.CodecInterceptor(proxy.CodecOptions{})
+	disabled, err := proxy.CodecInterceptor(compressionOpts(b, config.Compression{}))
 	require.NoError(b, err)
 
-	cfg := &config.Config{
-		Listen:    config.ListenConfig{HostPort: ":8080"},
-		Upstreams: []config.Upstream{{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}}},
-		Compression: config.Compression{
-			Enabled: true,
-			Default: &config.CompressionPolicy{Algorithm: config.CompressionLZ4},
-		},
-	}
-	require.NoError(b, cfg.Prepare())
-
-	enabled, err := proxy.CodecInterceptor(proxy.CodecOptions{
-		Compression:         &cfg.Compression,
-		CompressionReporter: newCompressionReporter(prometheus.NewRegistry()),
-	})
+	enabled, err := proxy.CodecInterceptor(compressionOpts(b, config.Compression{
+		Enabled: true,
+		Default: &config.CompressionPolicy{Algorithm: config.CompressionLZ4},
+	}))
 	require.NoError(b, err)
 
 	for _, bc := range []struct {
