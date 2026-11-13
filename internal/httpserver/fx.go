@@ -22,7 +22,8 @@ var Module = fx.Options(
 type (
 	// Route mounts one route group's handler on the shared mux at Pattern, an
 	// [http.ServeMux] pattern. Patterns from different groups must not overlap,
-	// or building the server panics.
+	// or building the server panics. No group may claim /healthz, which the
+	// HTTP server serves itself.
 	Route struct {
 		Pattern string
 		Handler http.Handler
@@ -50,9 +51,9 @@ func AsRoutes(constructor any) any {
 	return fx.Annotate(constructor, fx.ResultTags(`group:"http_routes,flatten"`))
 }
 
-// newFromParams builds the Server for the contributed routes and binds it to
-// the fx lifecycle, or returns nil when no route group is enabled. Returns an
-// error when the TLS material will not load.
+// newFromParams builds the Server for the contributed routes, plus its own
+// health route, and binds it to the fx lifecycle, or returns nil when no route
+// group is enabled. Returns an error when the TLS material will not load.
 func newFromParams(p Params) (*Server, error) {
 	if len(p.Routes) == 0 {
 		return nil, nil
@@ -66,6 +67,7 @@ func newFromParams(p Params) (*Server, error) {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", serveHealth)
 	for _, r := range p.Routes {
 		mux.Handle(r.Pattern, r.Handler)
 	}

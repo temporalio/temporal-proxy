@@ -36,6 +36,7 @@ type (
 // enabled nothing binds, so nothing is checked. A group reachable beyond
 // loopback requires authentication, and the listener requires TLS once any
 // such group has it, because a browser will not send a token over plaintext.
+// The listener's own /healthz belongs to no group and is never authenticated.
 func (h *HTTP) Validate() error {
 	return validateGroups(&h.Listen, h.groups())
 }
