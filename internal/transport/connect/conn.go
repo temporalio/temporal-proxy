@@ -57,9 +57,8 @@ type (
 	// staticResolver resolves to a fixed address and options, ignoring the
 	// request context. Its cache key equals its dial target, so two static
 	// resolvers for the same address with different options would share one
-	// pooled connection; that does not arise here because upstream hostPorts are
-	// unique (enforced by config). Contrast the dynamic resolver in
-	// internal/proxy, which folds the rendered server name into its key.
+	// pooled connection unless their owners dial through separate
+	// [Pool.Scoped] factories, as every owner here does.
 	staticResolver struct {
 		addr string
 		opts []grpc.DialOption
