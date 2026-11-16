@@ -99,7 +99,13 @@ func TestDynamicResolverRejectsInvalidAddresses(t *testing.T) {
 		{"normal host", "orders.acme.example:7233", false},
 		{"trailing-dot fqdn", "acme.example.:7233", false},
 		{"ipv6 literal", "[::1]:7233", false},
-		{"scheme prefixed", `dns:///{{ "host" }}:7233`, false},
+		{"scheme prefixed", `dns:///{{ "host" }}.acme:7233`, false},
+		{"srv target", `srv:///_grpc._tcp.{{ "orders" }}.svc`, false},
+		{"no port", `{{ "orders" }}.acme.example`, false},
+		{"templated port", `127.0.0.1:{{ "7233" }}`, false},
+		{"ipv6 zone", `[fe80::1%25eth0]:7233{{ "" }}`, true},
+		{"port out of range", `{{ "host" }}.acme:70000`, true},
+		{"empty port", `{{ "host" }}.acme:`, true},
 	}
 
 	for _, tt := range tests {
@@ -118,6 +124,59 @@ func TestDynamicResolverRejectsInvalidAddresses(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestDynamicResolverRequiresPlainHosts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		hostPort   string
+		serverName string
+		namespace  string
+		wantErr    string
+	}{
+		{"query", "{{ .RemoteNamespace }}.tmprl.cloud:7233", "", "other.example?", "invalid hostPort"},
+		{"path", "{{ .RemoteNamespace }}.tmprl.cloud:7233", "", "other.example/", "invalid hostPort"},
+		{"userinfo", "{{ .RemoteNamespace }}.tmprl.cloud:7233", "", "user@other.example", "invalid hostPort"},
+		{"fragment", "{{ .RemoteNamespace }}.tmprl.cloud:7233", "", "other.example#", "invalid hostPort"},
+		{"port", "{{ .RemoteNamespace }}.tmprl.cloud:7233", "", "other.example:443", "invalid hostPort"},
+		{"percent", "{{ .RemoteNamespace }}.tmprl.cloud:7233", "", "other%2eexample", "invalid hostPort"},
+		{"space", "{{ .RemoteNamespace }}.tmprl.cloud:7233", "", "other example", "invalid hostPort"},
+		{"scheme path", "dns:///{{ .RemoteNamespace }}.tmprl.cloud:7233", "", "other.example/x", "invalid hostPort"},
+		{"authority", "dns://resolver.example/{{ .RemoteNamespace }}.acme.example:7233", "", "orders", "invalid hostPort"},
+		{"port value", "acme.example:{{ .RemoteNamespace }}", "", "7233/other", "invalid hostPort"},
+		{"scheme", "{{ .RemoteNamespace }}.acme.example:7233", "", "unix:///x", "invalid hostPort"},
+		{"passthrough scheme", "{{ .RemoteNamespace }}.acme.example:7233", "", "passthrough:///x", "invalid hostPort"},
+		{"scheme separator", "a{{ .RemoteNamespace }}.acme.example:7233", "", ":///b", "invalid hostPort"},
+		{"second scheme", "dns:///{{ .RemoteNamespace }}.acme.example:7233", "", "unix:///x", "invalid hostPort"},
+		{"server name", "acme.example:7233", "{{ .RemoteNamespace }}.sni.example", "other.example?", "invalid serverName"},
+		{"server name port", "acme.example:7233", "{{ .RemoteNamespace }}.sni.example", "other.example:443", "invalid serverName"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			res := proxy.NewDynamicResolver(prepared(t, upstreamWith("u", tt.hostPort, tt.serverName)))
+
+			_, _, _, err := res.Resolve(meta.WithNamespace(t.Context(), tt.namespace))
+			require.Error(t, err)
+			require.Equal(t, codes.Internal, status.Code(err))
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestDynamicResolverRequiresPlainHostsFromMetadata(t *testing.T) {
+	t.Parallel()
+
+	res := proxy.NewDynamicResolver(prepared(t, upstreamWith("m", `{{ index .Metadata "dc" }}.acme:7233`, "")))
+	ctx := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("dc", "other.example?"))
+
+	_, _, _, err := res.Resolve(ctx)
+	require.Error(t, err)
+	require.Equal(t, codes.Internal, status.Code(err))
 }
 
 func TestDynamicResolverLogsDebugEntry(t *testing.T) {

@@ -9,10 +9,34 @@ import (
 	"strings"
 )
 
-var errInvalidHostPort = errors.New("is not a valid host:port")
+var (
+	errInvalidHostPort = errors.New("is not a valid host:port")
+	errInvalidHostname = errors.New("is not a valid hostname")
+)
 
 // Check verifies a single value of type V. A nil return means valid.
 type Check[V any] func(V) error
+
+// IsHostname validates that s is a DNS name: non-empty labels of ASCII
+// letters, digits, '-' and '_' (for SRV labels) joined by dots, with a single
+// trailing dot allowed for a fully-qualified name. Like IsHostPort, the check
+// is purely lexical.
+func IsHostname() Check[string] {
+	return func(s string) error {
+		s = strings.TrimSuffix(s, ".")
+		if s == "" {
+			return errInvalidHostname
+		}
+
+		for label := range strings.SplitSeq(s, ".") {
+			if label == "" || strings.ContainsFunc(label, func(r rune) bool { return !isLabelRune(r) }) {
+				return errInvalidHostname
+			}
+		}
+
+		return nil
+	}
+}
 
 // IsHostPort validates that s is syntactically a host:port pair. The check is
 // purely lexical: no DNS lookup, no /etc/services port resolution. Both
@@ -108,4 +132,9 @@ func Unique[V comparable]() Check[[]V] {
 
 		return nil
 	}
+}
+
+// isLabelRune reports whether r may appear in a hostname label.
+func isLabelRune(r rune) bool {
+	return r == '-' || r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
 }
