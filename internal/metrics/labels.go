@@ -48,10 +48,14 @@ type (
 
 	// valueSet is the bounded set of values one label has reported. Reads load an
 	// immutable map without locking, since nearly every request carries a value
-	// already seen; the rare admission copies it under mu and swaps it in.
+	// already seen; the rare admission copies it under mu and swaps it in. Once
+	// the set is full, full lets an unseen value be turned away without taking
+	// mu, so a flood of new values cannot contend on it: mu is held at most
+	// [MaxLabelValues] times for admissions over the set's life.
 	valueSet struct {
 		mu     sync.Mutex
 		values atomic.Pointer[map[string]struct{}]
+		full   atomic.Bool
 	}
 )
 
@@ -138,6 +142,17 @@ func (s *valueSet) admit(v string) string {
 		return v
 	}
 
+	// The map is stored before full is set and never changes after, so once full
+	// is seen a fresh load is the final set. Re-checking it covers a value
+	// admitted as the last one between the read above and this one.
+	if s.full.Load() {
+		if _, ok := (*s.values.Load())[v]; ok {
+			return v
+		}
+
+		return LabelValueOther
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -155,6 +170,10 @@ func (s *valueSet) admit(v string) string {
 	next := maps.Clone(cur)
 	next[v] = struct{}{}
 	s.values.Store(&next)
+
+	if len(next) >= MaxLabelValues {
+		s.full.Store(true)
+	}
 
 	return v
 }

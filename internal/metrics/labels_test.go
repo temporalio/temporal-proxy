@@ -1,6 +1,7 @@
 package metrics_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -220,6 +221,33 @@ func TestMetadataLabels_AppendValuesBoundHoldsUnderConcurrency(t *testing.T) {
 
 	// Every admitted value plus the overflow value.
 	require.Len(t, reported, metrics.MaxLabelValues+1)
+}
+
+// BenchmarkMetadataLabels_AppendValuesOverflow measures the path a flood of
+// never-seen values takes once a label is full, which is what an attacker
+// drives.
+func BenchmarkMetadataLabels_AppendValuesOverflow(b *testing.B) {
+	labels := metrics.NewMetadataLabels([]config.MetricLabel{{Header: "x-tenant", Name: "tenant"}})
+	for i := range metrics.MaxLabelValues {
+		labels.AppendValues(metadata.NewIncomingContext(b.Context(), metadata.Pairs("x-tenant", fmt.Sprint(i))), nil)
+	}
+
+	// Distinct contexts per goroutine, built up front so the loop measures
+	// admission rather than metadata construction.
+	ctxs := make([]context.Context, 1024)
+	for i := range ctxs {
+		ctxs[i] = metadata.NewIncomingContext(b.Context(), metadata.Pairs("x-tenant", fmt.Sprintf("junk-%d", i)))
+	}
+
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		buf := make([]string, 0, 1)
+		i := 0
+		for pb.Next() {
+			buf = labels.AppendValues(ctxs[i%len(ctxs)], buf[:0])
+			i++
+		}
+	})
 }
 
 func TestWithFixedLabels(t *testing.T) {
