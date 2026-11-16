@@ -1,7 +1,9 @@
 package metrics_test
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -161,6 +163,63 @@ func TestMetadataLabels_AppendValuesTruncatesOnARuneBoundary(t *testing.T) {
 	require.Len(t, got, 1)
 	require.True(t, utf8.ValidString(got[0]), "a truncated value must still be valid UTF-8")
 	require.Equal(t, strings.Repeat("€", 85), got[0], "expected a whole number of runes within the cap")
+}
+
+func TestMetadataLabels_AppendValuesBoundsDistinctValues(t *testing.T) {
+	t.Parallel()
+
+	labels := metrics.NewMetadataLabels([]config.MetricLabel{{Header: "x-tenant", Name: "tenant"}})
+	value := func(ls metrics.MetadataLabels, v string) string {
+		ctx := t.Context()
+		if v != "" {
+			ctx = metadata.NewIncomingContext(ctx, metadata.Pairs("x-tenant", v))
+		}
+
+		return ls.AppendValues(ctx, nil)[0]
+	}
+
+	for i := range metrics.MaxLabelValues {
+		v := fmt.Sprintf("tenant-%d", i)
+		require.Equal(t, v, value(labels, v), "values within the bound report as themselves")
+	}
+
+	require.Equal(t, metrics.LabelValueOther, value(labels, "one-too-many"),
+		"a value past the bound must collapse rather than add a series")
+	require.Equal(t, "tenant-0", value(labels, "tenant-0"), "a value already seen keeps reporting")
+	require.Empty(t, value(labels, ""), "an absent header reports empty and does not count against the bound")
+
+	// Copies share what has been seen, so handing the same labels to several
+	// reporters does not multiply the bound.
+	cp := labels
+	require.Equal(t, metrics.LabelValueOther, value(cp, "via-a-copy"))
+}
+
+func TestMetadataLabels_AppendValuesBoundHoldsUnderConcurrency(t *testing.T) {
+	t.Parallel()
+
+	labels := metrics.NewMetadataLabels([]config.MetricLabel{{Header: "x-tenant", Name: "tenant"}})
+
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		reported = map[string]struct{}{}
+	)
+
+	for g := range 8 {
+		wg.Go(func() {
+			for i := range 100 {
+				ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs("x-tenant", fmt.Sprintf("%d-%d", g, i)))
+				v := labels.AppendValues(ctx, nil)[0]
+				mu.Lock()
+				reported[v] = struct{}{}
+				mu.Unlock()
+			}
+		})
+	}
+	wg.Wait()
+
+	// Every admitted value plus the overflow value.
+	require.Len(t, reported, metrics.MaxLabelValues+1)
 }
 
 func TestWithFixedLabels(t *testing.T) {
