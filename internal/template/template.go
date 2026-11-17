@@ -34,6 +34,15 @@ type (
 		Metadata        map[string]string
 	}
 
+	// Part is one top-level segment of a template's source, as returned by
+	// [Template.Parts]: either literal text or a single action. An action's
+	// Text is its normalized source, and nested blocks (if, range, with) count
+	// as one action.
+	Part struct {
+		Text   string
+		Action bool
+	}
+
 	// Template is a compiled template bound to the context type T it renders
 	// against. Construct one with [ParseRouting] or [ParseUpstream].
 	Template[T any] struct {
@@ -96,6 +105,32 @@ func (t *Template[T]) IsLiteral() bool {
 	}
 
 	return true
+}
+
+// Parts returns the template's top-level segments in order, merging adjacent
+// literal text (such as the text either side of a comment). It returns nil for
+// an empty template.
+func (t *Template[T]) Parts() []Part {
+	if t.tmpl.Tree == nil || t.tmpl.Root == nil {
+		return nil
+	}
+
+	var parts []Part
+	for _, n := range t.tmpl.Root.Nodes {
+		if tn, ok := n.(*texttemplateparse.TextNode); ok {
+			if last := len(parts) - 1; last >= 0 && !parts[last].Action {
+				parts[last].Text += string(tn.Text)
+				continue
+			}
+
+			parts = append(parts, Part{Text: string(tn.Text)})
+			continue
+		}
+
+		parts = append(parts, Part{Text: n.String(), Action: true})
+	}
+
+	return parts
 }
 
 // String returns the raw template source.
