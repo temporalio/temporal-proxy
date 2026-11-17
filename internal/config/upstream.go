@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"go.temporal.io/proxy/internal/cloud"
@@ -85,7 +86,8 @@ type (
 // connection configuration. Credentials require TLS, insecure conflicts with a
 // tls block, and a Cloud upstream must use Cloud namespace names.
 // A templated hostPort is parsed as a template and not checked as a literal
-// host:port; a static hostPort still is.
+// host:port; a static hostPort still is. A templated host or server name must
+// end in a literal domain.
 func (u *Upstream) Validate() error {
 	return validation.Validate(
 		"",
@@ -98,6 +100,7 @@ func (u *Upstream) Validate() error {
 			u.hasLiteralHostPort,
 			validation.Field("hostPort", u.Listen.HostPort, upstreamHostPort()),
 		),
+		u.templateDomainRule,
 		validation.WhenRules(
 			func() bool { return u.Listen.TLS != nil },
 			func() validation.Errors { return u.Listen.TLS.validateOutbound() },
@@ -229,6 +232,29 @@ func (u *Upstream) parseTemplates() (host, serverName *template.Template[templat
 	}
 
 	return host, serverName, errs
+}
+
+// templateDomainRule requires a templated hostPort or TLS server name to end
+// its host in a literal domain, so templates only choose labels within a
+// configured domain (or, for hostPort, the port). Templates that fail to
+// parse are already reported by parseTemplates.
+func (u *Upstream) templateDomainRule() validation.Errors {
+	host, serverName, errs := u.parseTemplates()
+	if len(errs) > 0 {
+		return nil
+	}
+
+	const msg = `must end its host in a literal domain when templated (e.g. "{{ .RemoteNamespace }}.tmprl.cloud:7233")`
+
+	if !endsInLiteralDomain(hostParts(host.Parts())) {
+		errs = append(errs, validation.Error{Field: "hostPort", Message: msg})
+	}
+
+	if !endsInLiteralDomain(serverName.Parts()) {
+		errs = append(errs, validation.Error{Subject: "tls", Field: "serverName", Message: msg})
+	}
+
+	return errs
 }
 
 // hasLiteralHostPort reports whether the hostPort parses and has no template
@@ -436,4 +462,37 @@ func upstreamHostPort() validation.Check[string] {
 
 		return hostPort(s)
 	}
+}
+
+// hostParts returns the parts of a hostPort template that make up its host:
+// everything before the last literal ':' that is not part of a "://" scheme
+// separator, or every part when there is none.
+func hostParts(parts []template.Part) []template.Part {
+	for i, part := range slices.Backward(parts) {
+		if part.Action {
+			continue
+		}
+
+		text := part.Text
+		for j := len(text) - 1; j >= 0; j-- {
+			if text[j] == ':' && !strings.HasPrefix(text[j:], "://") {
+				return append(slices.Clone(parts[:i]), template.Part{Text: text[:j]})
+			}
+		}
+	}
+
+	return parts
+}
+
+// endsInLiteralDomain reports whether parts contain no actions, or end in
+// literal text of the form ".<hostname>".
+func endsInLiteralDomain(parts []template.Part) bool {
+	if !slices.ContainsFunc(parts, func(p template.Part) bool { return p.Action }) {
+		return true
+	}
+
+	last := parts[len(parts)-1]
+	domain, ok := strings.CutPrefix(last.Text, ".")
+
+	return !last.Action && ok && validation.IsHostname()(domain) == nil
 }
