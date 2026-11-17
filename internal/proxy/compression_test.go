@@ -12,6 +12,8 @@ import (
 	"go.temporal.io/api/common/v1"
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	"go.temporal.io/proxy/internal/config"
@@ -89,7 +91,7 @@ func TestCodecInterceptorAlwaysDecompresses(t *testing.T) {
 		opts proxy.CodecOptions
 		with codec.Compression
 	}{
-		{name: "no compression block", opts: proxy.CodecOptions{}, with: must(t, compress.NewLZ4)},
+		{name: "no compression block", opts: proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit}, with: must(t, compress.NewLZ4)},
 		{
 			name: "compression disabled",
 			opts: compressionOpts(t, config.Compression{}),
@@ -168,9 +170,11 @@ func TestCodecInterceptorCompressesBeforeSealing(t *testing.T) {
 	t.Parallel()
 
 	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{
-		Vault:    &fakeVault{},
-		Encrypt:  true,
-		Reporter: newTestReporter(t),
+		DecodeLimiter: testLimiter(),
+		ResponseLimit: testResponseLimit,
+		Vault:         &fakeVault{},
+		Encrypt:       true,
+		Reporter:      newTestReporter(t),
 		Compression: preparedCompression(t, config.Compression{
 			Enabled: true,
 			Default: &config.CompressionPolicy{Algorithm: config.CompressionSnappy},
@@ -210,6 +214,8 @@ func TestCodecInterceptorReportsCompression(t *testing.T) {
 
 	reg := prometheus.NewRegistry()
 	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{
+		DecodeLimiter: testLimiter(),
+		ResponseLimit: testResponseLimit,
 		Compression: preparedCompression(t, config.Compression{
 			Enabled: true,
 			Default: &config.CompressionPolicy{Algorithm: config.CompressionZstd, MinBytes: new(64)},
@@ -291,6 +297,8 @@ func TestCodecInterceptorReportsDecodeFailures(t *testing.T) {
 
 			reg := prometheus.NewRegistry()
 			interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{
+				DecodeLimiter:       testLimiter(),
+				ResponseLimit:       testResponseLimit,
 				Compression:         preparedCompression(t, config.Compression{}),
 				CompressionReporter: newCompressionReporter(reg),
 			})
@@ -308,12 +316,100 @@ func TestCodecInterceptorReportsDecodeFailures(t *testing.T) {
 	}
 }
 
+// TestCodecInterceptorDecodeLimits shows a response of many payloads, each far
+// under the per-payload cap, is refused with ResourceExhausted once their
+// decoded total passes the response limit, and that what a response decoded is
+// returned to the pool once the interceptor is done. Charging per batch
+// instead of per response is not caught here (one batch per response), which
+// is why the limiter has its own tests; never releasing fails "repeated".
+func TestCodecInterceptorDecodeLimits(t *testing.T) {
+	t.Parallel()
+
+	const (
+		limit = 64 << 10 // 64KiB
+		each  = 8 << 10  // 8KiB decoded
+	)
+
+	tests := []struct {
+		name     string
+		payloads int
+		calls    int
+		pool     int64
+		wantCode codes.Code
+	}{
+		{name: "within the limit", payloads: 4, calls: 1, pool: limit, wantCode: codes.OK},
+		{name: "past the response limit", payloads: 16, calls: 1, pool: 1 << 30, wantCode: codes.ResourceExhausted},
+		{name: "past the pool", payloads: 4, calls: 1, pool: each, wantCode: codes.ResourceExhausted},
+		{name: "repeated", payloads: 4, calls: 4, pool: 5 * each, wantCode: codes.OK},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := compressionOpts(t, config.Compression{})
+			opts.DecodeLimiter = proxy.NewDecodeLimiter(tc.pool)
+			opts.ResponseLimit = limit
+
+			interceptor, err := proxy.CodecInterceptor(opts)
+			require.NoError(t, err)
+
+			payloads := bombs(t, tc.payloads, each)
+			for range tc.calls {
+				resp := &workflowservice.StartWorkflowExecutionRequest{}
+				err = interceptor(t.Context(), "/svc/Start", startRequest(), resp, nil, respondWith(payloads...))
+				require.Equal(t, tc.wantCode, status.Code(err), "err: %v", err)
+			}
+		})
+	}
+}
+
+// TestCodecsDecodeLimit shows the codec server's path refuses payloads whose
+// decoded total passes the response limit, with ResourceExhausted, though each
+// is far under the per-payload cap. Opening no budget fails it.
+func TestCodecsDecodeLimit(t *testing.T) {
+	t.Parallel()
+
+	opts := compressionOpts(t, config.Compression{})
+	opts.ResponseLimit = 64 << 10
+
+	c, err := proxy.NewCodecs(opts)
+	require.NoError(t, err)
+
+	_, err = c.Decode(t.Context(), "orders", "", bombs(t, 4, 8<<10))
+	require.NoError(t, err)
+
+	_, err = c.Decode(t.Context(), "orders", "", bombs(t, 16, 8<<10))
+	require.Equal(t, codes.ResourceExhausted, status.Code(err), "err: %v", err)
+}
+
+// bombs returns n snappy payloads that each decode to about size bytes from
+// a few dozen stored.
+func bombs(t *testing.T, n, size int) []*common.Payload {
+	t.Helper()
+
+	out, err := codec.NewCompressor(must(t, compress.NewSnappy)).Encode([]*common.Payload{
+		testPayload("binary/plain", strings.Repeat("0", size)),
+	})
+	require.NoError(t, err)
+	require.Less(t, out[0].Size(), size/10)
+
+	res := make([]*common.Payload, n)
+	for i := range res {
+		res[i] = out[0]
+	}
+
+	return res
+}
+
 // compressionOpts returns options that compress as c says, recording to a
 // registry of their own.
 func compressionOpts(t testing.TB, c config.Compression) proxy.CodecOptions {
 	t.Helper()
 
 	return proxy.CodecOptions{
+		DecodeLimiter:       testLimiter(),
+		ResponseLimit:       testResponseLimit,
 		Compression:         preparedCompression(t, c),
 		CompressionReporter: newCompressionReporter(prometheus.NewRegistry()),
 	}

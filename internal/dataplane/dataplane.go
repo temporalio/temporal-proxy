@@ -103,15 +103,23 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		return nil, err
 	}
 
+	// One pool of decoded bytes for every response, whichever upstream or the
+	// codec server it came through, so the bound holds for the proxy as a whole.
+	limiter := proxy.NewDecodeLimiter(int64(cfg.Compression.InFlightLimit()))
+
 	// Every upstream applies the same chain: the vault and the encryption switch
 	// are global, so nothing here varies per upstream. Building it once is also
-	// what lets the codec server apply the identical chain.
+	// what lets the codec server apply the identical chain. Its response limit
+	// is the largest any upstream accepts, since the codec server serves them
+	// all; each forwarder bounds its own responses by its upstream's.
 	codecOpts := proxy.CodecOptions{
 		Encrypt:             cfg.Encryption.Enabled,
 		EncodeFailures:      cfg.Encryption.Failures,
 		SkipEncodings:       cfg.Encryption.SkipEncodings,
 		Compression:         &cfg.Compression,
 		CompressionReporter: reps.compression,
+		DecodeLimiter:       limiter,
+		ResponseLimit:       int64(cfg.Upstreams.MaxResponseLimit()),
 	}
 
 	// Only assign the vault once it is known to be there. o.vault is a concrete
@@ -156,7 +164,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 	for i := range cfg.Upstreams {
 		up := &cfg.Upstreams[i]
 
-		fw, ready, err := newUpstreamForwarder(cfg, o, up, codecs)
+		fw, ready, err := newUpstreamForwarder(cfg, o, up, codecs, limiter)
 		if err != nil {
 			return nil, err
 		}
@@ -328,6 +336,7 @@ func newUpstreamForwarder(
 	o *options,
 	up *config.Upstream,
 	codecs *proxy.Codecs,
+	limiter *proxy.DecodeLimiter,
 ) (*proxy.Forwarder, *connect.Conn, error) {
 	// Request-independent dial options: namespace translation and outbound
 	// credentials. Per-request credentials are added by the resolver.
@@ -413,7 +422,13 @@ func newUpstreamForwarder(
 		return nil, nil, err
 	}
 
-	fw, err := proxy.NewForwarder(conn, proxy.WithProtoTypes(o.types))
+	// The budget is held until the response is sent, not just while the codec
+	// interceptor decodes it, since the caller is still reading it until then.
+	fw, err := proxy.NewForwarder(
+		conn,
+		proxy.WithProtoTypes(o.types),
+		proxy.WithDecodeBudget(limiter, int64(up.Connection.ResponseLimit())),
+	)
 	if err != nil {
 		return nil, nil, err
 	}

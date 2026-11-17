@@ -32,6 +32,14 @@ type (
 		namespaces []string
 		remotes    []string // remote names it was handed, in call order
 		err        error
+		events     []string // budget opens and releases, decodes, and writes, in order
+	}
+
+	// eventWriter logs each write to the fake's events, so a test can see what
+	// happened before the response was written and what after.
+	eventWriter struct {
+		http.ResponseWriter
+		codecs *fakeCodecs
 	}
 
 	// fakeNamespaces maps one name and passes everything else through, mirroring
@@ -48,10 +56,17 @@ type (
 )
 
 func (f *fakeCodecs) Decode(_ context.Context, ns, remote string, ps []*common.Payload) ([]*common.Payload, error) {
+	f.events = append(f.events, "decode")
 	return f.mark(ns, remote, ps, "decoded:")
 }
 
+func (f *fakeCodecs) OpenDecode(ctx context.Context) (context.Context, func()) {
+	f.events = append(f.events, "open")
+	return ctx, func() { f.events = append(f.events, "release") }
+}
+
 func (f *fakeCodecs) Encode(_ context.Context, ns, remote string, ps []*common.Payload) ([]*common.Payload, error) {
+	f.events = append(f.events, "encode")
 	return f.mark(ns, remote, ps, "encoded:")
 }
 
@@ -68,6 +83,11 @@ func (f *fakeCodecs) mark(ns, remote string, ps []*common.Payload, prefix string
 	}
 
 	return out, nil
+}
+
+func (w *eventWriter) Write(b []byte) (int, error) {
+	w.codecs.events = append(w.codecs.events, "write")
+	return w.ResponseWriter.Write(b)
 }
 
 func (f fakeNamespaces) Local(remote string) string {
@@ -678,6 +698,43 @@ func TestHandlerRequiresReporter(t *testing.T) {
 	require.PanicsWithValue(t, "codecserver: Handler requires a non-nil reporter", func() {
 		codecserver.Handler(&fakeCodecs{}, fakeNamespaces{}, nil)
 	})
+}
+
+// TestHandlerHoldsDecodeBudgetThroughWrite shows /decode opens a budget before
+// decoding and releases it only once the response is written, since the
+// decoded payloads are held until then, and /encode, which decodes nothing,
+// opens none. Releasing when Decode returns fails the decode case.
+func TestHandlerHoldsDecodeBudgetThroughWrite(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		path string
+		want []string
+	}{
+		{path: "/decode", want: []string{"open", "decode", "write", "release"}},
+		{path: "/encode", want: []string{"encode", "write"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.path, func(t *testing.T) {
+			t.Parallel()
+
+			codecs := &fakeCodecs{}
+			h := codecserver.Handler(codecs, fakeNamespaces{}, testReporter(t))
+			logged := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				h.ServeHTTP(&eventWriter{ResponseWriter: w, codecs: codecs}, r)
+			})
+
+			raw, err := protojson.Marshal(&common.Payloads{Payloads: []*common.Payload{{Data: []byte("x")}}})
+			require.NoError(t, err)
+
+			rec := serve(t, logged, http.MethodPost, tc.path, string(raw),
+				map[string]string{"Content-Type": "application/json"})
+
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			require.Equal(t, tc.want, codecs.events)
+		})
+	}
 }
 
 func TestHandlerCodecFailureHidesDetail(t *testing.T) {

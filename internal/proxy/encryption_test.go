@@ -49,7 +49,7 @@ func TestEncryptionRoundtrip(t *testing.T) {
 	t.Parallel()
 
 	v := &fakeVault{}
-	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: v, Encrypt: true, Reporter: newTestReporter(t)})
+	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: v, Encrypt: true, Reporter: newTestReporter(t)})
 	require.NoError(t, err)
 
 	original := []*common.Payload{
@@ -98,7 +98,7 @@ func TestEncryptionDisabledSkipsOutbound(t *testing.T) {
 	t.Parallel()
 
 	v := &fakeVault{}
-	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: v, Reporter: newTestReporter(t)})
+	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: v, Reporter: newTestReporter(t)})
 	require.NoError(t, err)
 
 	orig := testPayload("json/plain", `"hi"`)
@@ -160,7 +160,7 @@ func TestEncryptionNamespace(t *testing.T) {
 			t.Parallel()
 
 			v := &fakeVault{}
-			interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: v, Encrypt: true, Reporter: newTestReporter(t)})
+			interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: v, Encrypt: true, Reporter: newTestReporter(t)})
 			require.NoError(t, err)
 
 			req := startRequest(testPayload("json/plain", "x"))
@@ -179,7 +179,7 @@ func TestEncryptionErrors(t *testing.T) {
 		t.Parallel()
 
 		v := &fakeVault{sealErr: errors.New("kms unavailable")}
-		interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: v, Encrypt: true, Reporter: newTestReporter(t)})
+		interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: v, Encrypt: true, Reporter: newTestReporter(t)})
 		require.NoError(t, err)
 
 		called := false
@@ -203,7 +203,7 @@ func TestEncryptionErrors(t *testing.T) {
 		t.Parallel()
 
 		v := &fakeVault{openErr: errors.New("unwrap failed")}
-		interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: v, Reporter: newTestReporter(t)})
+		interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: v, Reporter: newTestReporter(t)})
 		require.NoError(t, err)
 
 		invoker := respondWith(sealedPayload(t, testPayload("json/plain", "x")))
@@ -226,7 +226,7 @@ func TestEncryptionRecordsVaultOpsWithMetadataLabels(t *testing.T) {
 	)
 
 	vault := &fakeVault{}
-	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: vault, Encrypt: true, Reporter: reporter})
+	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: vault, Encrypt: true, Reporter: reporter})
 	require.NoError(t, err)
 
 	// The namespace reaches this hop as outgoing metadata, but a label is read
@@ -270,7 +270,7 @@ func TestEncryptionRecordsVaultOps(t *testing.T) {
 	)
 
 	vault := &fakeVault{}
-	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: vault, Encrypt: true, Reporter: reporter})
+	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: vault, Encrypt: true, Reporter: reporter})
 	require.NoError(t, err)
 
 	ctx := metadata.AppendToOutgoingContext(t.Context(), meta.NamespaceHeader, "ns1")
@@ -310,7 +310,7 @@ func TestEncryptionBlanksNamespaceLabelWhenDisabled(t *testing.T) {
 	)
 
 	vault := &fakeVault{}
-	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: vault, Encrypt: true, Reporter: reporter})
+	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: vault, Encrypt: true, Reporter: reporter})
 	require.NoError(t, err)
 
 	ctx := metadata.AppendToOutgoingContext(t.Context(), meta.NamespaceHeader, "ns1")
@@ -342,7 +342,7 @@ func TestEncryptionSkipsMetricsForPassThrough(t *testing.T) {
 	)
 
 	vault := &fakeVault{}
-	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{Vault: vault, Encrypt: true, Reporter: reporter})
+	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: vault, Encrypt: true, Reporter: reporter})
 	require.NoError(t, err)
 
 	ctx := metadata.AppendToOutgoingContext(t.Context(), meta.NamespaceHeader, "ns1")
@@ -377,6 +377,8 @@ func TestEncryptionSkipsListedEncodings(t *testing.T) {
 
 	v := &fakeVault{}
 	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{
+		DecodeLimiter: testLimiter(),
+		ResponseLimit: testResponseLimit,
 		Vault:         v,
 		Encrypt:       true,
 		Reporter:      reporter,
@@ -420,6 +422,8 @@ func TestEncryptionSkipsListedEncodingsWhenCompressing(t *testing.T) {
 
 	v := &fakeVault{}
 	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{
+		DecodeLimiter:       testLimiter(),
+		ResponseLimit:       testResponseLimit,
 		Vault:               v,
 		Encrypt:             true,
 		Reporter:            reporter,
@@ -480,6 +484,8 @@ func TestEncryptionUnknownKey(t *testing.T) {
 
 			v := &fakeVault{openErr: fmt.Errorf("%w: other-proxy-kek", crypto.ErrUnknownKey)}
 			interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{
+				DecodeLimiter: testLimiter(),
+				ResponseLimit: testResponseLimit,
 				Vault:         v,
 				Reporter:      reporter,
 				SkipEncodings: tc.skip,
@@ -523,6 +529,8 @@ func TestCodecsEncodeSkipsListedEncodings(t *testing.T) {
 	t.Parallel()
 
 	c, err := proxy.NewCodecs(proxy.CodecOptions{
+		DecodeLimiter: testLimiter(),
+		ResponseLimit: testResponseLimit,
 		Vault:         &fakeVault{},
 		Encrypt:       true,
 		Reporter:      newTestReporter(t),
@@ -585,8 +593,10 @@ func TestEncryptionCountsUnboundOpens(t *testing.T) {
 			)
 
 			interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{
-				Vault:    &fakeVault{openErr: tc.openErr},
-				Reporter: reporter,
+				DecodeLimiter: testLimiter(),
+				ResponseLimit: testResponseLimit,
+				Vault:         &fakeVault{openErr: tc.openErr},
+				Reporter:      reporter,
 			})
 			require.NoError(t, err)
 
