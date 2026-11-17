@@ -9,6 +9,7 @@ import (
 	"go.temporal.io/proxy/internal/proxy"
 	"go.temporal.io/proxy/internal/router"
 	"go.temporal.io/proxy/internal/server"
+	"go.temporal.io/proxy/internal/services"
 )
 
 // reporters holds the metric reporters, each built once. A per-upstream build
@@ -60,6 +61,15 @@ func newReporters(f *metrics.Factory, c *config.Config, encryption bool) (r *rep
 	// metadata is in scope to read them from.
 	labels := metrics.NewMetadataLabels(c.Metrics.Labels.Metadata)
 
+	// Every forwardable service's methods are reported by name, whether or not
+	// the allowlist admits it, so a rejected call to a real method stays visible.
+	// Anything else is a path no client of these services sends and is reported
+	// as unknown: the label must not take arbitrary caller input.
+	methods, err := services.Methods(services.All()...)
+	if err != nil {
+		return nil, fmt.Errorf("dataplane: listing forwardable methods: %w", err)
+	}
+
 	reqLabels := []proxy.ReporterOption{
 		proxy.WithMetadataLabels(labels),
 		proxy.WithNamespaceLabels(c.Metrics.Labels.Namespace),
@@ -69,7 +79,7 @@ func newReporters(f *metrics.Factory, c *config.Config, encryption bool) (r *rep
 	// or not compression is on.
 	out := &reporters{
 		router:      router.NewReporter(f.ForSubsystem("router"), names, labels),
-		server:      server.NewReporter(f.ForSubsystem("server"), labels),
+		server:      server.NewReporter(f.ForSubsystem("server"), labels, methods),
 		compression: proxy.NewCompressionReporter(f.ForSubsystem("compression"), reqLabels...),
 	}
 

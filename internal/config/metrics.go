@@ -60,6 +60,8 @@ type (
 	// a credential exposes that credential to anything able to reach the port.
 	// The label also multiplies every request-scoped series rather than adding to
 	// them, so a header the caller varies freely multiplies cardinality with it.
+	// Each label reports at most metrics.MaxLabelValues distinct values, the
+	// first ones seen, and reports any value after those as "other".
 	MetricLabel struct {
 		Header string
 		Name   string
