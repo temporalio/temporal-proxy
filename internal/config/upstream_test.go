@@ -1132,3 +1132,75 @@ func TestUpstreamBindingLabelsFrom(t *testing.T) {
 		})
 	}
 }
+
+func TestUpstreamTemplatedHostEndsInLiteralDomain(t *testing.T) {
+	t.Parallel()
+
+	hostPortErr := [2]string{"", "hostPort"}
+	serverNameErr := [2]string{"tls", "serverName"}
+
+	tests := []struct {
+		name       string
+		hostPort   string
+		serverName string
+		wantTuples [][2]string
+	}{
+		{name: "domain suffix and port", hostPort: "{{ .RemoteNamespace }}.tmprl.cloud:7233"},
+		{name: "domain suffix without port", hostPort: "{{ .RemoteNamespace }}.acme.example"},
+		{name: "fully qualified suffix", hostPort: "{{ .RemoteNamespace }}.acme.example.:7233"},
+		{name: "scheme prefix", hostPort: "dns:///{{ .RemoteNamespace }}.acme.example:7233"},
+		{name: "srv target", hostPort: "srv:///_grpc._tcp.{{ .RemoteNamespace }}.svc"},
+		{name: "templated port", hostPort: `127.0.0.1:{{ index .Metadata "port" }}`},
+		{name: "templated port on ipv6", hostPort: `[::1]:{{ index .Metadata "port" }}`},
+		{name: "domain suffix and templated port", hostPort: `{{ .RemoteNamespace }}.acme.example:{{ index .Metadata "port" }}`},
+		{name: "templated label mid-host", hostPort: `{{ .RemoteNamespace }}.{{ index .Metadata "dc" }}.acme.example:7233`},
+		{name: "server name suffix", hostPort: "acme.example:7233", serverName: "{{ .RemoteNamespace }}.sni.example"},
+		{name: "whole host", hostPort: `{{ index .Metadata "x-upstream" }}`, wantTuples: [][2]string{hostPortErr}},
+		{name: "whole host before port", hostPort: "{{ .RemoteNamespace }}:7233", wantTuples: [][2]string{hostPortErr}},
+		{name: "host ends in action", hostPort: "api.{{ .RemoteNamespace }}:7233", wantTuples: [][2]string{hostPortErr}},
+		{name: "suffix without a dot", hostPort: "{{ .RemoteNamespace }}acme.example:7233", wantTuples: [][2]string{hostPortErr}},
+		{name: "suffix is a bare dot", hostPort: "{{ .RemoteNamespace }}.:7233", wantTuples: [][2]string{hostPortErr}},
+		{name: "suffix with a path", hostPort: "{{ .RemoteNamespace }}.acme/x:7233", wantTuples: [][2]string{hostPortErr}},
+		{name: "action in authority", hostPort: "dns://{{ .RemoteNamespace }}/acme.example:7233", wantTuples: [][2]string{hostPortErr}},
+		{name: "conditional host", hostPort: `{{ if .LocalNamespace }}a.example{{ end }}:7233`, wantTuples: [][2]string{hostPortErr}},
+		{
+			name:       "server name ends in action",
+			hostPort:   "acme.example:7233",
+			serverName: "sni.{{ .RemoteNamespace }}",
+			wantTuples: [][2]string{serverNameErr},
+		},
+		{
+			name:       "whole server name",
+			hostPort:   "acme.example:7233",
+			serverName: "{{ .RemoteNamespace }}",
+			wantTuples: [][2]string{serverNameErr},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			up := &config.Upstream{Name: "u", Listen: config.ListenConfig{HostPort: tt.hostPort}}
+			if tt.serverName != "" {
+				up.Listen.TLS = &config.TLSConfig{ServerName: tt.serverName}
+			}
+
+			err := up.Validate()
+			if len(tt.wantTuples) == 0 {
+				require.NoError(t, err)
+				return
+			}
+
+			var errs validation.Errors
+			require.True(t, errors.As(err, &errs), "expected validation.Errors, got %T", err)
+
+			got := make([][2]string, len(errs))
+			for i, e := range errs {
+				got[i] = [2]string{e.Subject, e.Field}
+			}
+
+			require.ElementsMatch(t, tt.wantTuples, got)
+		})
+	}
+}

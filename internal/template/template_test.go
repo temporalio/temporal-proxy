@@ -183,3 +183,40 @@ func TestTemplateIsLiteral(t *testing.T) {
 		})
 	}
 }
+
+func TestTemplateParts(t *testing.T) {
+	t.Parallel()
+
+	lit := func(s string) template.Part { return template.Part{Text: s} }
+	act := func(s string) template.Part { return template.Part{Text: s, Action: true} }
+
+	tests := []struct {
+		tmpl string
+		want []template.Part
+	}{
+		{tmpl: "", want: nil},
+		{tmpl: "127.0.0.1:7233", want: []template.Part{lit("127.0.0.1:7233")}},
+		{
+			tmpl: "{{ .RemoteNamespace }}.acme.cloud:7233",
+			want: []template.Part{act("{{.RemoteNamespace}}"), lit(".acme.cloud:7233")},
+		},
+		{
+			tmpl: `127.0.0.1:{{ index .Metadata "port" }}`,
+			want: []template.Part{lit("127.0.0.1:"), act(`{{index .Metadata "port"}}`)},
+		},
+		{tmpl: "static{{/* x */}}.acme", want: []template.Part{lit("static.acme")}},
+		{tmpl: `a {{- "" -}} b`, want: []template.Part{lit("a"), act(`{{""}}`), lit("b")}},
+		{
+			tmpl: `{{ if .LocalNamespace }}a{{ end }}.acme`,
+			want: []template.Part{act("{{if .LocalNamespace}}a{{end}}"), lit(".acme")},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.tmpl, func(t *testing.T) {
+			t.Parallel()
+
+			require.Equal(t, tt.want, template.Must(template.ParseUpstream(tt.tmpl)).Parts())
+		})
+	}
+}
