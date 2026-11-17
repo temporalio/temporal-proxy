@@ -425,6 +425,11 @@ server: an HTTP request carries no gRPC metadata, so a metadata label reports bl
 populates it for a request that passed through the gateway. A fixed label is added to every series in the table, and to
 nothing registered outside the proxy's own collectors, so the runtime's `go_*` and `process_*` series stay as they are.
 
+Labels whose values come from the caller are bounded, since the `server` series are recorded before authentication and
+a series is never freed. The `method` label names only methods of the services the proxy can forward and the health
+service, and reports any other path as `unknown`. Each metadata label reports the first 100 distinct values it sees and
+reports every later one as `other`.
+
 `payloads_skipped_total` carries the metadata labels too (blank, as with `vault_ops`, for operations from the codec
 server, since an HTTP request carries no gRPC metadata), and `vault_ops_total` reports `result="unknown_key"` for a
 payload sealed under a KEK the proxy doesn't hold, `result="unbound"` for one `strict` refused for carrying no
