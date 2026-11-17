@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"crypto/tls"
+	"net"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -43,19 +44,22 @@ func TestTemplatedUpstreamsRenderingOneTargetKeepTheirOwnCredentials(t *testing.
 		Upstreams: config.UpstreamList{
 			{
 				Name:        "a",
-				Listen:      listen(`{{ index .Metadata "x-upstream" }}`),
+				Listen:      listen(`127.0.0.1:{{ index .Metadata "x-upstream-port" }}`),
 				Credentials: &config.CredentialConfig{Static: &config.StaticCredentialConfig{APIKey: "key-a"}},
 			},
 			{
 				Name:        "b",
-				Listen:      listen(`{{index .Metadata "x-upstream"}}`),
+				Listen:      listen(`127.0.0.1:{{index .Metadata "x-upstream-port"}}`),
 				Credentials: &config.CredentialConfig{Static: &config.StaticCredentialConfig{APIKey: "key-b"}},
 			},
 		},
 	})
 
+	_, port, err := net.SplitHostPort(up.Addr())
+	require.NoError(t, err)
+
 	query := func(ns string) metadata.MD {
-		ctx := metadata.AppendToOutgoingContext(f.Context(), "x-upstream", up.Addr())
+		ctx := metadata.AppendToOutgoingContext(f.Context(), "x-upstream-port", port)
 		_, err := f.Client().QueryWorkflow(ctx, &workflowservice.QueryWorkflowRequest{Namespace: ns}, grpc.WaitForReady(true))
 		require.NoError(t, err)
 

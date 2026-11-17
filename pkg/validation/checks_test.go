@@ -231,6 +231,49 @@ func TestLT_OrderedTypes(t *testing.T) {
 	require.Error(t, validation.LT("abc")("abc"))
 }
 
+func TestIsHostname(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		in      string
+		wantErr bool
+	}{
+		{name: "single label", in: "localhost"},
+		{name: "multiple labels", in: "orders.a1b2c.tmprl.cloud"},
+		{name: "fully qualified", in: "acme.example."},
+		{name: "srv labels", in: "_grpc._tcp.frontend.svc"},
+		{name: "hyphen and digits", in: "us-east-1.acme2.example"},
+		{name: "empty", in: "", wantErr: true},
+		{name: "only a dot", in: ".", wantErr: true},
+		{name: "leading dot", in: ".acme.example", wantErr: true},
+		{name: "empty label", in: "acme..example", wantErr: true},
+		{name: "two trailing dots", in: "acme.example..", wantErr: true},
+		{name: "port", in: "acme.example:7233", wantErr: true},
+		{name: "query", in: "acme.example?x", wantErr: true},
+		{name: "path", in: "acme.example/x", wantErr: true},
+		{name: "userinfo", in: "user@acme.example", wantErr: true},
+		{name: "fragment", in: "acme.example#x", wantErr: true},
+		{name: "percent", in: "acme%2eexample", wantErr: true},
+		{name: "space", in: "acme example", wantErr: true},
+		{name: "non-ascii", in: "acmé.example", wantErr: true},
+	}
+
+	check := validation.IsHostname()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := check(tt.in)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestIsHostPort(t *testing.T) {
 	t.Parallel()
 

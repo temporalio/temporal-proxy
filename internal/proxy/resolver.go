@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"slices"
+	"strconv"
 	"strings"
 
 	"google.golang.org/grpc"
@@ -20,6 +22,7 @@ import (
 	"go.temporal.io/proxy/internal/transport/resolve"
 	"go.temporal.io/proxy/pkg/logger"
 	"go.temporal.io/proxy/pkg/logger/tag"
+	"go.temporal.io/proxy/pkg/validation"
 )
 
 type (
@@ -32,6 +35,7 @@ type (
 	DynamicResolver struct {
 		name       string
 		host       *template.Template[template.UpstreamContext]
+		scheme     string
 		serverName *template.Template[template.UpstreamContext]
 		remote     func(string) string
 		opts       func(d RouteData) ([]grpc.DialOption, error)
@@ -61,6 +65,7 @@ func NewDynamicResolver(up *config.Upstream, opts ...ResolverOption) *DynamicRes
 	r := &DynamicResolver{
 		name:       up.Name,
 		host:       host,
+		scheme:     literalScheme(host),
 		serverName: serverName,
 		remote:     func(s string) string { return s },
 		opts:       func(RouteData) ([]grpc.DialOption, error) { return nil, nil },
@@ -163,8 +168,8 @@ func (r *DynamicResolver) IsStatic() bool {
 // target and rendered server name so that two requests to the same address with
 // different server names get distinct pooled connections. It fails with
 // codes.Internal (naming the upstream and template) when a template fails to
-// render, the rendered address is empty or malformed, or the options factory
-// errors; nothing is dialed in those cases.
+// render, the rendered address or server name is not a plain host, or the
+// options factory errors; nothing is dialed in those cases.
 func (r *DynamicResolver) Resolve(ctx context.Context) (string, string, []grpc.DialOption, error) {
 	localNS := meta.NamespaceFrom(ctx)
 	data := template.UpstreamContext{
@@ -184,7 +189,7 @@ func (r *DynamicResolver) Resolve(ctx context.Context) (string, string, []grpc.D
 		)
 	}
 
-	if invalidAddress(target) {
+	if invalidAddress(target, r.scheme) {
 		return "", "", nil, status.Errorf(
 			codes.Internal,
 			"proxy: upstream %q rendered invalid hostPort %q from template %q",
@@ -202,6 +207,16 @@ func (r *DynamicResolver) Resolve(ctx context.Context) (string, string, []grpc.D
 			r.name,
 			r.serverName.String(),
 			err,
+		)
+	}
+
+	if svrName != "" && validation.IsHostname()(svrName) != nil {
+		return "", "", nil, status.Errorf(
+			codes.Internal,
+			"proxy: upstream %q rendered invalid serverName %q from template %q",
+			r.name,
+			svrName,
+			r.serverName.String(),
 		)
 	}
 
@@ -251,32 +266,49 @@ func lastMetadataValues(ctx context.Context) map[string]string {
 	return out
 }
 
-// invalidAddress reports whether addr is unusable as a dial target: empty, or
-// missing a host label (e.g. ":7233" or ".acme:7233" produced when a referenced
-// namespace or metadata value renders empty). It strips a leading gRPC scheme
-// ("dns:///", "passthrough:///") and tolerates a single trailing dot so a
-// fully-qualified name ("acme.example.:7233") is accepted.
-func invalidAddress(addr string) bool {
-	if strings.TrimSpace(addr) == "" {
-		return true
-	}
-
+// invalidAddress reports whether addr is not a plain dial target: the scheme
+// separated by "://" must be exactly scheme (none when scheme is empty), with
+// an empty authority ("dns:///host"), followed by a hostname or IP literal and
+// an optional port. A single trailing dot is allowed so a fully-qualified name
+// ("acme.example.:7233") is accepted.
+func invalidAddress(addr, scheme string) bool {
 	hp := addr
 	if i := strings.Index(hp, "://"); i >= 0 {
-		hp = hp[i+3:]
-		hp = strings.TrimPrefix(hp, "/") // handle the "dns:///" triple-slash form
-	}
-
-	host, _, err := net.SplitHostPort(hp)
-	if err != nil {
-		host = hp // no port present; treat the whole remainder as the host
-	}
-
-	host = strings.TrimSpace(host)
-	if host == "" {
+		var ok bool
+		if hp, ok = strings.CutPrefix(hp[i+3:], "/"); !ok || addr[:i] != scheme {
+			return true
+		}
+	} else if scheme != "" {
 		return true
 	}
 
-	host = strings.TrimSuffix(host, ".")
-	return slices.Contains(strings.Split(host, "."), "")
+	host, port, err := net.SplitHostPort(hp)
+	if err != nil {
+		host = hp // no port present; treat the remainder as the host
+	} else if p, err := strconv.Atoi(port); err != nil || p < 1 || p > 65535 || port[0] == '+' {
+		return true
+	}
+
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return addr.Zone() != ""
+	}
+
+	return validation.IsHostname()(host) != nil
+}
+
+// literalScheme returns the scheme written in the template's leading literal
+// text ("dns" for "dns:///{{ ... }}"), or "" when the template does not start
+// with one. Only this scheme is accepted in a rendered target.
+func literalScheme(t *template.Template[template.UpstreamContext]) string {
+	parts := t.Parts()
+	if len(parts) == 0 || parts[0].Action {
+		return ""
+	}
+
+	scheme, _, ok := strings.Cut(parts[0].Text, "://")
+	if !ok {
+		return ""
+	}
+
+	return scheme
 }
