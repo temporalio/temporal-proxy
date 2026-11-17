@@ -211,7 +211,7 @@ func TestModuleGivesEachServerADistinctConn(t *testing.T) {
 	require.NotSame(t, got["audit"], got["quota"])
 }
 
-func TestModulePoolsConnectionsUnderANamespacedKey(t *testing.T) {
+func TestModulePoolsConnectionsUnderTheServersScope(t *testing.T) {
 	t.Parallel()
 
 	pool := connect.NewPool()
@@ -220,10 +220,10 @@ func TestModulePoolsConnectionsUnderANamespacedKey(t *testing.T) {
 	), pool)
 	require.NoError(t, err)
 
-	// The connection is created during construction, under a key distinct from
-	// the bare dial address, so it cannot be handed to a caller resolving that
-	// address.
-	conn, err := pool.Conn("extension:127.0.0.1:9090")
+	// The connection is created during construction, scoped to the server, so it
+	// cannot be handed to another owner resolving the same address. The key is
+	// spelled out so a change to the scheme fails here rather than passing.
+	conn, err := pool.Conn("extension/audit\x00127.0.0.1:9090")
 	require.NoError(t, err)
 	require.NotNil(t, conn)
 
@@ -237,26 +237,27 @@ func TestModuleDoesNotCollideWithAnUpstreamOnTheSameHostPort(t *testing.T) {
 	const hostPort = "127.0.0.1:7233"
 
 	// Config permits an extension server to sit on an upstream's hostPort, and
-	// the pool is shared between them. Stand in for the upstream by seeding the
-	// pool the way a static resolver would, keyed by the bare address.
+	// the pool is shared between them. Stand in for the upstream by creating its
+	// connection the way the dataplane does, under the upstream's own scope. The
+	// upstream deliberately shares the extension server's name.
 	pool := connect.NewPool()
-	upstreamConn, err := grpc.NewClient(hostPort, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	upstream := pool.Scoped("upstream/audit")
+	upstreamConn, err := upstream(hostPort, hostPort, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
-	require.NoError(t, pool.Set(hostPort, upstreamConn))
 
 	_, err = buildModule(t, extensionServers(
 		config.ExtensionServer{Name: "audit", Listen: config.ListenConfig{HostPort: hostPort}},
 	), pool)
 	require.NoError(t, err)
 
-	extensionConn, err := pool.Conn("extension:" + hostPort)
+	extensionConn, err := pool.Conn("extension/audit\x00" + hostPort)
 	require.NoError(t, err)
 
 	// Distinct entries: the extension server did not inherit the upstream's
 	// connection, which carries the upstream's TLS settings and credentials.
 	require.NotSame(t, upstreamConn, extensionConn)
 
-	got, err := pool.Conn(hostPort)
+	got, err := upstream(hostPort, hostPort)
 	require.NoError(t, err)
 	require.Same(t, upstreamConn, got, "the upstream entry must be left untouched")
 }
