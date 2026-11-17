@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -178,7 +179,59 @@ tmprl_proxy_server_requests_total{code="Unimplemented",method="/temporal.api.wor
 func newTestReporter(t *testing.T, labels metrics.MetadataLabels) (*server.Reporter, *goprom.Registry) {
 	t.Helper()
 	f, reg := newTestFactory(t)
-	return server.NewReporter(f.ForSubsystem("server"), labels), reg
+	return server.NewReporter(f.ForSubsystem("server"), labels, testMethods), reg
+}
+
+// testMethods are the methods the tests' reporters know by name.
+var testMethods = []string{
+	"/svc/Method",
+	"/svc/Other",
+	"/svc/Fail",
+	"/svc/Ok",
+	"/temporal.api.workflowservice.v1.WorkflowService/GetSystemInfo",
+	panicMethod,
+}
+
+func TestReporterReportsUnknownMethodsAsUnknown(t *testing.T) {
+	t.Parallel()
+
+	r, reg := newTestReporter(t, metrics.MetadataLabels{})
+
+	// Each distinct unrecognized path would otherwise add a series, and the
+	// reporter runs before authentication, so any caller could grow the registry
+	// without bound.
+	for i := range 50 {
+		r.Observe(t.Context(), fmt.Sprintf("/attacker.Svc/M%d", i), codes.Unauthenticated, time.Millisecond)
+	}
+	r.Observe(t.Context(), "/svc/Method", codes.OK, time.Millisecond)
+	r.Panic(t.Context(), "/attacker.Svc/Boom")
+
+	require.NoError(t, testutil.GatherAndCompare(reg, strings.NewReader(`
+# HELP tmprl_proxy_server_requests_total Total RPCs served, labeled by method and gRPC status code.
+# TYPE tmprl_proxy_server_requests_total counter
+tmprl_proxy_server_requests_total{code="OK",method="/svc/Method"} 1
+tmprl_proxy_server_requests_total{code="Unauthenticated",method="unknown"} 50
+# HELP tmprl_proxy_server_panics_total Total panics recovered while serving an RPC, labeled by method.
+# TYPE tmprl_proxy_server_panics_total counter
+tmprl_proxy_server_panics_total{method="unknown"} 1
+`), "tmprl_proxy_server_requests_total", "tmprl_proxy_server_panics_total"))
+}
+
+func TestReporterKnowsHealthMethods(t *testing.T) {
+	t.Parallel()
+
+	f, reg := newTestFactory(t)
+	r := server.NewReporter(f.ForSubsystem("server"), metrics.MetadataLabels{}, nil)
+
+	r.Observe(t.Context(), "/grpc.health.v1.Health/Watch", codes.OK, time.Millisecond)
+	r.Observe(t.Context(), "/svc/Method", codes.OK, time.Millisecond)
+
+	require.NoError(t, testutil.GatherAndCompare(reg, strings.NewReader(`
+# HELP tmprl_proxy_server_requests_total Total RPCs served, labeled by method and gRPC status code.
+# TYPE tmprl_proxy_server_requests_total counter
+tmprl_proxy_server_requests_total{code="OK",method="/grpc.health.v1.Health/Watch"} 1
+tmprl_proxy_server_requests_total{code="OK",method="unknown"} 1
+`), "tmprl_proxy_server_requests_total"))
 }
 
 // newTestFactory builds a namespace-scoped metrics Factory backed by a fresh,

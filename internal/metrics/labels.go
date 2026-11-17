@@ -2,8 +2,11 @@ package metrics
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -17,14 +20,44 @@ import (
 // unbounded one is a memory-growth vector.
 const maxLabelValueLen = 256
 
-// MetadataLabels is the ordered set of inbound metadata headers reported as
-// extra labels on request-scoped collectors. The zero MetadataLabels carries
-// none, which is what a deployment that configures none runs, so a reporter
-// holding one adds no labels and reads no metadata.
-type MetadataLabels struct {
-	names   []string // Prometheus label names, in configured order.
-	headers []string // Lowercased metadata keys, parallel to names.
-}
+// MaxLabelValues bounds how many distinct values one metadata label reports.
+// The value is supplied by the caller, request-scoped reporters run before
+// authentication, and the registry never evicts a series, so without a bound
+// any caller could add a series per request until the process runs out of
+// memory. Once a label has seen this many values, every new one is reported as
+// [LabelValueOther]; values already seen keep reporting as themselves.
+const MaxLabelValues = 100
+
+// LabelValueOther is the value a metadata label reports once it has seen
+// [MaxLabelValues] distinct values.
+const LabelValueOther = "other"
+
+type (
+	// MetadataLabels is the ordered set of inbound metadata headers reported as
+	// extra labels on request-scoped collectors. The zero MetadataLabels carries
+	// none, which is what a deployment that configures none runs, so a reporter
+	// holding one adds no labels and reads no metadata.
+	//
+	// Copies share the record of values each label has seen, so the
+	// [MaxLabelValues] bound holds across every reporter given the same labels.
+	MetadataLabels struct {
+		names   []string    // Prometheus label names, in configured order.
+		headers []string    // Lowercased metadata keys, parallel to names.
+		seen    []*valueSet // Values each label has reported, parallel to names.
+	}
+
+	// valueSet is the bounded set of values one label has reported. Reads load an
+	// immutable map without locking, since nearly every request carries a value
+	// already seen; the rare admission copies it under mu and swaps it in. Once
+	// the set is full, full lets an unseen value be turned away without taking
+	// mu, so a flood of new values cannot contend on it: mu is held at most
+	// [MaxLabelValues] times for admissions over the set's life.
+	valueSet struct {
+		mu     sync.Mutex
+		values atomic.Pointer[map[string]struct{}]
+		full   atomic.Bool
+	}
+)
 
 // NewMetadataLabels builds the ordered labels for cfg. Headers are lowercased
 // here because gRPC canonicalizes metadata keys while a config preserves
@@ -38,11 +71,13 @@ func NewMetadataLabels(cfg []config.MetricLabel) MetadataLabels {
 	l := MetadataLabels{
 		names:   make([]string, len(cfg)),
 		headers: make([]string, len(cfg)),
+		seen:    make([]*valueSet, len(cfg)),
 	}
 
 	for i, label := range cfg {
 		l.names[i] = label.Name
 		l.headers[i] = strings.ToLower(label.Header)
+		l.seen[i] = newValueSet()
 	}
 
 	return l
@@ -81,11 +116,66 @@ func (l MetadataLabels) AppendValues(ctx context.Context, dst []string) []string
 	// A context with no incoming metadata yields a nil MD, and Get on that is a
 	// nil-map read, so an absent request context needs no separate branch.
 	md, _ := metadata.FromIncomingContext(ctx)
-	for _, h := range l.headers {
-		dst = append(dst, labelValue(md.Get(h)))
+	for i, h := range l.headers {
+		dst = append(dst, l.seen[i].admit(labelValue(md.Get(h))))
 	}
 
 	return dst
+}
+
+func newValueSet() *valueSet {
+	s := &valueSet{}
+	s.values.Store(&map[string]struct{}{})
+	return s
+}
+
+// admit returns v when the label has reported it before or has room for it, and
+// [LabelValueOther] once [MaxLabelValues] distinct values are taken. The empty
+// value, which a request without the header reports, is always admitted and
+// does not count against the bound.
+func (s *valueSet) admit(v string) string {
+	if v == "" {
+		return v
+	}
+
+	if _, ok := (*s.values.Load())[v]; ok {
+		return v
+	}
+
+	// The map is stored before full is set and never changes after, so once full
+	// is seen a fresh load is the final set. Re-checking it covers a value
+	// admitted as the last one between the read above and this one.
+	if s.full.Load() {
+		if _, ok := (*s.values.Load())[v]; ok {
+			return v
+		}
+
+		return LabelValueOther
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Re-read under the lock: another request may have admitted v, or filled the
+	// set, since the unlocked read.
+	cur := *s.values.Load()
+	if _, ok := cur[v]; ok {
+		return v
+	}
+
+	if len(cur) >= MaxLabelValues {
+		return LabelValueOther
+	}
+
+	next := maps.Clone(cur)
+	next[v] = struct{}{}
+	s.values.Store(&next)
+
+	if len(next) >= MaxLabelValues {
+		s.full.Store(true)
+	}
+
+	return v
 }
 
 // labelValue reduces a header's values to the one reported as a label. A header

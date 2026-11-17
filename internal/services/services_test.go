@@ -40,6 +40,27 @@ func TestResolveRejectsNonService(t *testing.T) {
 	require.Contains(t, err.Error(), "not a service")
 }
 
+func TestMethods(t *testing.T) {
+	t.Parallel()
+
+	t.Run("lists every method as a full method", func(t *testing.T) {
+		t.Parallel()
+
+		methods, err := services.Methods(services.All()...)
+		require.NoError(t, err)
+		require.Contains(t, methods, "/temporal.api.workflowservice.v1.WorkflowService/StartWorkflowExecution")
+		require.Contains(t, methods, "/temporal.api.operatorservice.v1.OperatorService/ListSearchAttributes")
+		require.Contains(t, methods, "/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo")
+	})
+
+	t.Run("fails on an unresolvable name", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := services.Methods(services.WorkflowService, "temporal.api.nope.v1.NopeService")
+		require.Error(t, err)
+	})
+}
+
 func TestDefaultIsForwardableSubsetOfKnown(t *testing.T) {
 	t.Parallel()
 
