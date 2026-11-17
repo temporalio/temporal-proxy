@@ -78,6 +78,27 @@ func Resolve(name string) (protoreflect.ServiceDescriptor, error) {
 	return sd, nil
 }
 
+// Methods returns the gRPC full method ("/pkg.Service/Method") of every method
+// on the named services, for a caller that must recognize a method rather than
+// trust whatever path a client sent. It fails when a name does not resolve, as
+// [Resolve] does.
+func Methods(names ...string) ([]string, error) {
+	var out []string
+	for _, name := range names {
+		sd, err := Resolve(name)
+		if err != nil {
+			return nil, err
+		}
+
+		methods := sd.Methods()
+		for i := range methods.Len() {
+			out = append(out, "/"+name+"/"+string(methods.Get(i).Name()))
+		}
+	}
+
+	return out, nil
+}
+
 // expand returns names plus the alias of every name that has one, with
 // duplicates removed. Order is not significant to callers, which build sets.
 func expand(names []string) []string {

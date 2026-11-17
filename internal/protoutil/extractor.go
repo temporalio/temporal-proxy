@@ -16,7 +16,7 @@ type (
 	// cached per method, so repeat calls for the same method skip the lookup.
 	// Construct one with NewExtractor; an Extractor is safe for concurrent use.
 	Extractor struct {
-		msgs  sync.Map // fullMethod -> protoreflect.MessageType (nil when unresolvable)
+		msgs  sync.Map // fullMethod -> protoreflect.MessageType, resolved methods only
 		files Files
 		types Types
 	}
@@ -77,20 +77,22 @@ func (e *Extractor) Namespace(fullMethod string, payload []byte) string {
 }
 
 // messageType returns the request message type for fullMethod, or nil when it
-// cannot be resolved. The result, including a nil miss, is cached so each method
-// is resolved at most once.
+// cannot be resolved. A resolved type is cached, so the cache holds at most one
+// entry per method in the registries. A miss is not: the gateway calls this
+// before authentication with whatever path the caller sent, so caching misses
+// would let any caller grow the cache, and the process, without bound.
 func (e *Extractor) messageType(fullMethod string) protoreflect.MessageType {
 	if v, ok := e.msgs.Load(fullMethod); ok {
-		if v == nil {
-			return nil
-		}
-
 		return v.(protoreflect.MessageType)
 	}
 
 	mt := e.resolveInputType(fullMethod)
-	e.msgs.Store(fullMethod, mt)
-	return mt
+	if mt == nil {
+		return nil
+	}
+
+	actual, _ := e.msgs.LoadOrStore(fullMethod, mt)
+	return actual.(protoreflect.MessageType)
 }
 
 // resolveInputType looks up the request message type for a "/pkg.Service/Method"
