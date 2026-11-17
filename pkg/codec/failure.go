@@ -21,10 +21,22 @@ type encodedFailure struct {
 
 // EncodeFailure moves f's message and stack trace into its encoded attributes,
 // in the form the Temporal SDK writes, so a payload codec run afterwards seals
-// them and an SDK client restores them on read. A failure that already has
-// encoded attributes is left alone, and f's cause is not visited.
+// them and an SDK client restores them on read. f's cause is not visited.
+//
+// A failure that already has encoded attributes keeps them. When they are the
+// SDK's JSON, the message is reset to the placeholder and the stack trace
+// cleared, since the attributes already hold that text. This covers a failure
+// [RestoreFailure] filled in on the way to a Worker that the Worker sends back
+// unchanged, such as an activity failure that becomes a workflow failure's
+// cause. Without it that text would travel in plaintext beside the sealed
+// attributes.
 func EncodeFailure(f *failure.Failure) error {
-	if f.GetEncodedAttributes() != nil {
+	if attrs := f.GetEncodedAttributes(); attrs != nil {
+		if string(attrs.GetMetadata()[MetadataEncoding]) == "json/plain" {
+			f.Message = encodedFailureMessage
+			f.StackTrace = ""
+		}
+
 		return nil
 	}
 
