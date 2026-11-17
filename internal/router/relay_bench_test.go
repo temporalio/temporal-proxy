@@ -94,10 +94,14 @@ func benchRelayConn(b *testing.B) *grpc.ClientConn {
 	extractor := protoutil.NewExtractor(protoregistry.GlobalFiles, protoregistry.GlobalTypes)
 	allowlist := services.NewAllowlist(services.Default())
 
+	methods, err := services.Methods(services.All()...)
+	require.NoError(b, err)
+
 	reg := prometheus.NewRegistry()
 	serverRep := server.NewReporter(
 		metrics.New("tmprl_proxy", promauto.With(reg)).ForSubsystem("server"),
 		metrics.MetadataLabels{},
+		methods,
 	)
 
 	relayLis := bufconn.Listen(1024 * 1024)

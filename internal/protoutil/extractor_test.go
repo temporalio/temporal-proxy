@@ -2,6 +2,7 @@ package protoutil_test
 
 import (
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -71,8 +72,38 @@ func TestExtractorCaching(t *testing.T) {
 		t.Parallel()
 		ex := protoutil.NewExtractor(protoregistry.GlobalFiles, protoregistry.GlobalTypes)
 		require.Equal(t, "", ex.Namespace("/nope.v1.Service/Method", start))
-		require.Equal(t, "", ex.Namespace("/nope.v1.Service/Method", start), "cached nil miss must not panic")
+		require.Equal(t, "", ex.Namespace("/nope.v1.Service/Method", start), "a repeated miss must not panic")
 	})
+
+	t.Run("only resolved methods are cached", func(t *testing.T) {
+		t.Parallel()
+
+		// The gateway calls this before authentication with whatever path the
+		// caller sent, so a cached miss would let any caller grow the cache.
+		files := &countingFiles{Files: protoregistry.GlobalFiles}
+		ex := protoutil.NewExtractor(files, protoregistry.GlobalTypes)
+
+		ex.Namespace(startMethod, start)
+		ex.Namespace(startMethod, start)
+		require.Equal(t, int64(1), files.n.Load(), "a resolved method is looked up once")
+
+		junk := "/" + wfService + "/NoSuchMethod"
+		ex.Namespace(junk, start)
+		ex.Namespace(junk, start)
+		require.Equal(t, int64(3), files.n.Load(), "a miss is resolved again, so it was not retained")
+	})
+}
+
+// countingFiles counts descriptor lookups, so a test can tell a cached
+// resolution from a repeated one.
+type countingFiles struct {
+	protoutil.Files
+	n atomic.Int64
+}
+
+func (f *countingFiles) FindDescriptorByName(name protoreflect.FullName) (protoreflect.Descriptor, error) {
+	f.n.Add(1)
+	return f.Files.FindDescriptorByName(name)
 }
 
 func TestExtractorConsultsInjectedSources(t *testing.T) {
