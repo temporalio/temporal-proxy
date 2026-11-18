@@ -38,6 +38,7 @@ type Upstream struct {
 	peers       []string
 	requests    []proto.Message
 	queryResult *common.Payloads
+	nexusTask   *workflowservice.PollNexusTaskQueueResponse
 }
 
 // NewUpstream starts a fake frontend on a loopback port over plaintext and
@@ -134,6 +135,44 @@ func (u *Upstream) QueryWorkflow(
 	}
 
 	return &workflowservice.QueryWorkflowResponse{QueryResult: req.GetQuery().GetQueryArgs()}, nil
+}
+
+// SetNexusTask sets the task PollNexusTaskQueue answers with. Until it is
+// called, a poll answers with an empty response, as a long poll that found no
+// task does.
+func (u *Upstream) SetNexusTask(task *workflowservice.PollNexusTaskQueueResponse) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	u.nexusTask = task
+}
+
+// PollNexusTaskQueue records the call and answers with a copy of the task set
+// through [Upstream.SetNexusTask], or an empty response.
+func (u *Upstream) PollNexusTaskQueue(
+	ctx context.Context, req *workflowservice.PollNexusTaskQueueRequest,
+) (*workflowservice.PollNexusTaskQueueResponse, error) {
+	u.record(ctx, req)
+
+	u.mu.Lock()
+	task := u.nexusTask
+	u.mu.Unlock()
+
+	if task == nil {
+		return &workflowservice.PollNexusTaskQueueResponse{}, nil
+	}
+
+	return proto.Clone(task).(*workflowservice.PollNexusTaskQueueResponse), nil
+}
+
+// RespondNexusTaskCompleted records the call and answers with an empty
+// response, so a test can inspect the reply a Worker sent through the proxy.
+func (u *Upstream) RespondNexusTaskCompleted(
+	ctx context.Context, req *workflowservice.RespondNexusTaskCompletedRequest,
+) (*workflowservice.RespondNexusTaskCompletedResponse, error) {
+	u.record(ctx, req)
+
+	return &workflowservice.RespondNexusTaskCompletedResponse{}, nil
 }
 
 // Peers returns the distinct client addresses requests arrived from, in the
