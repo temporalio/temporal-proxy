@@ -71,6 +71,12 @@ type (
 		// forwards that error's text to the caller.
 		Decode(ctx context.Context, local, remote string, payloads []*common.Payload) ([]*common.Payload, error)
 
+		// OpenDecode returns ctx carrying the budget a request's payloads decode
+		// against, and the func that releases it. Decode charges a budget already
+		// on ctx rather than opening its own, so the handler holds it until the
+		// decoded payloads have been written.
+		OpenDecode(ctx context.Context) (context.Context, func())
+
 		// Encode seals payloads bound for an upstream. local is the local namespace
 		// name and selects the key policy, so an empty local takes the default
 		// policy rather than a namespace's own. Sealed payloads are bound to
@@ -157,8 +163,8 @@ func Handler(c Codecs, n Namespaces, r *Reporter, opts ...Option) http.Handler {
 		path string
 		fn   http.HandlerFunc
 	}{
-		{encodeRoute, h.payloads(encodeRoute, h.codecs.Encode, o.namespaceRequired)},
-		{decodeRoute, h.payloads(decodeRoute, h.codecs.Decode, o.decodeNamespaceRequired)},
+		{encodeRoute, h.payloads(encodeRoute, h.codecs.Encode, nil, o.namespaceRequired)},
+		{decodeRoute, h.payloads(decodeRoute, h.codecs.Decode, h.codecs.OpenDecode, o.decodeNamespaceRequired)},
 		{downloadRoute, h.download},
 	}
 
@@ -232,9 +238,11 @@ func WithDecodeNamespaceRequired(required bool) Option {
 }
 
 // payloads returns the handler for a route that transforms payloads with fn.
+// When open is set, what it opens is held until the response is written.
 func (h *handler) payloads(
 	route string,
 	fn func(context.Context, string, string, []*common.Payload) ([]*common.Payload, error),
+	open func(context.Context) (context.Context, func()),
 	namespaceRequired bool,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -269,7 +277,14 @@ func (h *handler) payloads(
 		// holds KMS unwrap permission, so a provider error can carry key ARNs,
 		// ciphertext metadata, or vault messages that must not reach an HTTP
 		// response body. It is logged instead, since the operator needs it.
-		out, err := fn(r.Context(), ns.name, ns.sent, in.Payloads)
+		ctx := r.Context()
+		if open != nil {
+			var release func()
+			ctx, release = open(ctx)
+			defer release()
+		}
+
+		out, err := fn(ctx, ns.name, ns.sent, in.Payloads)
 		if err != nil {
 			h.opts.log.Error("Codec server failed to transform payloads",
 				tag.String("route", route),

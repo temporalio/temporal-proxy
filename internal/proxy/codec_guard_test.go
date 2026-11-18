@@ -68,7 +68,7 @@ func TestCodecsMatchInterceptor(t *testing.T) {
 		}
 
 		// Path A: the interceptor opens on the way in, so read what the caller saw.
-		codecs, err := proxy.NewCodecs(proxy.CodecOptions{Vault: &fakeVault{}, Reporter: newTestReporter(t)})
+		codecs, err := proxy.NewCodecs(proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: &fakeVault{}, Reporter: newTestReporter(t)})
 		require.NoError(t, err)
 
 		interceptor, err := codecs.Interceptor()
@@ -83,7 +83,7 @@ func TestCodecsMatchInterceptor(t *testing.T) {
 
 		// Path B: the direct call, with its own vault so the two paths cannot share
 		// vault state and accidentally agree.
-		direct, err := proxy.NewCodecs(proxy.CodecOptions{Vault: &fakeVault{}, Reporter: newTestReporter(t)})
+		direct, err := proxy.NewCodecs(proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: &fakeVault{}, Reporter: newTestReporter(t)})
 		require.NoError(t, err)
 
 		viaDirect, err := direct.Decode(ctx, ns, ns, clone(sealed))
@@ -101,7 +101,7 @@ func TestCodecsMatchInterceptor(t *testing.T) {
 		// subtest above runs with Encrypt: true, where inbound and outbound are
 		// the same slice, so it cannot catch Encode reading the wrong one; this
 		// is the only case that can.
-		codecs, err := proxy.NewCodecs(proxy.CodecOptions{Vault: &fakeVault{}, Encrypt: false, Reporter: newTestReporter(t)})
+		codecs, err := proxy.NewCodecs(proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: &fakeVault{}, Encrypt: false, Reporter: newTestReporter(t)})
 		require.NoError(t, err)
 
 		ctx := meta.WithNamespace(t.Context(), ns)
@@ -125,7 +125,7 @@ func TestCodecsMatchInterceptor(t *testing.T) {
 // vault state and accidentally agree.
 func codecOpts(t *testing.T) proxy.CodecOptions {
 	t.Helper()
-	return proxy.CodecOptions{Vault: &fakeVault{}, Encrypt: true, Reporter: newTestReporter(t)}
+	return proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: &fakeVault{}, Encrypt: true, Reporter: newTestReporter(t)}
 }
 
 func clone(ps []*common.Payload) []*common.Payload {

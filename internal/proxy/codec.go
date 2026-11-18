@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"runtime"
 	"slices"
 
@@ -59,6 +60,16 @@ type (
 		// skipped. It is required whenever Compression is set; without
 		// Compression, payloads are still restored but nothing is recorded.
 		CompressionReporter *CompressionReporter
+
+		// DecodeLimiter bounds the decoded bytes every response holds at once. It
+		// is required, and must be the one the forwarders share, or each pool
+		// bounds only its own share of them.
+		DecodeLimiter *DecodeLimiter
+
+		// ResponseLimit bounds the decoded bytes of a codec server request, and of
+		// a response that reaches the interceptor without a budget already open
+		// (see [DecodeLimiter.Open]). It is required.
+		ResponseLimit int64
 	}
 
 	// Codecs is the chain payloads travel through in both directions. It is the
@@ -67,6 +78,8 @@ type (
 		inbound         []codecOpt
 		outbound        []codecOpt
 		inboundSkip     func([]*common.Payload) bool
+		limiter         *DecodeLimiter
+		responseLimit   int64
 		inboundLimit    int
 		outboundLimit   int
 		encodeFailures  bool
@@ -133,6 +146,16 @@ func NewCodecs(opts CodecOptions) (*Codecs, error) {
 		return nil, errors.New("proxy: compression requires a compression reporter")
 	}
 
+	// Inbound always decompresses, so without both a response could decode
+	// without bound.
+	if opts.DecodeLimiter == nil {
+		return nil, errors.New("proxy: a decode limiter is required")
+	}
+
+	if opts.ResponseLimit <= 0 {
+		return nil, fmt.Errorf("proxy: response limit must be positive, got %d", opts.ResponseLimit)
+	}
+
 	cmp, err := newCompression(opts.Compression, opts.CompressionReporter)
 	if err != nil {
 		return nil, err
@@ -150,6 +173,8 @@ func NewCodecs(opts CodecOptions) (*Codecs, error) {
 	c := &Codecs{
 		inboundLimit:    limit,
 		outboundLimit:   limit,
+		limiter:         opts.DecodeLimiter,
+		responseLimit:   opts.ResponseLimit,
 		encodeFailures:  opts.EncodeFailures,
 		restoreFailures: opts.Vault != nil,
 	}
@@ -247,8 +272,13 @@ func (c *Codecs) Interceptor(opts ...InterceptorOption) (grpc.UnaryClientInterce
 		Inbound:  visitPayloads(c.inbound, c.inboundSkip, c.inboundLimit, codec.Chain.Decode, io.remote),
 		Outbound: visitPayloads(c.outbound, nil, c.outboundLimit, codec.Chain.Encode, io.remote),
 	})
-	if err != nil || (!c.encodeFailures && !c.restoreFailures) {
-		return payloads, err
+	if err != nil {
+		return nil, err
+	}
+
+	payloads = chainUnary(c.openBudget, payloads)
+	if !c.encodeFailures && !c.restoreFailures {
+		return payloads, nil
 	}
 
 	failures, err := proxy.NewFailureVisitorInterceptor(proxy.FailureVisitorInterceptorOptions{
@@ -272,9 +302,26 @@ func (c *Codecs) Decode(
 	local, remote string,
 	payloads []*common.Payload,
 ) ([]*common.Payload, error) {
+	// Skipped before the budget is opened, so payloads with nothing to restore
+	// cost no more than they did without one.
+	if c.inboundSkip != nil && c.inboundSkip(payloads) {
+		return payloads, nil
+	}
+
 	s := scope{ns: local, label: remote, check: remote != ""}
 
-	return apply(ctx, s, c.inbound, c.inboundSkip, codec.Chain.Decode, payloads)
+	ctx, release := c.OpenDecode(ctx)
+	defer release()
+
+	return apply(ctx, s, c.inbound, nil, codec.Chain.Decode, payloads)
+}
+
+// OpenDecode returns ctx carrying a budget of the response limit, and the func
+// that releases it, unless ctx already carries one (see [DecodeLimiter.Open]).
+// A caller that holds decoded payloads after [Codecs.Decode] returns opens it
+// first, so they stay charged until the caller is done with them.
+func (c *Codecs) OpenDecode(ctx context.Context) (context.Context, func()) {
+	return c.limiter.Open(ctx, c.responseLimit)
 }
 
 // Encode runs payloads through the outbound chain, the same chain
@@ -310,6 +357,22 @@ func apply(
 	}
 
 	return fn(codec.NewChain(chain...), payloads)
+}
+
+// openBudget opens the budget a response decodes against for the length of the
+// call, unless one was opened further out (see [DecodeLimiter.Open]).
+func (c *Codecs) openBudget(
+	ctx context.Context,
+	method string,
+	req, reply any,
+	cc *grpc.ClientConn,
+	invoker grpc.UnaryInvoker,
+	opts ...grpc.CallOption,
+) error {
+	ctx, release := c.OpenDecode(ctx)
+	defer release()
+
+	return invoker(ctx, method, req, reply, cc, opts...)
 }
 
 // chainUnary returns an interceptor that runs outer around inner, so outer sees

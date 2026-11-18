@@ -2,6 +2,7 @@ package dataplane_test
 
 import (
 	"bytes"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,9 +12,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/dataplane/dataplanetest"
+	"go.temporal.io/proxy/pkg/codec"
+	"go.temporal.io/proxy/pkg/compress"
 )
 
 // gRPC's own default would refuse anything over 4MiB from the upstream, so the
@@ -61,6 +65,69 @@ func TestGatewayAppliesTheUpstreamResponseLimit(t *testing.T) {
 			require.Equal(t, tt.wantCode, status.Code(err), "err: %v", err)
 			if tt.wantCode == codes.OK {
 				require.Len(t, resp.GetQueryResult().GetPayloads()[0].GetData(), tt.size)
+			}
+		})
+	}
+}
+
+// A response far under maxResponseSize on the wire can still decode past it, so
+// the refusal case only passes if the proxy bounds what it decodes, not what
+// it receives. The wire check pins that the bombs really are small.
+func TestGatewayBoundsDecodedResponses(t *testing.T) {
+	t.Parallel()
+
+	const (
+		limit = 1 << 20   // 1MiB
+		each  = 512 << 10 // 512KiB decoded
+	)
+
+	snappy, err := compress.NewSnappy()
+	require.NoError(t, err)
+
+	bomb, err := codec.NewCompressor(snappy).Encode([]*common.Payload{
+		{Metadata: map[string][]byte{codec.MetadataEncoding: []byte("binary/plain")}, Data: bytes.Repeat([]byte("0"), each)},
+	})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		payloads int
+		wantCode codes.Code
+	}{
+		{name: "within the response limit", payloads: 1, wantCode: codes.OK},
+		{name: "past the response limit", payloads: 4, wantCode: codes.ResourceExhausted},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := &common.Payloads{Payloads: slices.Repeat(bomb, tt.payloads)}
+			require.Less(t, proto.Size(result), limit/8)
+
+			up := dataplanetest.NewUpstream(t)
+			up.SetQueryResult(result)
+
+			cfg := dataplanetest.Config(up)
+			cfg.Upstreams[0].Connection.MaxResponseSize = limit
+			cfg.Compression.MaxDecodedInFlight = limit
+			f := dataplanetest.Start(t, cfg)
+
+			req := &workflowservice.QueryWorkflowRequest{
+				Namespace: "ns1",
+				Execution: &common.WorkflowExecution{WorkflowId: "wf-1"},
+				Query:     &query.WorkflowQuery{QueryType: "state"},
+			}
+
+			resp, err := f.Client().QueryWorkflow(
+				f.Context(),
+				req,
+				grpc.WaitForReady(true),
+				grpc.MaxCallRecvMsgSize(64<<20),
+			)
+			require.Equal(t, tt.wantCode, status.Code(err), "err: %v", err)
+			if tt.wantCode == codes.OK {
+				require.Len(t, resp.GetQueryResult().GetPayloads()[0].GetData(), each)
 			}
 		})
 	}

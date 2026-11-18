@@ -2,6 +2,7 @@ package codec_test
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -15,13 +16,18 @@ import (
 	"go.temporal.io/proxy/pkg/compress"
 )
 
-// recordingObserver records what a Compressor reports, one string per call.
-type recordingObserver struct {
-	events    []string
-	algorithm string
-	in, out   int
-	err       error
-}
+type (
+	// recordingObserver records what a Compressor reports, one string per call.
+	recordingObserver struct {
+		events    []string
+		algorithm string
+		in, out   int
+		err       error
+	}
+
+	// chargeFunc is a codec.DecodeBudget backed by a function.
+	chargeFunc func(int) error
+)
 
 func TestCompressorRoundtrip(t *testing.T) {
 	t.Parallel()
@@ -370,6 +376,41 @@ func TestCompressorObserverDecode(t *testing.T) {
 		require.Equal(t, "zstd", obs.algorithm)
 	})
 }
+
+// TestCompressorDecodeBudget shows each restored payload's decoded size is
+// charged to the budget, a payload that isn't compressed is not, and a refused
+// charge fails Decode with the budget's error. Charging the compressed size
+// fails the size check; ignoring the refusal fails the error check.
+func TestCompressorDecodeBudget(t *testing.T) {
+	t.Parallel()
+
+	snappy := newSnappy(t)
+	compressed, err := codec.NewCompressor(snappy).Encode([]*common.Payload{compressiblePayload()})
+	require.NoError(t, err)
+
+	raw, err := compressiblePayload().Marshal()
+	require.NoError(t, err)
+
+	plain := testPayload("json/plain", `"plain"`)
+	in := []*common.Payload{plain, compressed[0], compressed[0]}
+	refused := errors.New("refused")
+
+	var charges []int
+	budget := chargeFunc(func(n int) error {
+		charges = append(charges, n)
+		if len(charges) > 1 {
+			return refused
+		}
+
+		return nil
+	})
+
+	_, err = codec.NewCompressor(snappy, codec.WithDecodeBudget(budget)).Decode(in)
+	require.ErrorIs(t, err, refused)
+	require.Equal(t, []int{len(raw), len(raw)}, charges)
+}
+
+func (f chargeFunc) Charge(n int) error { return f(n) }
 
 func (r *recordingObserver) Observe(op, algorithm string, in, out int, _ time.Duration, err error) {
 	r.algorithm, r.in, r.out, r.err = algorithm, in, out, err
