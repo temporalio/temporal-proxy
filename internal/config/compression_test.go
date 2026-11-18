@@ -27,6 +27,11 @@ func TestCompressionValidate(t *testing.T) {
 			cfg:  config.Compression{Enabled: true, Default: &config.CompressionPolicy{Algorithm: config.CompressionZstd}},
 		},
 		{
+			name:    "negative maxDecodedInFlight",
+			cfg:     config.Compression{MaxDecodedInFlight: -1},
+			wantErr: "maxDecodedInFlight: not greater than 0",
+		},
+		{
 			name:    "enabled without default",
 			cfg:     config.Compression{Enabled: true},
 			wantErr: "default: is required",
@@ -132,6 +137,30 @@ func TestCompressionValidate(t *testing.T) {
 			}
 
 			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+// TestCompressionInFlightLimit shows an absent maxDecodedInFlight is 512MiB and
+// a set one is kept.
+func TestCompressionInFlightLimit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		set  config.ByteSize
+		want config.ByteSize
+	}{
+		{name: "absent", want: 512 << 20},
+		{name: "set", set: 1 << 30, want: 1 << 30},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			c := config.Compression{MaxDecodedInFlight: tt.set}
+			require.Equal(t, tt.want, c.InFlightLimit())
 		})
 	}
 }

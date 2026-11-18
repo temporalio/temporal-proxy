@@ -117,7 +117,7 @@ func newCompression(c *config.Compression, r *CompressionReporter) (*compression
 
 // decode returns the option that restores a request's payloads.
 func (c *compression) decode(ctx context.Context, s scope) codec.Option {
-	return codec.WithCompression(nil, c.decoders, c.observe(ctx, s))
+	return codec.WithCompression(nil, c.decoders, c.observe(ctx, s), codec.WithDecodeBudget(budgetFrom(ctx)))
 }
 
 // encode returns the option that compresses a request's payloads with the
@@ -128,7 +128,13 @@ func (c *compression) encode(ctx context.Context, s scope) codec.Option {
 		return c.none
 	}
 
-	return codec.WithCompression(enc.cmp, c.decoders, enc.minBytes, c.observe(ctx, s))
+	return codec.WithCompression(
+		enc.cmp,
+		c.decoders,
+		enc.minBytes,
+		c.observe(ctx, s),
+		codec.WithDecodeBudget(budgetFrom(ctx)),
+	)
 }
 
 // observe returns the option that reports a request's payloads, which reports
@@ -205,13 +211,14 @@ func algorithmLabel(name string) string {
 }
 
 // compressionResult maps an error to the "result" metric label value. Output
-// past the decode cap and an algorithm this build has no decoder for get their
-// own values, since each calls for a different fix than corrupt data does.
+// past the decode cap or a decode limit, and an algorithm this build has no
+// decoder for, get their own values, since each calls for a different fix than
+// corrupt data does.
 func compressionResult(err error) string {
 	switch {
 	case err == nil:
 		return "success"
-	case errors.Is(err, compress.ErrTooLarge):
+	case errors.Is(err, compress.ErrTooLarge), errors.As(err, new(*limitError)):
 		return "too_large"
 	case errors.Is(err, codec.ErrUnknownAlgorithm):
 		return "unknown_algorithm"

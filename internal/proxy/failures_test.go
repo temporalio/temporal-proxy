@@ -154,7 +154,7 @@ func TestCodecInterceptorKeepsUnreadableFailureAttributes(t *testing.T) {
 func failureOpts(t *testing.T) proxy.CodecOptions {
 	t.Helper()
 
-	return proxy.CodecOptions{Vault: &fakeVault{}, Encrypt: true, EncodeFailures: true, Reporter: newTestReporter(t)}
+	return proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: &fakeVault{}, Encrypt: true, EncodeFailures: true, Reporter: newTestReporter(t)}
 }
 
 // sendFailure sends f through the interceptor opts build and returns the codecs

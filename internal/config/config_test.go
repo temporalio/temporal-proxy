@@ -359,6 +359,37 @@ func TestConfig_Validate(t *testing.T) {
 				}},
 			},
 		},
+		{
+			// One response at an upstream's limit must fit in the pool, or it could
+			// never be decoded, however idle the proxy.
+			name: "an upstream response limit past maxDecodedInFlight",
+			cfg: &config.Config{
+				Metrics: defaultMetrics(),
+				Listen:  config.ListenConfig{HostPort: ":8080"},
+				Upstreams: []config.Upstream{
+					{Name: "primary", Listen: config.ListenConfig{HostPort: "127.0.0.1:7233"}},
+					{
+						Name:       "large",
+						Listen:     config.ListenConfig{HostPort: "127.0.0.1:7234"},
+						Connection: config.ConnectionConfig{MaxResponseSize: 1 << 30},
+					},
+				},
+			},
+			wantTuples: [][2]string{{"compression", "maxDecodedInFlight"}},
+		},
+		{
+			name: "maxDecodedInFlight equal to the largest upstream response limit",
+			cfg: &config.Config{
+				Metrics:     defaultMetrics(),
+				Listen:      config.ListenConfig{HostPort: ":8080"},
+				Compression: config.Compression{MaxDecodedInFlight: 1 << 30},
+				Upstreams: []config.Upstream{{
+					Name:       "large",
+					Listen:     config.ListenConfig{HostPort: "127.0.0.1:7233"},
+					Connection: config.ConnectionConfig{MaxResponseSize: 1 << 30},
+				}},
+			},
+		},
 	}
 
 	for _, tt := range tests {

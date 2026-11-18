@@ -103,7 +103,8 @@ func (c *Config) Prepare() error {
 // "upstreams[name]" field, an unknown routing reference on the
 // "routing"/"routing.rules[i]" subject, and an unknown extension server on the
 // referring "encryption.*", "auth.external", or "http.codecServer.auth.external"
-// subject.
+// subject. compression.maxDecodedInFlight must hold one response at the
+// largest upstream maxResponseSize.
 func (c *Config) validate() error {
 	rules := []validation.Rule{
 		validation.Field("upstreams", c.Upstreams, func(us UpstreamList) error {
@@ -145,6 +146,22 @@ func (c *Config) validate() error {
 	for i := range c.ExtensionServers {
 		knownExtensions[c.ExtensionServers[i].Name] = struct{}{}
 	}
+
+	// A response at the largest upstream limit has to fit in the pool alone, or
+	// it is refused however idle the proxy is.
+	rules = append(rules, validation.WhenRules(
+		func() bool { return c.Compression.InFlightLimit() < c.Upstreams.MaxResponseLimit() },
+		func() validation.Errors {
+			return validation.Errors{{
+				Subject: "compression",
+				Field:   "maxDecodedInFlight",
+				Message: fmt.Sprintf(
+					"must be at least the largest upstream connection.maxResponseSize (%s)",
+					c.Upstreams.MaxResponseLimit(),
+				),
+			}}
+		},
+	))
 
 	rules = append(rules, c.Auth.referentialRules("auth.external", knownExtensions)...)
 	rules = append(rules, c.HTTP.referentialRules(knownExtensions)...)

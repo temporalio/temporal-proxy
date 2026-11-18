@@ -58,6 +58,7 @@ type (
 		skip     map[string]struct{}
 		minBytes int
 		observer CompressionObserver
+		budget   DecodeBudget
 	}
 
 	// CompressorOption configures a [Compressor].
@@ -84,6 +85,13 @@ type (
 		// Skipped is told about each payload Encode forwarded uncompressed, and
 		// why, as one of the CompressionSkip reasons.
 		Skipped(reason, algorithm string)
+	}
+
+	// DecodeBudget bounds how many bytes [Compressor.Decode] restores. Charge is
+	// told each restored payload's decoded size, after it is decompressed but
+	// before it is kept, and fails Decode by returning an error.
+	DecodeBudget interface {
+		Charge(n int) error
 	}
 )
 
@@ -122,6 +130,13 @@ func WithMinBytes(n int) CompressorOption {
 // to o. A nil o reports nothing.
 func WithCompressionObserver(o CompressionObserver) CompressorOption {
 	return func(c *Compressor) { c.observer = o }
+}
+
+// WithDecodeBudget charges each payload [Compressor.Decode] restores to b. Each
+// payload is capped by its algorithm, but a batch is not, so b is what bounds
+// the total. A nil b charges nothing.
+func WithDecodeBudget(b DecodeBudget) CompressorOption {
+	return func(c *Compressor) { c.budget = b }
 }
 
 // IsCompressed reports whether p carries the full compressed-payload contract,
@@ -251,6 +266,12 @@ func (c *Compressor) restore(name string, data []byte) (*common.Payload, int, er
 	raw, err := cmp.Decompress(data)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to decompress payload: %w", err)
+	}
+
+	if c.budget != nil {
+		if err := c.budget.Charge(len(raw)); err != nil {
+			return nil, len(raw), fmt.Errorf("failed to restore payload: %w", err)
+		}
 	}
 
 	og := new(common.Payload)

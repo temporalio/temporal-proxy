@@ -288,6 +288,17 @@ func (ul UpstreamList) Validate() error {
 	)
 }
 
+// MaxResponseLimit is the largest [ConnectionConfig.ResponseLimit] of any
+// upstream, the most a single response through the proxy can be.
+func (ul UpstreamList) MaxResponseLimit() ByteSize {
+	var limit ByteSize
+	for i := range ul {
+		limit = max(limit, ul[i].Connection.ResponseLimit())
+	}
+
+	return limit
+}
+
 // BindingRules returns the rules that derive the binding label for payloads
 // sealed or opened through u: those of the upstream its bindingLabelsFrom
 // names, or u's own when it names none. Validation guarantees the named
