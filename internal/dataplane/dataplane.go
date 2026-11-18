@@ -2,7 +2,6 @@ package dataplane
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"slices"
@@ -33,7 +32,6 @@ type (
 		gateway   *server.Server
 		hostPort  string
 		ready     []*connect.Conn
-		codecs    *proxy.Codecs
 		abort     Abort
 		abortOnce sync.Once
 		logger    logger.Logger
@@ -56,58 +54,9 @@ type (
 // compiled, and builds the gateway and a per-upstream proxy for every upstream.
 // p.Context is long lived and drives the gateway's health check; the context
 // passed to Start bounds startup only. Neither stops serving, which only Stop
-// does. It binds nothing and dials nothing. Every Prometheus collector is
-// registered here, so it must run once per registry.
+// does. It binds nothing and dials nothing.
 func newDataplane(p Params) (*Dataplane, error) {
 	cfg := p.Config
-
-	// Encryption is a security control: if it is enabled, or keys are configured
-	// even while disabled for new traffic, but no vault reached the dataplane,
-	// fail fast. Keys without a vault means payloads sealed earlier cannot be
-	// opened, which is as dangerous as forwarding cleartext outbound. The check
-	// is on the concrete pointer, before any conversion to an interface, since a
-	// nil pointer in a non-nil interface would slip past it.
-	if (cfg.Encryption.Enabled || cfg.Encryption.Default != nil) && p.Vault == nil {
-		return nil, errors.New("encryption is enabled or keys are configured, but no vault was provided")
-	}
-
-	reps, err := newReporters(p.Metrics, cfg, p.Vault != nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// One pool of decoded bytes for every response, whichever upstream or the
-	// codec server it came through, so the bound holds for the proxy as a whole.
-	limiter := proxy.NewDecodeLimiter(int64(cfg.Compression.InFlightLimit()))
-
-	// Every upstream applies the same chain: the vault and the encryption switch
-	// are global, so nothing here varies per upstream. Building it once is also
-	// what lets the codec server apply the identical chain. Its response limit
-	// is the largest any upstream accepts, since the codec server serves them
-	// all; each forwarder bounds its own responses by its upstream's.
-	codecOpts := proxy.CodecOptions{
-		Encrypt:             cfg.Encryption.Enabled,
-		EncodeFailures:      cfg.Encryption.Failures,
-		SkipEncodings:       cfg.Encryption.SkipEncodings,
-		Compression:         &cfg.Compression,
-		CompressionReporter: reps.compression,
-		DecodeLimiter:       limiter,
-		ResponseLimit:       int64(cfg.Upstreams.MaxResponseLimit()),
-	}
-
-	// Only assign the vault once it is known to be there. p.Vault is a concrete
-	// pointer and the field is an interface, so assigning unconditionally would
-	// hand over a non-nil interface holding a nil pointer, which reads as a vault
-	// being present and panics the first time a payload is opened.
-	if p.Vault != nil {
-		codecOpts.Vault = p.Vault
-		codecOpts.Reporter = reps.encryption
-	}
-
-	codecs, err := proxy.NewCodecs(codecOpts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build payload codecs: %w", err)
-	}
 
 	mux := router.MuxFor(cfg.Routing)
 
@@ -120,15 +69,9 @@ func newDataplane(p Params) (*Dataplane, error) {
 		)
 	}
 
-	// With no keys there is no encryption codec, so the list has nothing to skip.
-	if len(cfg.Encryption.SkipEncodings) > 0 && p.Vault == nil {
-		p.Logger.Warn("encryption.skipEncodings is set but no encryption keys are configured, so it has no effect")
-	}
-
 	dp := &Dataplane{
 		ctx:      p.Context,
 		hostPort: cfg.Listen.HostPort,
-		codecs:   codecs,
 		abort:    p.Abort,
 		logger:   p.Logger,
 	}
@@ -137,7 +80,7 @@ func newDataplane(p Params) (*Dataplane, error) {
 	for i := range cfg.Upstreams {
 		up := &cfg.Upstreams[i]
 
-		fw, ready, err := newUpstreamForwarder(&p, up, codecs, limiter)
+		fw, ready, err := newUpstreamForwarder(&p, up)
 		if err != nil {
 			return nil, err
 		}
@@ -152,7 +95,7 @@ func newDataplane(p Params) (*Dataplane, error) {
 	}
 
 	handler := router.Handler(
-		router.NewDirector(mux, handlers, reps.router, p.Logger),
+		router.NewDirector(mux, handlers, p.RouterReporter, p.Logger),
 		p.Allowlist,
 	)
 
@@ -163,10 +106,10 @@ func newDataplane(p Params) (*Dataplane, error) {
 		// status for is exactly what it will forward.
 		server.WithHealthServices(p.Allowlist.ServiceNames()...),
 		server.WithLoopbackHealthCheck(cfg.Health.CheckInterval(), cfg.Health.CheckTimeout()),
-		server.WithStreamInterceptor(reps.server.StreamInterceptor()),
+		server.WithStreamInterceptor(p.ServerReporter.StreamInterceptor()),
 		// Straight after the reporter, so a panic in any interceptor after it or in
 		// the handler is recovered and still recorded as an Internal request.
-		server.WithRecoveryHandler(p.Logger, reps.server.Panic),
+		server.WithRecoveryHandler(p.Logger, p.ServerReporter.Panic),
 		// Ahead of authentication: it resolves what the request is addressing, and
 		// an authenticator decides on that as well as on the caller's credentials.
 		server.WithStreamInterceptor(router.PeekInterceptor(p.Extractor, p.Allowlist)),
@@ -191,22 +134,11 @@ func (d *Dataplane) Addr() net.Addr {
 	return d.addr
 }
 
-// Codecs is the payload codec chain every upstream applies, so a caller outside
-// the request path transforms payloads exactly as a proxied request would.
-func (d *Dataplane) Codecs() *proxy.Codecs {
-	return d.codecs
-}
-
 // newUpstreamForwarder builds one upstream's forwarder. It returns the
 // forwarder, the connection to open eagerly at start (nil for a templated
 // upstream, which resolves per request and has nothing to open yet), and any
 // error.
-func newUpstreamForwarder(
-	p *Params,
-	up *config.Upstream,
-	codecs *proxy.Codecs,
-	limiter *proxy.DecodeLimiter,
-) (*proxy.Forwarder, *connect.Conn, error) {
+func newUpstreamForwarder(p *Params, up *config.Upstream) (*proxy.Forwarder, *connect.Conn, error) {
 	// Request-independent dial options: namespace translation and outbound
 	// credentials. Per-request credentials are added by the resolver.
 	var dialOpts []grpc.DialOption
@@ -254,7 +186,7 @@ func newUpstreamForwarder(
 		codecOpts = append(codecOpts, proxy.WithRemoteNamespace(labels.Remote))
 	}
 
-	cdc, err := codecs.Interceptor(codecOpts...)
+	cdc, err := p.Codecs.Interceptor(codecOpts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to build codec interceptor for upstream %q: %w", up.Name, err)
 	}
@@ -296,7 +228,7 @@ func newUpstreamForwarder(
 	fw, err := proxy.NewForwarder(
 		conn,
 		proxy.WithProtoTypes(p.Types),
-		proxy.WithDecodeBudget(limiter, int64(up.Connection.ResponseLimit())),
+		proxy.WithDecodeBudget(p.Limiter, int64(up.Connection.ResponseLimit())),
 	)
 	if err != nil {
 		return nil, nil, err
