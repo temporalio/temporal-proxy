@@ -261,7 +261,8 @@ func WithRemoteNamespace(remote func(string) string) InterceptorOption {
 // are encoded first, so the payload holding their attributes is sealed like any
 // other. With a vault, their text is restored last, from attributes already
 // opened, whether or not encoding is on, so failures encoded earlier stay
-// readable after it is turned off.
+// readable after it is turned off. Restored text is cleared again on the way
+// out, so a client sending a failure back does not send it in plaintext.
 func (c *Codecs) Interceptor(opts ...InterceptorOption) (grpc.UnaryClientInterceptor, error) {
 	var io interceptorOptions
 	for _, opt := range opts {
@@ -283,7 +284,7 @@ func (c *Codecs) Interceptor(opts ...InterceptorOption) (grpc.UnaryClientInterce
 
 	failures, err := proxy.NewFailureVisitorInterceptor(proxy.FailureVisitorInterceptorOptions{
 		Inbound:  visitFailures(c.restoreFailures, codec.RestoreFailure),
-		Outbound: visitFailures(c.encodeFailures, codec.EncodeFailure),
+		Outbound: visitFailures(true, c.sendFailure),
 	})
 	if err != nil {
 		return nil, err
@@ -357,6 +358,19 @@ func apply(
 	}
 
 	return fn(codec.NewChain(chain...), payloads)
+}
+
+// sendFailure prepares f to go upstream. Text the inbound pass restored is
+// cleared first, whether or not failure encoding is on, since a client may send
+// it back unchanged or with its attributes re-encoded by its own codec. With
+// encoding on, f's text is then moved into its attributes.
+func (c *Codecs) sendFailure(f *failure.Failure) error {
+	codec.ClearFailureText(f)
+	if !c.encodeFailures {
+		return nil
+	}
+
+	return codec.EncodeFailure(f)
 }
 
 // openBudget opens the budget a response decodes against for the length of the

@@ -55,6 +55,22 @@ func EncodeFailure(f *failure.Failure) error {
 	return nil
 }
 
+// ClearFailureText resets f's message to the placeholder and clears its stack
+// trace when f has encoded attributes in any encoding, since the Temporal SDK
+// treats those attributes as holding the text. This covers text [RestoreFailure]
+// filled in that a client sends back after re-encoding the attributes with its
+// own codec, where [EncodeFailure] cannot tell restored text from a message the
+// client meant to send. A failure without attributes, and f's cause, are left
+// alone.
+func ClearFailureText(f *failure.Failure) {
+	if f.GetEncodedAttributes() == nil {
+		return
+	}
+
+	f.Message = encodedFailureMessage
+	f.StackTrace = ""
+}
+
 // RestoreFailure copies the message and stack trace in f's encoded attributes
 // back onto f, so a client that does not decode them still sees the text. Run it
 // after a payload codec has opened the attributes. The attributes are kept, and
