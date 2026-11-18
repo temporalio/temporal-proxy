@@ -329,6 +329,13 @@ Workflows started in, and signals sent from, another Namespace carry that Namesp
 deployments that rely on them should stay on `permissive`. The codec server applies the same comparison to the
 Namespace a request names; see [Using it from the CLI](#using-it-from-the-cli).
 
+A Nexus handler's failures are only sealed when its Worker polled the task with the `temporal_failure_responses`
+capability. Temporal Server 1.31 and later grant it for Workflow and standalone Nexus operation callers. Without it, on
+an older server or for a caller sending Nexus HTTP requests itself, the Go SDK returns the failure as a legacy
+`nexus.Failure` whose message, cause chain, and details no codec can see, so they reach the upstream unencrypted. With
+encryption on, the proxy counts each such task in `nexus_tasks_without_failure_support_total` and warns once per
+Namespace.
+
 | Mode         | Seals     | Opens labeled for the request's Namespace | Opens labeled for another | Opens unlabeled         |
 | ------------ | --------- | ----------------------------------------- | ------------------------- | ----------------------- |
 | `off`        | Unlabeled | Yes                                       | Yes, counted              | Yes, counted            |
@@ -456,34 +463,35 @@ server, since an HTTP request carries no gRPC metadata), and `vault_ops_total` r
 payload sealed under a KEK the proxy doesn't hold, `result="unbound"` for one `strict` refused for carrying no
 Namespace binding, and `result="mismatch"` for one `strict` refused for being bound to another Namespace.
 
-| Subsystem      | Metric                             | Type      | Labels                                          |
-| -------------- | ---------------------------------- | --------- | ----------------------------------------------- |
-| `server`       | `requests_total`                   | counter   | `method`, `code`                                |
-| `server`       | `request_duration_seconds`         | histogram | `method`                                        |
-| `server`       | `panics_total`                     | counter   | `method`                                        |
-| `router`       | `decisions_total`                  | counter   | `upstream`, `outcome`                           |
-| `router`       | `forwarding_errors_total`          | counter   | `upstream`, `reason`                            |
-| `encryption`   | `vault_ops_total`                  | counter   | `operation`, `result`, `namespace`              |
-| `encryption`   | `vault_ops_duration_seconds`       | histogram | `operation`, `namespace`                        |
-| `encryption`   | `payloads_skipped_total`           | counter   | `operation`, `encoding`, `namespace`            |
-| `encryption`   | `vault_unbound_opens_total`        | counter   | `namespace`                                     |
-| `encryption`   | `vault_namespace_mismatches_total` | counter   | `namespace`                                     |
-| `encryption`   | `kek_ops_total`                    | counter   | `provider`, `operation`, `result`               |
-| `encryption`   | `kek_ops_duration_seconds`         | histogram | `provider`, `operation`                         |
-| `encryption`   | `dek_ops_total`                    | counter   | `operation`, `result`                           |
-| `encryption`   | `dek_ops_duration_seconds`         | histogram | `operation`                                     |
-| `encryption`   | `dek_rotations_total`              | counter   | `reason`                                        |
-| `encryption`   | `dek_cache_hits_total`             | counter   | none                                            |
-| `encryption`   | `dek_cache_misses_total`           | counter   | none                                            |
-| `encryption`   | `dek_cache_size`                   | gauge     | none                                            |
-| `compression`  | `ops_total`                        | counter   | `operation`, `algorithm`, `result`, `namespace` |
-| `compression`  | `ops_duration_seconds`             | histogram | `operation`, `algorithm`, `namespace`           |
-| `compression`  | `payload_bytes`                    | histogram | `stage`, `algorithm`, `namespace`               |
-| `compression`  | `payloads_skipped_total`           | counter   | `reason`, `algorithm`, `namespace`              |
-| `codec_server` | `requests_total`                   | counter   | `route`, `code`                                 |
-| `codec_server` | `request_duration_seconds`         | histogram | `route`                                         |
-| `tls`          | `reloads_total`                    | counter   | `credential`, `result`                          |
-| `tls`          | `cert_expiry_timestamp_seconds`    | gauge     | `credential`, `file`                            |
+| Subsystem      | Metric                                      | Type      | Labels                                          |
+| -------------- | ------------------------------------------- | --------- | ----------------------------------------------- |
+| `server`       | `requests_total`                            | counter   | `method`, `code`                                |
+| `server`       | `request_duration_seconds`                  | histogram | `method`                                        |
+| `server`       | `panics_total`                              | counter   | `method`                                        |
+| `router`       | `decisions_total`                           | counter   | `upstream`, `outcome`                           |
+| `router`       | `forwarding_errors_total`                   | counter   | `upstream`, `reason`                            |
+| `encryption`   | `vault_ops_total`                           | counter   | `operation`, `result`, `namespace`              |
+| `encryption`   | `vault_ops_duration_seconds`                | histogram | `operation`, `namespace`                        |
+| `encryption`   | `payloads_skipped_total`                    | counter   | `operation`, `encoding`, `namespace`            |
+| `encryption`   | `vault_unbound_opens_total`                 | counter   | `namespace`                                     |
+| `encryption`   | `vault_namespace_mismatches_total`          | counter   | `namespace`                                     |
+| `encryption`   | `nexus_tasks_without_failure_support_total` | counter   | `namespace`                                     |
+| `encryption`   | `kek_ops_total`                             | counter   | `provider`, `operation`, `result`               |
+| `encryption`   | `kek_ops_duration_seconds`                  | histogram | `provider`, `operation`                         |
+| `encryption`   | `dek_ops_total`                             | counter   | `operation`, `result`                           |
+| `encryption`   | `dek_ops_duration_seconds`                  | histogram | `operation`                                     |
+| `encryption`   | `dek_rotations_total`                       | counter   | `reason`                                        |
+| `encryption`   | `dek_cache_hits_total`                      | counter   | none                                            |
+| `encryption`   | `dek_cache_misses_total`                    | counter   | none                                            |
+| `encryption`   | `dek_cache_size`                            | gauge     | none                                            |
+| `compression`  | `ops_total`                                 | counter   | `operation`, `algorithm`, `result`, `namespace` |
+| `compression`  | `ops_duration_seconds`                      | histogram | `operation`, `algorithm`, `namespace`           |
+| `compression`  | `payload_bytes`                             | histogram | `stage`, `algorithm`, `namespace`               |
+| `compression`  | `payloads_skipped_total`                    | counter   | `reason`, `algorithm`, `namespace`              |
+| `codec_server` | `requests_total`                            | counter   | `route`, `code`                                 |
+| `codec_server` | `request_duration_seconds`                  | histogram | `route`                                         |
+| `tls`          | `reloads_total`                             | counter   | `credential`, `result`                          |
+| `tls`          | `cert_expiry_timestamp_seconds`             | gauge     | `credential`, `file`                            |
 
 The `encryption` subsystem only reports once encryption keys are configured, and `codec_server` only reports once the
 codec server is enabled. Its `route` label is the matched pattern (`/decode`, and so on), never the request path,

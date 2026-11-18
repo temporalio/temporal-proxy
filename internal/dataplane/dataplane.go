@@ -120,6 +120,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		CompressionReporter: reps.compression,
 		DecodeLimiter:       limiter,
 		ResponseLimit:       int64(cfg.Upstreams.MaxResponseLimit()),
+		Logger:              o.logger,
 	}
 
 	// Only assign the vault once it is known to be there. o.vault is a concrete

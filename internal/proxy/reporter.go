@@ -28,6 +28,7 @@ type (
 		skipped    *prometheus.CounterVec
 		unbound    *prometheus.CounterVec
 		mismatches *prometheus.CounterVec
+		nexusTasks *prometheus.CounterVec
 	}
 
 	// CompressionReporter records compression telemetry to Prometheus: each
@@ -87,6 +88,11 @@ func NewReporter(f *metrics.Factory, opts ...ReporterOption) *Reporter {
 	r.mismatches = f.NewCounter(prometheus.CounterOpts{
 		Name: "vault_namespace_mismatches_total",
 		Help: "Total payloads handed to decrypt that are bound to a namespace other than the request's, whatever the outcome, labeled by namespace.",
+	}, append([]string{"namespace"}, r.labels.Names()...))
+
+	r.nexusTasks = f.NewCounter(prometheus.CounterOpts{
+		Name: "nexus_tasks_without_failure_support_total",
+		Help: "Total Nexus tasks polled without the temporal_failure_responses capability, whose failures no codec can seal, labeled by namespace.",
 	}, append([]string{"namespace"}, r.labels.Names()...))
 
 	return r
@@ -175,6 +181,14 @@ func (r *Reporter) UnboundOpen(ctx context.Context, namespace string) {
 func (r *Reporter) NamespaceMismatch(ctx context.Context, namespace string) {
 	labels := r.labels.AppendValues(ctx, nil)
 	r.mismatches.WithLabelValues(append([]string{r.nsLabel(namespace)}, labels...)...).Inc()
+}
+
+// NexusTaskWithoutFailureSupport records one Nexus task polled without the
+// temporal_failure_responses capability. Its Worker returns a failure in the
+// legacy nexus.Failure shape, whose details no codec can see.
+func (r *Reporter) NexusTaskWithoutFailureSupport(ctx context.Context, namespace string) {
+	labels := r.labels.AppendValues(ctx, nil)
+	r.nexusTasks.WithLabelValues(append([]string{r.nsLabel(namespace)}, labels...)...).Inc()
 }
 
 // Op records one payload compressed or decompressed and how long it took. As

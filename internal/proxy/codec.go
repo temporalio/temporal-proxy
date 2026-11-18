@@ -20,6 +20,7 @@ import (
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/transport/meta"
 	"go.temporal.io/proxy/pkg/codec"
+	"go.temporal.io/proxy/pkg/logger"
 )
 
 type (
@@ -70,6 +71,12 @@ type (
 		// a response that reaches the interceptor without a budget already open
 		// (see [DecodeLimiter.Open]). It is required.
 		ResponseLimit int64
+
+		// Logger receives a warning, once per namespace, when Encrypt is on and a
+		// Worker polls a Nexus task whose failures no codec can seal (see
+		// [LegacyNexusFailureWarning]). Nil logs nothing; Reporter still counts
+		// each one.
+		Logger logger.Logger
 	}
 
 	// Codecs is the chain payloads travel through in both directions. It is the
@@ -84,6 +91,10 @@ type (
 		outboundLimit   int
 		encodeFailures  bool
 		restoreFailures bool
+
+		// nexusWatch notices Nexus tasks whose failures bypass the codecs. It is
+		// nil unless Encrypt is on, since otherwise there is nothing to bypass.
+		nexusWatch *nexusFailureWatch
 	}
 
 	// InterceptorOption configures one [Codecs.Interceptor].
@@ -177,6 +188,10 @@ func NewCodecs(opts CodecOptions) (*Codecs, error) {
 		responseLimit:   opts.ResponseLimit,
 		encodeFailures:  opts.EncodeFailures,
 		restoreFailures: opts.Vault != nil,
+	}
+
+	if opts.Encrypt {
+		c.nexusWatch = &nexusFailureWatch{reporter: opts.Reporter, log: opts.Logger}
 	}
 
 	c.inbound = append(c.inbound, cmp.decode)
@@ -277,20 +292,24 @@ func (c *Codecs) Interceptor(opts ...InterceptorOption) (grpc.UnaryClientInterce
 		return nil, err
 	}
 
-	payloads = chainUnary(c.openBudget, payloads)
-	if !c.encodeFailures && !c.restoreFailures {
-		return payloads, nil
+	chain := chainUnary(c.openBudget, payloads)
+	if c.encodeFailures || c.restoreFailures {
+		failures, err := proxy.NewFailureVisitorInterceptor(proxy.FailureVisitorInterceptorOptions{
+			Inbound:  visitFailures(c.restoreFailures, codec.RestoreFailure),
+			Outbound: visitFailures(true, c.sendFailure),
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		chain = chainUnary(failures, chain)
 	}
 
-	failures, err := proxy.NewFailureVisitorInterceptor(proxy.FailureVisitorInterceptorOptions{
-		Inbound:  visitFailures(c.restoreFailures, codec.RestoreFailure),
-		Outbound: visitFailures(true, c.sendFailure),
-	})
-	if err != nil {
-		return nil, err
+	if c.nexusWatch != nil {
+		chain = chainUnary(c.nexusWatch.intercept, chain)
 	}
 
-	return chainUnary(failures, payloads), nil
+	return chain, nil
 }
 
 // Decode runs payloads through the inbound chain, the same chain
