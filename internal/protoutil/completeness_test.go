@@ -60,18 +60,18 @@ func TestRuleSetCoversServices(t *testing.T) {
 
 	require.Empty(t, offenders,
 		"these string fields look like namespace names but the rule set does not classify them; "+
-			"either extend the suffix rule / namespaceNameOverrides, or confirm they are not namespaces:\n%s",
+			"either extend the suffix rule / fieldWriters, or confirm they are not namespaces:\n%s",
 		strings.Join(offenders, "\n"))
 }
 
 // suspiciousButUnclassified reports whether fd looks like it could carry a
-// namespace name yet isNamespaceName does not translate it. A string field is
+// namespace name yet no fieldWriter translates it. A string field is
 // suspicious when its name mentions "namespace" (but is not a "*namespace_id"
 // UUID) or when it is named "name" on a message type whose own name mentions
 // "Namespace". Any such field must be either translated by the rule set or added
 // to an explicit, reviewed exclusion.
 func suspiciousButUnclassified(md protoreflect.MessageDescriptor, fd protoreflect.FieldDescriptor) bool {
-	if fd.Kind() != protoreflect.StringKind || isNamespaceName(md, fd) {
+	if fd.Kind() != protoreflect.StringKind || writerFor(md, fd) != nil {
 		return false
 	}
 
