@@ -20,6 +20,7 @@ import (
 	"go.temporal.io/proxy/internal/dataplane"
 	"go.temporal.io/proxy/internal/metrics"
 	"go.temporal.io/proxy/internal/protoutil"
+	"go.temporal.io/proxy/internal/proxy"
 	"go.temporal.io/proxy/internal/transport/connect"
 	"go.temporal.io/proxy/internal/transport/creds"
 	"go.temporal.io/proxy/pkg/codec"
@@ -109,11 +110,12 @@ func TestNewCompressesWithConfiguredSettings(t *testing.T) {
 		Default: &config.CompressionPolicy{Algorithm: config.CompressionLZ4, MinBytes: new(0)},
 	}
 
-	dp, err := newPlane(t, newTestDeps(t, cfg))
+	var codecs *proxy.Codecs
+	_, err := newPlane(t, newTestDeps(t, cfg), fx.Populate(&codecs))
 	require.NoError(t, err)
 
 	payload := &common.Payload{Data: bytes.Repeat([]byte("compressible "), 100)}
-	got, err := dp.Codecs().Encode(t.Context(), "orders", "orders", []*common.Payload{payload})
+	got, err := codecs.Encode(t.Context(), "orders", "orders", []*common.Payload{payload})
 	require.NoError(t, err)
 	require.Equal(t, "lz4", string(got[0].Metadata[codec.MetadataCompressionAlgorithm]))
 }

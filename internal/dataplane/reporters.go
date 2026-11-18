@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 
+	"go.uber.org/fx"
+
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/metrics"
 	"go.temporal.io/proxy/internal/proxy"
@@ -12,19 +14,22 @@ import (
 	"go.temporal.io/proxy/internal/services"
 )
 
-// reporters holds the metric reporters, each built once. A per-upstream build
-// would register the same Prometheus collectors twice and panic.
+// reporters provides each request-path metric reporter to the graph, each built
+// once. A per-upstream build would register the same Prometheus collectors twice
+// and panic. Encryption is nil when no encryption keys are configured.
 type reporters struct {
-	router      *router.Reporter
-	server      *server.Reporter
-	encryption  *proxy.Reporter
-	compression *proxy.CompressionReporter
+	fx.Out
+
+	Router      *router.Reporter
+	Server      *server.Reporter
+	Encryption  *proxy.Reporter
+	Compression *proxy.CompressionReporter
 }
 
 // newReporters builds every reporter against f. Prometheus panics rather than
 // erring on a duplicate registration, so recover and return an error: two
 // dataplanes over one registry is a caller mistake, not a reason to die.
-func newReporters(f *metrics.Factory, c *config.Config, encryption bool) (r *reporters, err error) {
+func newReporters(f *metrics.Factory, c *config.Config, encryption bool) (r reporters, err error) {
 	defer func() {
 		rec := recover()
 		if rec == nil {
@@ -44,7 +49,7 @@ func newReporters(f *metrics.Factory, c *config.Config, encryption bool) (r *rep
 		// duplicate variable label, a fixed one a constant that clashes with a
 		// variable. Neither is checkable in config without knowing every
 		// collector's label set, so the message names the key instead.
-		r, err = nil, fmt.Errorf(
+		r, err = reporters{}, fmt.Errorf(
 			"dataplane: registering metrics panicked, is another dataplane using this "+
 				"registry, or a configured metrics.labels entry colliding with a collector's "+
 				"own label: %w", cause,
@@ -67,7 +72,7 @@ func newReporters(f *metrics.Factory, c *config.Config, encryption bool) (r *rep
 	// as unknown: the label must not take arbitrary caller input.
 	methods, err := services.Methods(services.All()...)
 	if err != nil {
-		return nil, fmt.Errorf("dataplane: listing forwardable methods: %w", err)
+		return reporters{}, fmt.Errorf("dataplane: listing forwardable methods: %w", err)
 	}
 
 	reqLabels := []proxy.ReporterOption{
@@ -77,14 +82,14 @@ func newReporters(f *metrics.Factory, c *config.Config, encryption bool) (r *rep
 
 	// Compression is always reported, since payloads are always restored whether
 	// or not compression is on.
-	out := &reporters{
-		router:      router.NewReporter(f.ForSubsystem("router"), names, labels),
-		server:      server.NewReporter(f.ForSubsystem("server"), labels, methods),
-		compression: proxy.NewCompressionReporter(f.ForSubsystem("compression"), reqLabels...),
+	out := reporters{
+		Router:      router.NewReporter(f.ForSubsystem("router"), names, labels),
+		Server:      server.NewReporter(f.ForSubsystem("server"), labels, methods),
+		Compression: proxy.NewCompressionReporter(f.ForSubsystem("compression"), reqLabels...),
 	}
 
 	if encryption {
-		out.encryption = proxy.NewReporter(f.ForSubsystem("encryption"), reqLabels...)
+		out.Encryption = proxy.NewReporter(f.ForSubsystem("encryption"), reqLabels...)
 	}
 
 	return out, nil
