@@ -17,8 +17,8 @@ import (
 	"go.temporal.io/proxy/internal/app"
 	"go.temporal.io/proxy/internal/auth"
 	"go.temporal.io/proxy/internal/config"
-	"go.temporal.io/proxy/internal/dataplane"
 	"go.temporal.io/proxy/internal/httpserver"
+	"go.temporal.io/proxy/internal/server"
 	"go.temporal.io/proxy/internal/services"
 	"go.temporal.io/proxy/pkg/logger"
 )
@@ -42,7 +42,7 @@ const (
 // stops when the test ends.
 type Fixture struct {
 	t          *testing.T
-	dp         *dataplane.Dataplane
+	dp         *server.Server
 	conn       *grpc.ClientConn
 	reg        prometheus.Gatherer
 	httpServer *httpserver.Server
@@ -115,7 +115,7 @@ func Start(t *testing.T, cfg *config.Config, opts ...Option) *Fixture {
 	// shared registry would fail the second parallel test to build a plane.
 	reg := prometheus.NewRegistry()
 
-	var dp *dataplane.Dataplane
+	var dp *server.Server
 	var httpSvr *httpserver.Server
 	a := app.New(app.Inputs{
 		Context:  t.Context(),
@@ -195,7 +195,7 @@ func setTestDefaults(cfg *config.Config) {
 // nothing until the first request. httpSvr is nil when the configuration
 // enabled no route group.
 func newFixture(
-	t *testing.T, dp *dataplane.Dataplane, reg prometheus.Gatherer, httpSvr *httpserver.Server,
+	t *testing.T, dp *server.Server, reg prometheus.Gatherer, httpSvr *httpserver.Server,
 ) *Fixture {
 	t.Helper()
 

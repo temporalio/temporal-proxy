@@ -1,6 +1,7 @@
 package dataplane
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -22,8 +23,8 @@ import (
 
 type (
 	// upstreams is every configured upstream, built: the handler the gateway
-	// routes each one's streams to, by upstream name, and the connections to open
-	// before serving.
+	// routes each one's streams to, by upstream name, and the connections opened
+	// before it serves.
 	upstreams struct {
 		handlers map[string]grpc.StreamHandler
 
@@ -36,6 +37,7 @@ type (
 	// nil, which leaves every credential with the material it loaded first.
 	upstreamParams struct {
 		fx.In
+		Lifecycle fx.Lifecycle
 
 		Config     *config.Config
 		Translator *protoutil.Translator
@@ -49,7 +51,11 @@ type (
 )
 
 // newUpstreams builds a forwarder for every configured upstream. It creates each
-// connection but opens none: the Dataplane opens the static ones on Start.
+// connection here and opens the static ones when the application starts. gRPC
+// does not open a socket until a connection is used, so opening them is what
+// makes an unreachable upstream fail startup. The gateway is built from these
+// upstreams, so its start hook is appended after this one and binds only once
+// they are open.
 func newUpstreams(p upstreamParams) (*upstreams, error) {
 	cfg := p.Config
 
@@ -79,6 +85,14 @@ func newUpstreams(p upstreamParams) (*upstreams, error) {
 		// accepted.
 		out.handlers[up.Name] = fw.Handle
 	}
+
+	p.Lifecycle.Append(fx.StartHook(func(ctx context.Context) error {
+		if err := connect.WaitReady(ctx, out.ready...); err != nil {
+			return fmt.Errorf("upstream connection not ready: %w", err)
+		}
+
+		return nil
+	}))
 
 	return out, nil
 }

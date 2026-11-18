@@ -439,7 +439,7 @@ func TestRealServerRejectionLogsAtWarn(t *testing.T) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
-	go func() { _ = svr.Start(t.Context(), lis) }()
+	go func() { _ = svr.Serve(t.Context(), lis) }()
 	t.Cleanup(func() { require.NoError(t, svr.Stop(context.WithoutCancel(t.Context()))) })
 
 	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -468,7 +468,7 @@ func startLoopbackServer(t *testing.T, opts ...Option) *Server {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
-	go func() { _ = svr.Start(t.Context(), lis) }()
+	go func() { _ = svr.Serve(t.Context(), lis) }()
 	t.Cleanup(func() { require.NoError(t, svr.Stop(context.WithoutCancel(t.Context()))) })
 
 	return svr
