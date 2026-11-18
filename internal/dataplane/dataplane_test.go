@@ -12,6 +12,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/common/v1"
+	"go.uber.org/fx"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"go.temporal.io/proxy/internal/auth"
@@ -19,16 +20,15 @@ import (
 	"go.temporal.io/proxy/internal/dataplane"
 	"go.temporal.io/proxy/internal/metrics"
 	"go.temporal.io/proxy/internal/protoutil"
-	"go.temporal.io/proxy/internal/services"
 	"go.temporal.io/proxy/internal/transport/connect"
+	"go.temporal.io/proxy/internal/transport/creds"
 	"go.temporal.io/proxy/pkg/codec"
 	"go.temporal.io/proxy/pkg/crypto"
 	"go.temporal.io/proxy/pkg/logger"
 )
 
 // testDeps are the collaborators a [dataplane.Dataplane] is built from, held as
-// values so both construction paths this package tests draw on one source: the
-// options [dataplane.New] takes, and what testGraph supplies to fx.
+// values so a test can replace one before testGraph supplies them to fx.
 type testDeps struct {
 	ctx        context.Context
 	cfg        *config.Config
@@ -36,9 +36,9 @@ type testDeps struct {
 	translator *protoutil.Translator
 	pool       *connect.Pool
 	metrics    *metrics.Factory
-	allowlist  services.Allowlist
 	auth       auth.Authenticator
 	vault      *crypto.Vault
+	reloader   *creds.Reloader
 	logger     logger.Logger
 }
 
@@ -47,58 +47,10 @@ func TestNew(t *testing.T) {
 
 	cfg := testConfig()
 
-	dp, err := dataplane.New(t.Context(), cfg, newTestDeps(t, cfg).opts()...)
+	dp, err := newPlane(t, newTestDeps(t, cfg))
 	require.NoError(t, err)
 	require.NotNil(t, dp)
-	require.Nil(t, dp.Addr(), "New binds nothing, so there is no address yet")
-}
-
-func TestNewRejectsMissingContextOrConfig(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ctx", func(t *testing.T) {
-		t.Parallel()
-
-		cfg := testConfig()
-
-		// A typed nil rather than an untyped one: staticcheck rejects passing a
-		// literal nil where a context is expected, which is the mistake under test.
-		var ctx context.Context
-
-		_, err := dataplane.New(ctx, cfg, newTestDeps(t, cfg).opts()...)
-		require.ErrorContains(t, err, "ctx is required")
-	})
-
-	t.Run("cfg", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := dataplane.New(t.Context(), nil, newTestDeps(t, testConfig()).opts()...)
-		require.ErrorContains(t, err, "cfg is required")
-	})
-}
-
-func TestNewRejectsMissingRequiredOption(t *testing.T) {
-	t.Parallel()
-
-	// The names New reports, which double as the required set: every option here
-	// must be supplied even though the signature cannot enforce it.
-	for _, name := range []string{
-		"WithExtractor",
-		"WithTranslator",
-		"WithPool",
-		"WithMetrics",
-		"WithAllowlist",
-		"WithAuth",
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			cfg := testConfig()
-
-			_, err := dataplane.New(t.Context(), cfg, newTestDeps(t, cfg).opts(name)...)
-			require.ErrorContains(t, err, name)
-		})
-	}
+	require.Nil(t, dp.Addr(), "building the plane binds nothing, so there is no address yet")
 }
 
 func TestNewRejectsInvalidConfig(t *testing.T) {
@@ -107,7 +59,7 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 	cfg := testConfig()
 	cfg.Routing.DefaultUpstream = "nope"
 
-	_, err := dataplane.New(t.Context(), cfg, newTestDeps(t, cfg).opts()...)
+	_, err := newPlane(t, newTestDeps(t, cfg))
 	require.ErrorContains(t, err, "nope")
 }
 
@@ -139,7 +91,7 @@ func TestNewRejectsConfiguredKeysWithoutVault(t *testing.T) {
 				NamespaceBinding: config.NamespaceBindingStrict,
 			}
 
-			_, err := dataplane.New(t.Context(), cfg, newTestDeps(t, cfg).opts()...)
+			_, err := newPlane(t, newTestDeps(t, cfg))
 			require.ErrorContains(t, err, "no vault was provided")
 		})
 	}
@@ -147,7 +99,7 @@ func TestNewRejectsConfiguredKeysWithoutVault(t *testing.T) {
 
 // TestNewCompressesWithConfiguredSettings shows the compression block reaches
 // the chain every upstream and the codec server apply. Leaving it out of the
-// codec options New builds fails it.
+// codec options the plane builds fails it.
 func TestNewCompressesWithConfiguredSettings(t *testing.T) {
 	t.Parallel()
 
@@ -157,7 +109,7 @@ func TestNewCompressesWithConfiguredSettings(t *testing.T) {
 		Default: &config.CompressionPolicy{Algorithm: config.CompressionLZ4, MinBytes: new(0)},
 	}
 
-	dp, err := dataplane.New(t.Context(), cfg, newTestDeps(t, cfg).opts()...)
+	dp, err := newPlane(t, newTestDeps(t, cfg))
 	require.NoError(t, err)
 
 	payload := &common.Payload{Data: bytes.Repeat([]byte("compressible "), 100)}
@@ -177,7 +129,7 @@ func TestNewRejectsAMetadataLabelCollidingWithACollectorsOwn(t *testing.T) {
 	cfg.Metrics.Labels.Metadata = []config.MetricLabel{{Header: "x-method", Name: "method"}}
 
 	deps := newTestDeps(t, cfg)
-	_, err := dataplane.New(deps.ctx, deps.cfg, deps.opts()...)
+	_, err := newPlane(t, deps)
 	require.ErrorContains(t, err, "metrics.labels entry colliding with a collector's own label")
 }
 
@@ -195,7 +147,7 @@ func TestNewRejectsAFixedLabelCollidingWithACollectorsOwn(t *testing.T) {
 		metrics.WithFixedLabels(prometheus.NewRegistry(), cfg.Metrics.Labels.Fixed),
 	))
 
-	_, err := dataplane.New(deps.ctx, deps.cfg, deps.opts()...)
+	_, err := newPlane(t, deps)
 	require.ErrorContains(t, err, "metrics.labels entry colliding with a collector's own label")
 }
 
@@ -227,12 +179,12 @@ func TestNewTwiceOverOneMetricsFactoryDoesNotPanic(t *testing.T) {
 
 			first := newTestDeps(t, testConfig())
 			first.metrics = f
-			_, err := dataplane.New(first.ctx, first.cfg, first.opts()...)
+			_, err := newPlane(t, first)
 			require.NoError(t, err)
 
 			second := newTestDeps(t, testConfig())
 			second.metrics = f
-			_, err = dataplane.New(second.ctx, second.cfg, second.opts()...)
+			_, err = newPlane(t, second)
 			require.ErrorContains(
 				t,
 				err,
@@ -272,37 +224,11 @@ func TestNewWarnsWhenSkipEncodingsHasNoKeys(t *testing.T) {
 			deps := newTestDeps(t, cfg)
 			deps.logger = log
 
-			_, err := dataplane.New(deps.ctx, cfg, deps.opts()...)
+			_, err := newPlane(t, deps)
 			require.NoError(t, err)
 			require.Equal(t, tc.wantWarn, log.Contains(skipEncodingsUnusedWarning))
 		})
 	}
-}
-
-// opts returns d as the options [dataplane.New] takes, less any named in omit,
-// so a caller can prove New reports one as missing. Names are the ones New
-// reports.
-func (d testDeps) opts(omit ...string) []dataplane.Option {
-	all := map[string]dataplane.Option{
-		"WithExtractor":  dataplane.WithExtractor(d.extractor),
-		"WithTranslator": dataplane.WithTranslator(d.translator),
-		"WithPool":       dataplane.WithPool(d.pool),
-		"WithMetrics":    dataplane.WithMetrics(d.metrics),
-		"WithAllowlist":  dataplane.WithAllowlist(d.allowlist),
-		"WithAuth":       dataplane.WithAuth(d.auth),
-		"WithVault":      dataplane.WithVault(d.vault),
-		"WithLogger":     dataplane.WithLogger(d.logger),
-	}
-	for _, name := range omit {
-		delete(all, name)
-	}
-
-	opts := make([]dataplane.Option, 0, len(all))
-	for _, opt := range all {
-		opts = append(opts, opt)
-	}
-
-	return opts
 }
 
 // testConfig is a minimal valid configuration: one gateway listener and one
@@ -321,8 +247,8 @@ func testConfig() *config.Config {
 }
 
 // newTestDeps builds every dependency a [dataplane.Dataplane] needs, each scoped
-// to this test. Callers override a field before calling opts, and reach for
-// append only for an option no construction path shares.
+// to this test. Callers override a field before building the plane. Reloader is
+// nil, so no credential reloads unless a test supplies one and starts it.
 func newTestDeps(t *testing.T, cfg *config.Config) testDeps {
 	t.Helper()
 
@@ -336,10 +262,49 @@ func newTestDeps(t *testing.T, cfg *config.Config) testDeps {
 		translator: protoutil.NewTranslator(protoregistry.GlobalFiles),
 		pool:       pool,
 		metrics:    metrics.New("test", promauto.With(prometheus.NewRegistry())),
-		allowlist:  config.NewAllowlist(cfg),
 		auth:       auth.AdmitAll(),
 		logger:     logger.NewTestLogger(),
 	}
+}
+
+// testGraph supplies every dependency dataplane.Module needs from d. The config
+// goes through config.Supply, as it does in the application, so it is prepared
+// and the allowlist is derived from it.
+func testGraph(d testDeps) fx.Option {
+	return fx.Options(
+		fx.Supply(fx.Annotate(d.ctx, fx.As(new(context.Context)))),
+		config.Supply(d.cfg),
+		fx.Supply(
+			d.extractor,
+			d.translator,
+			fx.Annotate(protoregistry.GlobalTypes, fx.As(new(protoutil.Types))),
+			d.pool,
+			d.metrics,
+			fx.Annotate(d.auth, fx.As(new(auth.Authenticator))),
+			fx.Annotate(d.logger, fx.As(new(logger.Logger))),
+			d.vault,
+			d.reloader,
+		),
+	)
+}
+
+// newPlane builds a Dataplane from d through dataplane.Module, with extra
+// applied last for fx.Decorate and fx.Replace. The application is never started,
+// so the caller drives Start and Stop on the plane itself.
+func newPlane(t *testing.T, d testDeps, extra ...fx.Option) (*dataplane.Dataplane, error) {
+	t.Helper()
+
+	var dp *dataplane.Dataplane
+
+	app := fx.New(
+		testGraph(d),
+		dataplane.Module,
+		fx.Populate(&dp),
+		fx.NopLogger,
+		fx.Options(extra...),
+	)
+
+	return dp, app.Err()
 }
 
 // testingKeyURL builds a key URI the config validator accepts without reaching
@@ -354,13 +319,13 @@ func testingKeyURL(t *testing.T) url.URL {
 	return *u
 }
 
-// cloudAPIUnusedWarning is the message New logs for a Cloud API override no
+// cloudAPIUnusedWarning is the message the plane logs for a Cloud API override no
 // upstream can use. TestLogger matches an entry's message in full, so it is
 // spelled once here rather than approximated at each assertion.
 const cloudAPIUnusedWarning = "apiTranslations is configured but no upstream is Temporal Cloud, so no method " +
 	"will be translated"
 
-// skipEncodingsUnusedWarning is the message New logs for a skip list with no
+// skipEncodingsUnusedWarning is the message the plane logs for a skip list with no
 // encryption codec to act on.
 const skipEncodingsUnusedWarning = "encryption.skipEncodings is set but no encryption keys are configured, so it " +
 	"has no effect"
@@ -390,7 +355,7 @@ func TestNewWarnsWhenCloudAPIHasNoCloudUpstream(t *testing.T) {
 	deps := newTestDeps(t, cfg)
 	deps.logger = log
 
-	_, err := dataplane.New(deps.ctx, cfg, deps.opts()...)
+	_, err := newPlane(t, deps)
 	require.NoError(t, err)
 
 	require.True(t, log.Contains(cloudAPIUnusedWarning),
@@ -410,7 +375,7 @@ func TestNewIsQuietWhenTheOverrideSaysNothing(t *testing.T) {
 	deps := newTestDeps(t, cfg)
 	deps.logger = log
 
-	_, err := dataplane.New(deps.ctx, cfg, deps.opts()...)
+	_, err := newPlane(t, deps)
 	require.NoError(t, err)
 
 	require.False(t, log.Contains(cloudAPIUnusedWarning))
@@ -439,7 +404,7 @@ func TestNewIsQuietWhenTheCloudUpstreamServesNoNamespacelessRequests(t *testing.
 	deps := newTestDeps(t, cfg)
 	deps.logger = log
 
-	_, err := dataplane.New(deps.ctx, cfg, deps.opts()...)
+	_, err := newPlane(t, deps)
 	require.NoError(t, err)
 
 	require.False(t, log.Contains(cloudAPIUnusedWarning),
@@ -459,7 +424,7 @@ func TestNewIsQuietWhenCloudAPIHasACloudUpstream(t *testing.T) {
 	deps := newTestDeps(t, cfg)
 	deps.logger = log
 
-	_, err := dataplane.New(deps.ctx, cfg, deps.opts()...)
+	_, err := newPlane(t, deps)
 	require.NoError(t, err)
 
 	require.False(t, log.Contains(cloudAPIUnusedWarning))

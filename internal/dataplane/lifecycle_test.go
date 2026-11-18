@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/fx"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -48,7 +49,7 @@ func TestStartFailsOnUnreachableStaticUpstream(t *testing.T) {
 	cfg := liveConfig(t)
 	cfg.Upstreams[0].Listen.HostPort = dataplanetest.DeadUpstream(t)
 
-	dp, err := dataplane.New(t.Context(), cfg, newTestDeps(t, cfg).opts()...)
+	dp, err := newPlane(t, newTestDeps(t, cfg))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = dp.Stop(context.WithoutCancel(t.Context())) })
 
@@ -77,7 +78,7 @@ func TestStartFailsWhenTheGatewayPortIsTaken(t *testing.T) {
 	cfg = liveConfig(t)
 	cfg.Listen.HostPort = first.Addr().String()
 
-	second, err := dataplane.New(t.Context(), cfg, newTestDeps(t, cfg).opts()...)
+	second, err := newPlane(t, newTestDeps(t, cfg))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = second.Stop(context.WithoutCancel(t.Context())) })
 
@@ -103,8 +104,9 @@ func TestCleanShutdownDoesNotAbort(t *testing.T) {
 
 	cfg := liveConfig(t)
 	d := newTestDeps(t, cfg)
+	d.ctx = ctx
 
-	dp, err := dataplane.New(ctx, cfg, append(d.opts(), dataplane.WithAbort(func(err error) { aborts <- err }))...)
+	dp, err := newPlane(t, d, abortTo(aborts))
 	require.NoError(t, err)
 
 	startCtx, startCancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -128,7 +130,7 @@ func TestStopWithoutStart(t *testing.T) {
 	t.Parallel()
 
 	cfg := liveConfig(t)
-	dp, err := dataplane.New(t.Context(), cfg, newTestDeps(t, cfg).opts()...)
+	dp, err := newPlane(t, newTestDeps(t, cfg))
 	require.NoError(t, err)
 
 	require.NoError(t, dp.Stop(t.Context()), "Stop before Start has nothing to drain")
@@ -155,7 +157,7 @@ func TestStopClosesTheGateway(t *testing.T) {
 	t.Parallel()
 
 	cfg := liveConfig(t)
-	dp, err := dataplane.New(t.Context(), cfg, newTestDeps(t, cfg).opts()...)
+	dp, err := newPlane(t, newTestDeps(t, cfg))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -193,15 +195,15 @@ func liveConfig(t *testing.T) *config.Config {
 	return cfg
 }
 
-func startPlane(t *testing.T, d testDeps) *dataplane.Dataplane {
+func startPlane(t *testing.T, d testDeps, extra ...fx.Option) *dataplane.Dataplane {
 	t.Helper()
 
-	dp, err := dataplane.New(d.ctx, d.cfg, d.opts()...)
+	dp, err := newPlane(t, d, extra...)
 	require.NoError(t, err)
 
 	// startCtx is cancelled before this returns, so every caller goes on to use a
 	// plane whose startup context is dead. That is the point: it bounds startup
-	// only, and serving continues on the context New was given.
+	// only, and serving continues on the context the plane was built with.
 	startCtx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	require.NoError(t, dp.Start(startCtx))

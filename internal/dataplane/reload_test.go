@@ -23,7 +23,6 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"go.temporal.io/proxy/internal/config"
-	"go.temporal.io/proxy/internal/dataplane"
 	"go.temporal.io/proxy/internal/transport/creds"
 	"go.temporal.io/proxy/pkg/testutil"
 )
@@ -82,7 +81,8 @@ func TestNew_RegistersEveryTLSCredential(t *testing.T) {
 	r := creds.NewReloader(creds.WithReporter(rec))
 
 	deps := newTestDeps(t, cfg)
-	_, err := dataplane.New(deps.ctx, cfg, append(deps.opts(), dataplane.WithReloader(r))...)
+	deps.reloader = r
+	_, err := newPlane(t, deps)
 	require.NoError(t, err)
 
 	startReloader(t, r)
@@ -110,7 +110,8 @@ func TestGateway_PicksUpRotatedCertificate(t *testing.T) {
 	r := creds.NewReloader(creds.WithReloadInterval(50 * time.Millisecond))
 
 	deps := newTestDeps(t, cfg)
-	dp, err := dataplane.New(deps.ctx, cfg, append(deps.opts(), dataplane.WithReloader(r))...)
+	deps.reloader = r
+	dp, err := newPlane(t, deps)
 	require.NoError(t, err)
 
 	startReloader(t, r)

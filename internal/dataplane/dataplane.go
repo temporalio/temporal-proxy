@@ -10,22 +10,17 @@ import (
 	"sync"
 
 	"google.golang.org/grpc"
-	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"go.temporal.io/proxy/internal/auth"
 	"go.temporal.io/proxy/internal/auth/outbound"
 	"go.temporal.io/proxy/internal/cloud/translation"
 	"go.temporal.io/proxy/internal/config"
-	"go.temporal.io/proxy/internal/metrics"
-	"go.temporal.io/proxy/internal/protoutil"
 	"go.temporal.io/proxy/internal/proxy"
 	"go.temporal.io/proxy/internal/router"
 	"go.temporal.io/proxy/internal/server"
-	"go.temporal.io/proxy/internal/services"
 	"go.temporal.io/proxy/internal/transport/connect"
 	"go.temporal.io/proxy/internal/transport/creds"
 	"go.temporal.io/proxy/internal/version"
-	"go.temporal.io/proxy/pkg/crypto"
 	"go.temporal.io/proxy/pkg/logger"
 	"go.temporal.io/proxy/pkg/logger/tag"
 )
@@ -39,7 +34,7 @@ type (
 		hostPort  string
 		ready     []*connect.Conn
 		codecs    *proxy.Codecs
-		abort     func(error)
+		abort     Abort
 		abortOnce sync.Once
 		logger    logger.Logger
 
@@ -49,44 +44,22 @@ type (
 		stopping bool
 	}
 
-	// Option configures a [Dataplane] via [New].
-	Option func(*options)
-
-	options struct {
-		extractor  *protoutil.Extractor
-		translator *protoutil.Translator
-		types      protoutil.Types
-		pool       *connect.Pool
-		metrics    *metrics.Factory
-		allowlist  services.Allowlist
-		auth       auth.Authenticator
-		vault      *crypto.Vault
-		reloader   *creds.Reloader
-		logger     logger.Logger
-		abort      func(error)
-	}
+	// Abort is called at most once, from the goroutine that was serving, when the
+	// gateway stops for a reason other than Stop. It must not block and must not
+	// call back into the Dataplane. [Module] provides one that shuts the
+	// application down; replace it with fx.Decorate to observe the stop instead.
+	// A nil Abort drops the notification, leaving the log entry as the only record.
+	Abort func(error)
 )
 
-// New prepares cfg (see [config.Config.Prepare]), builds the routing mux from
-// the matchers that preparation compiled, and builds the gateway and a
-// per-upstream proxy for every upstream. ctx is long lived and drives the
-// gateway's health check; the context passed to Start bounds startup only.
-// Neither stops serving, which only Stop does. New binds nothing and dials
-// nothing. Every Prometheus collector is registered here, so New must be called
-// once per registry.
-func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, error) {
-	o := &options{logger: logger.Default(), types: protoregistry.GlobalTypes}
-	for _, opt := range opts {
-		opt(o)
-	}
-
-	if err := validate(ctx, cfg, o); err != nil {
-		return nil, err
-	}
-
-	if err := cfg.Prepare(); err != nil {
-		return nil, fmt.Errorf("invalid configuration: %w", err)
-	}
+// newDataplane builds the routing mux from the matchers config preparation
+// compiled, and builds the gateway and a per-upstream proxy for every upstream.
+// p.Context is long lived and drives the gateway's health check; the context
+// passed to Start bounds startup only. Neither stops serving, which only Stop
+// does. It binds nothing and dials nothing. Every Prometheus collector is
+// registered here, so it must run once per registry.
+func newDataplane(p Params) (*Dataplane, error) {
+	cfg := p.Config
 
 	// Encryption is a security control: if it is enabled, or keys are configured
 	// even while disabled for new traffic, but no vault reached the dataplane,
@@ -94,11 +67,11 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 	// opened, which is as dangerous as forwarding cleartext outbound. The check
 	// is on the concrete pointer, before any conversion to an interface, since a
 	// nil pointer in a non-nil interface would slip past it.
-	if (cfg.Encryption.Enabled || cfg.Encryption.Default != nil) && o.vault == nil {
+	if (cfg.Encryption.Enabled || cfg.Encryption.Default != nil) && p.Vault == nil {
 		return nil, errors.New("encryption is enabled or keys are configured, but no vault was provided")
 	}
 
-	reps, err := newReporters(o.metrics, cfg, o.vault != nil)
+	reps, err := newReporters(p.Metrics, cfg, p.Vault != nil)
 	if err != nil {
 		return nil, err
 	}
@@ -122,12 +95,12 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 		ResponseLimit:       int64(cfg.Upstreams.MaxResponseLimit()),
 	}
 
-	// Only assign the vault once it is known to be there. o.vault is a concrete
+	// Only assign the vault once it is known to be there. p.Vault is a concrete
 	// pointer and the field is an interface, so assigning unconditionally would
 	// hand over a non-nil interface holding a nil pointer, which reads as a vault
 	// being present and panics the first time a payload is opened.
-	if o.vault != nil {
-		codecOpts.Vault = o.vault
+	if p.Vault != nil {
+		codecOpts.Vault = p.Vault
 		codecOpts.Reporter = reps.encryption
 	}
 
@@ -142,29 +115,29 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 	// operator waiting for behaviour that cannot arrive, so say so rather than
 	// ignoring it silently.
 	if !cfg.APITranslations.CloudAPI.IsZero() && !translates(cfg) {
-		o.logger.Warn(
+		p.Logger.Warn(
 			"apiTranslations is configured but no upstream is Temporal Cloud, so no method will be translated",
 		)
 	}
 
 	// With no keys there is no encryption codec, so the list has nothing to skip.
-	if len(cfg.Encryption.SkipEncodings) > 0 && o.vault == nil {
-		o.logger.Warn("encryption.skipEncodings is set but no encryption keys are configured, so it has no effect")
+	if len(cfg.Encryption.SkipEncodings) > 0 && p.Vault == nil {
+		p.Logger.Warn("encryption.skipEncodings is set but no encryption keys are configured, so it has no effect")
 	}
 
 	dp := &Dataplane{
-		ctx:      ctx,
+		ctx:      p.Context,
 		hostPort: cfg.Listen.HostPort,
 		codecs:   codecs,
-		abort:    o.abort,
-		logger:   o.logger,
+		abort:    p.Abort,
+		logger:   p.Logger,
 	}
 
 	handlers := make(map[string]grpc.StreamHandler, len(cfg.Upstreams))
 	for i := range cfg.Upstreams {
 		up := &cfg.Upstreams[i]
 
-		fw, ready, err := newUpstreamForwarder(cfg, o, up, codecs, limiter)
+		fw, ready, err := newUpstreamForwarder(&p, up, codecs, limiter)
 		if err != nil {
 			return nil, err
 		}
@@ -179,27 +152,27 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 	}
 
 	handler := router.Handler(
-		router.NewDirector(mux, handlers, reps.router, o.logger),
-		o.allowlist,
+		router.NewDirector(mux, handlers, reps.router, p.Logger),
+		p.Allowlist,
 	)
 
 	gateway, err := server.New(
-		server.WithCredentials(cfg.Listen.Listener(creds.WithReloader(o.reloader, "gateway"))),
+		server.WithCredentials(cfg.Listen.Listener(creds.WithReloader(p.Reloader, "gateway"))),
 		server.WithServerCodec(router.Codec()),
 		// Health entries come from the allowlist, so what the gateway reports a
 		// status for is exactly what it will forward.
-		server.WithHealthServices(o.allowlist.ServiceNames()...),
+		server.WithHealthServices(p.Allowlist.ServiceNames()...),
 		server.WithLoopbackHealthCheck(cfg.Health.CheckInterval(), cfg.Health.CheckTimeout()),
 		server.WithStreamInterceptor(reps.server.StreamInterceptor()),
 		// Straight after the reporter, so a panic in any interceptor after it or in
 		// the handler is recovered and still recorded as an Internal request.
-		server.WithRecoveryHandler(o.logger, reps.server.Panic),
+		server.WithRecoveryHandler(p.Logger, reps.server.Panic),
 		// Ahead of authentication: it resolves what the request is addressing, and
 		// an authenticator decides on that as well as on the caller's credentials.
-		server.WithStreamInterceptor(router.PeekInterceptor(o.extractor, o.allowlist)),
-		server.WithStreamInterceptor(auth.StreamServerInterceptor(o.auth, o.logger)),
+		server.WithStreamInterceptor(router.PeekInterceptor(p.Extractor, p.Allowlist)),
+		server.WithStreamInterceptor(auth.StreamServerInterceptor(p.Auth, p.Logger)),
 		server.WithUnknownServiceHandler(handler),
-		server.WithLogger(o.logger),
+		server.WithLogger(p.Logger),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create server: %w", err)
@@ -208,83 +181,6 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Dataplane, e
 	dp.gateway = gateway
 
 	return dp, nil
-}
-
-// WithExtractor sets the extractor the gateway reads routing fields with.
-// Required.
-func WithExtractor(e *protoutil.Extractor) Option {
-	return Option(func(o *options) { o.extractor = e })
-}
-
-// WithTranslator sets the translator each upstream rewrites namespaces with.
-// Required.
-func WithTranslator(t *protoutil.Translator) Option {
-	return Option(func(o *options) { o.translator = t })
-}
-
-// WithProtoTypes sets the type registry messages are resolved against,
-// defaulting to [protoregistry.GlobalTypes]. A nil registry keeps the default,
-// so an absent optional dependency can be passed straight through.
-func WithProtoTypes(t protoutil.Types) Option {
-	return Option(func(o *options) {
-		if t != nil {
-			o.types = t
-		}
-	})
-}
-
-// WithPool sets the connection pool the dataplane creates upstream connections
-// from. The pool's lifecycle stays with the caller. Required.
-func WithPool(p *connect.Pool) Option {
-	return Option(func(o *options) { o.pool = p })
-}
-
-// WithMetrics sets the factory every collector is registered with. Required.
-func WithMetrics(f *metrics.Factory) Option {
-	return Option(func(o *options) { o.metrics = f })
-}
-
-// WithAllowlist sets the allowlist that decides which services may be
-// forwarded. Required.
-func WithAllowlist(a services.Allowlist) Option {
-	return Option(func(o *options) { o.allowlist = a })
-}
-
-// WithAuth sets the authenticator applied to inbound gateway requests.
-// Required.
-func WithAuth(a auth.Authenticator) Option {
-	return Option(func(o *options) { o.auth = a })
-}
-
-// WithVault sets the vault used to seal and open payloads. Omit it when no
-// encryption keys are configured; New rejects enabled encryption without one.
-func WithVault(v *crypto.Vault) Option {
-	return Option(func(o *options) { o.vault = v })
-}
-
-// WithReloader registers the TLS material of the gateway, every upstream, and
-// the Cloud API with r, so changed files are picked up without a restart. A nil
-// r, or omitting it, leaves every credential with the material it loaded first.
-func WithReloader(r *creds.Reloader) Option {
-	return Option(func(o *options) { o.reloader = r })
-}
-
-// WithLogger sets the logger used by the gateway and every upstream, defaulting
-// to [logger.Default]. A nil logger keeps the default, so an absent optional
-// dependency can be passed straight through.
-func WithLogger(log logger.Logger) Option {
-	return Option(func(o *options) {
-		if log != nil {
-			o.logger = log
-		}
-	})
-}
-
-// WithAbort sets a function called at most once, from the goroutine that was
-// serving, when the gateway stops for a reason other than Stop. It must not
-// block and must not call back into the Dataplane.
-func WithAbort(fn func(error)) Option {
-	return Option(func(o *options) { o.abort = fn })
 }
 
 // Addr is the address the gateway is accepting on, nil before Start.
@@ -301,39 +197,12 @@ func (d *Dataplane) Codecs() *proxy.Codecs {
 	return d.codecs
 }
 
-// validate reports the first required dependency that is missing, by field
-// name, so a wiring mistake fails at construction rather than as a nil
-// dereference on the first request.
-func validate(ctx context.Context, cfg *config.Config, o *options) error {
-	switch {
-	case ctx == nil:
-		return errors.New("dataplane: ctx is required")
-	case cfg == nil:
-		return errors.New("dataplane: cfg is required")
-	case o.extractor == nil:
-		return errors.New("dataplane: WithExtractor is required")
-	case o.translator == nil:
-		return errors.New("dataplane: WithTranslator is required")
-	case o.pool == nil:
-		return errors.New("dataplane: WithPool is required")
-	case o.metrics == nil:
-		return errors.New("dataplane: WithMetrics is required")
-	case o.allowlist == nil:
-		return errors.New("dataplane: WithAllowlist is required")
-	case o.auth == nil:
-		return errors.New("dataplane: WithAuth is required")
-	}
-
-	return nil
-}
-
 // newUpstreamForwarder builds one upstream's forwarder. It returns the
 // forwarder, the connection to open eagerly at start (nil for a templated
 // upstream, which resolves per request and has nothing to open yet), and any
 // error.
 func newUpstreamForwarder(
-	cfg *config.Config,
-	o *options,
+	p *Params,
 	up *config.Upstream,
 	codecs *proxy.Codecs,
 	limiter *proxy.DecodeLimiter,
@@ -343,7 +212,7 @@ func newUpstreamForwarder(
 	var dialOpts []grpc.DialOption
 	rules := &up.Namespaces.Rules
 	if rules.Configured() {
-		dialOpts = append(dialOpts, proxy.TranslationDialOptions(o.translator, rules.Remote, rules.Local)...)
+		dialOpts = append(dialOpts, proxy.TranslationDialOptions(p.Translator, rules.Remote, rules.Local)...)
 	}
 
 	// Cloud derives its endpoint and authorizes requests by the translated
@@ -357,7 +226,7 @@ func newUpstreamForwarder(
 	if up.IsCloud() {
 		dialOpts = append(dialOpts, proxy.CloudNamespaceDialOptions(
 			rules.Remote,
-			o.logger.With(tag.String("upstream", up.Name)),
+			p.Logger.With(tag.String("upstream", up.Name)),
 		)...)
 		dialOpts = append(dialOpts, proxy.VersionDialOptions(version.Version)...)
 	}
@@ -381,7 +250,7 @@ func newUpstreamForwarder(
 	// An upstream with bindingLabelsFrom takes the label from the named upstream's
 	// rules instead, while its requests are still translated with its own.
 	var codecOpts []proxy.InterceptorOption
-	if labels := cfg.Upstreams.BindingRules(up); labels.Configured() {
+	if labels := p.Config.Upstreams.BindingRules(up); labels.Configured() {
 		codecOpts = append(codecOpts, proxy.WithRemoteNamespace(labels.Remote))
 	}
 
@@ -404,7 +273,7 @@ func newUpstreamForwarder(
 	// and the payload codec above it then see the method and message types the
 	// caller asked for, and only the hop onto the wire carries the substitute.
 	if up.IsCloud() {
-		reg, conn, err := cloudAPIConn(cfg, o, up)
+		reg, conn, err := cloudAPIConn(p, up)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -412,12 +281,12 @@ func newUpstreamForwarder(
 		dialOpts = append(dialOpts, translation.DialOptions(reg, translation.Via(conn))...)
 	}
 
-	res, err := proxy.ResolverFor(up, dialOpts, o.logger, creds.WithReloader(o.reloader, "upstream/"+up.Name))
+	res, err := proxy.ResolverFor(up, dialOpts, p.Logger, creds.WithReloader(p.Reloader, "upstream/"+up.Name))
 	if err != nil {
 		return nil, nil, err
 	}
 
-	conn, err := connect.NewConn(o.pool.Scoped("upstream/"+up.Name), res, connect.WithConnections(up.Connection.PoolSize(up.IsTemplated())))
+	conn, err := connect.NewConn(p.Pool.Scoped("upstream/"+up.Name), res, connect.WithConnections(up.Connection.PoolSize(up.IsTemplated())))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -426,7 +295,7 @@ func newUpstreamForwarder(
 	// interceptor decodes it, since the caller is still reading it until then.
 	fw, err := proxy.NewForwarder(
 		conn,
-		proxy.WithProtoTypes(o.types),
+		proxy.WithProtoTypes(p.Types),
 		proxy.WithDecodeBudget(limiter, int64(up.Connection.ResponseLimit())),
 	)
 	if err != nil {
@@ -459,13 +328,13 @@ func translates(cfg *config.Config) bool {
 // registered with the router; only a translation reaches it. It is not opened
 // eagerly, so an unreachable control plane does not stop the proxy serving
 // everything else.
-func cloudAPIConn(cfg *config.Config, o *options, up *config.Upstream) (*translation.Registry, *connect.Conn, error) {
+func cloudAPIConn(p *Params, up *config.Upstream) (*translation.Registry, *connect.Conn, error) {
 	reg, err := translation.Default()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to build method translations: %w", err)
 	}
 
-	api, err := cfg.APITranslations.CloudAPI.Upstream(up)
+	api, err := p.Config.APITranslations.CloudAPI.Upstream(up)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -487,20 +356,20 @@ func cloudAPIConn(cfg *config.Config, o *options, up *config.Upstream) (*transla
 
 	// Every Cloud upstream renders the same Cloud API block, so they share one
 	// file set, and the reloader reads it once under this one id.
-	res, err := proxy.ResolverFor(api, dialOpts, o.logger, creds.WithReloader(o.reloader, "cloud_api"))
+	res, err := proxy.ResolverFor(api, dialOpts, p.Logger, creds.WithReloader(p.Reloader, "cloud_api"))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to resolve the Cloud API of upstream %q: %w", up.Name, err)
 	}
 
 	// A single connection, whatever maxConnections says: translated calls are
 	// short control-plane requests, not the long polls a pool spreads out.
-	conn, err := connect.NewConn(o.pool.Scoped("cloud_api/"+up.Name), res)
+	conn, err := connect.NewConn(p.Pool.Scoped("cloud_api/"+up.Name), res)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create the Cloud API client of upstream %q: %w", up.Name, err)
 	}
 
-	log := o.logger.With(tag.String("upstream", up.Name), tag.String("hostPort", api.Listen.HostPort))
-	if !cfg.APITranslations.CloudAPI.IsSaasAPI() {
+	log := p.Logger.With(tag.String("upstream", up.Name), tag.String("hostPort", api.Listen.HostPort))
+	if !p.Config.APITranslations.CloudAPI.IsSaasAPI() {
 		// Nothing but a Cloud deployment serves CloudService, but a test double or
 		// a private environment legitimately carries no Cloud domain, so this is
 		// reported rather than rejected.
