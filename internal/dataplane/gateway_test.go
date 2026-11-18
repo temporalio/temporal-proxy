@@ -19,7 +19,6 @@ import (
 
 	"go.temporal.io/proxy/internal/auth"
 	"go.temporal.io/proxy/internal/config"
-	"go.temporal.io/proxy/internal/dataplane"
 	"go.temporal.io/proxy/internal/metrics"
 	"go.temporal.io/proxy/internal/services"
 	"go.temporal.io/proxy/internal/transport/meta"
@@ -58,7 +57,7 @@ var echoDesc = grpc.ServiceDesc{
 // TestGatewayForwardsAnAllowedUnregisteredMethod drives a request through the
 // real gateway, over TCP, for a method the gateway itself never registers.
 // Reaching a correct response proves the router and the upstream's forwarder
-// are actually wired onto the server, not merely that a [Dataplane] and its
+// are actually wired onto the server, not merely that a gateway and its
 // upstream both exist.
 // targetRecorder is an Authenticator that admits every caller and records the
 // Target it was handed.
@@ -293,7 +292,7 @@ func serveEcho(t *testing.T) string {
 
 // dialGateway dials the plane's inbound gateway the way a real client would:
 // plaintext, since these tests never configure inbound TLS.
-func dialGateway(t *testing.T, dp *dataplane.Dataplane) *grpc.ClientConn {
+func dialGateway(t *testing.T, dp *plane) *grpc.ClientConn {
 	t.Helper()
 
 	conn, err := grpc.NewClient(dp.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))

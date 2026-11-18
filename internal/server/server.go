@@ -4,6 +4,8 @@ package server
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -51,12 +53,19 @@ type (
 		healthCheck     HealthCheck
 		healthServices  []string
 		shutdownTimeout time.Duration
+		hostPort        string
+		abort           func(error)
+		abortOnce       sync.Once
 
-		// mu guards logger and cancelFunc, which Start writes from its own
-		// goroutine while Stop reads them from the caller's goroutine.
+		// mu guards logger and cancelFunc, which Serve writes from its own
+		// goroutine while Stop reads them from the caller's goroutine, and the
+		// listener Start binds.
 		mu         sync.Mutex
 		cancelFunc context.CancelFunc
 		logger     logger.Logger
+		lis        net.Listener
+		addr       net.Addr
+		stopping   bool
 	}
 
 	// Credentials produces the [grpc.ServerOption] used to configure
@@ -75,6 +84,8 @@ type (
 	options struct {
 		creds              Credentials
 		healthCheck        HealthCheck
+		hostPort           string
+		abort              func(error)
 		loopback           *loopbackTimings
 		healthServices     []string
 		logger             logger.Logger
@@ -134,6 +145,8 @@ func New(sopts ...Option) (*Server, error) {
 		healthServices:  opts.healthServices,
 		logger:          opts.logger,
 		shutdownTimeout: opts.shutdownTimeout,
+		hostPort:        opts.hostPort,
+		abort:           opts.abort,
 	}
 
 	// Resolved last rather than inside an option, since both halves are built
@@ -150,6 +163,21 @@ func New(sopts ...Option) (*Server, error) {
 // WithCredentials sets the transport credentials used for inbound connections.
 func WithCredentials(creds Credentials) Option {
 	return optFunc(func(o *options) { o.creds = creds })
+}
+
+// WithHostPort sets the address [Server.Start] binds. Port zero picks a free
+// port, which [Server.Addr] then reports. Required by Start, and unused by
+// [Server.Serve], which is handed its listener.
+func WithHostPort(hostPort string) Option {
+	return optFunc(func(o *options) { o.hostPort = hostPort })
+}
+
+// WithAbort sets a function called at most once, from the serving goroutine,
+// when a server started with [Server.Start] stops serving for a reason other
+// than [Server.Stop]. It must not block and must not call back into the Server.
+// Without one, the log entry is the only record of the stop.
+func WithAbort(fn func(error)) Option {
+	return optFunc(func(o *options) { o.abort = fn })
 }
 
 // WithStreamInterceptor appends stream server interceptors. They are chained in
@@ -210,10 +238,62 @@ func WithShutdownTimeout(d time.Duration) Option {
 	return optFunc(func(o *options) { o.shutdownTimeout = max(minShutdownTimeout, d) })
 }
 
-// Start serves on lis and blocks until the server stops. It also kicks off
+// Start binds the [WithHostPort] address and serves on it in the background,
+// returning once the listener is accepting. ctx bounds the bind only: serving,
+// and the health check with it, continue until [Server.Stop]. A serving failure
+// after Start returns reaches the [WithAbort] function instead.
+//
+// Call it at most once, and not alongside [Server.Serve]. A Server is not
+// restartable after Stop.
+func (s *Server) Start(ctx context.Context) error {
+	if s.hostPort == "" {
+		return errors.New("server: Start requires WithHostPort")
+	}
+
+	lis, err := (&net.ListenConfig{}).Listen(ctx, "tcp", s.hostPort)
+	if err != nil {
+		return fmt.Errorf("failed to create listener: %w", err)
+	}
+
+	s.mu.Lock()
+	s.lis = lis
+	s.addr = lis.Addr()
+	s.mu.Unlock()
+
+	// Detached from ctx, which is a startup deadline: only Stop ends serving.
+	serveCtx := context.WithoutCancel(ctx)
+
+	go func() {
+		err := s.Serve(serveCtx, lis)
+
+		s.mu.Lock()
+		stopping := s.stopping
+		s.mu.Unlock()
+
+		// An error once Stop has begun is an ordinary shutdown race.
+		if err == nil || stopping || s.abort == nil {
+			return
+		}
+
+		s.abortOnce.Do(func() { s.abort(fmt.Errorf("gateway stopped serving: %w", err)) })
+	}()
+
+	return nil
+}
+
+// Addr is the address [Server.Start] bound, including the port chosen for port
+// zero, or nil before Start returns successfully. Safe for concurrent use.
+func (s *Server) Addr() net.Addr {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.addr
+}
+
+// Serve serves on lis and blocks until the server stops. It also kicks off
 // the periodic health check, which runs until ctx is cancelled or [Server.Stop]
 // is called.
-func (s *Server) Start(ctx context.Context, lis net.Listener) error {
+func (s *Server) Serve(ctx context.Context, lis net.Listener) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -255,13 +335,25 @@ func (s *Server) Start(ctx context.Context, lis net.Listener) error {
 // Stop shuts the server down, halting the health check loop and draining
 // in-flight RPCs. The drain is bounded by whichever expires first: the
 // [WithShutdownTimeout] budget or ctx. Past that, remaining calls are dropped.
+// It closes the listener [Server.Start] bound, even one Serve never reached.
 // It always returns nil; a forced shutdown is logged as a warning rather than
 // reported as an error.
 func (s *Server) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	log := s.logger
 	cancel := s.cancelFunc
+	lis := s.lis
+	s.lis = nil
+	s.stopping = true
 	s.mu.Unlock()
+
+	defer func() {
+		// A graceful stop closes the listener Serve was serving on, but one bound
+		// by a Start whose goroutine never reached Serve is not.
+		if lis != nil {
+			_ = lis.Close()
+		}
+	}()
 
 	log.Info("Shutting down")
 

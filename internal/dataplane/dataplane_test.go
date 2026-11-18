@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"net"
 	"net/url"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"go.temporal.io/proxy/internal/metrics"
 	"go.temporal.io/proxy/internal/protoutil"
 	"go.temporal.io/proxy/internal/proxy"
+	"go.temporal.io/proxy/internal/server"
 	"go.temporal.io/proxy/internal/transport/connect"
 	"go.temporal.io/proxy/internal/transport/creds"
 	"go.temporal.io/proxy/pkg/codec"
@@ -28,7 +30,7 @@ import (
 	"go.temporal.io/proxy/pkg/logger"
 )
 
-// testDeps are the collaborators a [dataplane.Dataplane] is built from, held as
+// testDeps are the collaborators the request path is built from, held as
 // values so a test can replace one before testGraph supplies them to fx.
 type testDeps struct {
 	ctx        context.Context
@@ -191,7 +193,7 @@ func TestNewTwiceOverOneMetricsFactoryDoesNotPanic(t *testing.T) {
 				t,
 				err,
 				"registering metrics panicked",
-				"a second Dataplane on one registry must fail cleanly, not panic",
+				"a second plane on one registry must fail cleanly, not panic",
 			)
 
 			var dup prometheus.AlreadyRegisteredError
@@ -248,7 +250,7 @@ func testConfig() *config.Config {
 	}
 }
 
-// newTestDeps builds every dependency a [dataplane.Dataplane] needs, each scoped
+// newTestDeps builds every dependency dataplane.Module needs, each scoped
 // to this test. Callers override a field before building the plane. Reloader is
 // nil, so no credential reloads unless a test supplies one and starts it.
 func newTestDeps(t *testing.T, cfg *config.Config) testDeps {
@@ -290,24 +292,39 @@ func testGraph(d testDeps) fx.Option {
 	)
 }
 
-// newPlane builds a Dataplane from d through dataplane.Module, with extra
-// applied last for fx.Decorate and fx.Replace. The application is never started,
-// so the caller drives Start and Stop on the plane itself.
-func newPlane(t *testing.T, d testDeps, extra ...fx.Option) (*dataplane.Dataplane, error) {
+// plane is the request path dataplane.Module assembles over testDeps: the
+// application, which opens the upstreams and serves the gateway on Start, and
+// the gateway itself, for its address.
+type plane struct {
+	app     *fx.App
+	gateway *server.Server
+}
+
+// newPlane builds the request path from d through dataplane.Module, with extra
+// applied last for fx.Decorate, fx.Replace and fx.Populate. Nothing is started.
+func newPlane(t *testing.T, d testDeps, extra ...fx.Option) (*plane, error) {
 	t.Helper()
 
-	var dp *dataplane.Dataplane
-
-	app := fx.New(
+	p := &plane{}
+	p.app = fx.New(
 		testGraph(d),
 		dataplane.Module,
-		fx.Populate(&dp),
+		fx.Populate(&p.gateway),
 		fx.NopLogger,
 		fx.Options(extra...),
 	)
 
-	return dp, app.Err()
+	return p, p.app.Err()
 }
+
+// Start opens the upstreams and starts the gateway, as the application does.
+func (p *plane) Start(ctx context.Context) error { return p.app.Start(ctx) }
+
+// Stop drains the gateway.
+func (p *plane) Stop(ctx context.Context) error { return p.app.Stop(ctx) }
+
+// Addr is the address the gateway is accepting on, nil before Start.
+func (p *plane) Addr() net.Addr { return p.gateway.Addr() }
 
 // testingKeyURL builds a key URI the config validator accepts without reaching
 // a real KMS.

@@ -432,7 +432,7 @@ func TestHandlerCoHostsLocalHealthWithForwarding(t *testing.T) {
 
 	relayLis := bufconn.Listen(1024 * 1024)
 	errCh := make(chan error, 1)
-	go func() { errCh <- svr.Start(t.Context(), relayLis) }()
+	go func() { errCh <- svr.Serve(t.Context(), relayLis) }()
 
 	relayConn := dialBufconn(t, relayLis)
 	t.Cleanup(func() { _ = relayConn.Close() })

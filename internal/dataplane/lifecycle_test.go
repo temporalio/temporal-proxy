@@ -13,7 +13,6 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"go.temporal.io/proxy/internal/config"
-	"go.temporal.io/proxy/internal/dataplane"
 	"go.temporal.io/proxy/internal/dataplane/dataplanetest"
 )
 
@@ -195,7 +194,7 @@ func liveConfig(t *testing.T) *config.Config {
 	return cfg
 }
 
-func startPlane(t *testing.T, d testDeps, extra ...fx.Option) *dataplane.Dataplane {
+func startPlane(t *testing.T, d testDeps, extra ...fx.Option) *plane {
 	t.Helper()
 
 	dp, err := newPlane(t, d, extra...)
