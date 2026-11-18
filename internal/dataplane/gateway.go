@@ -24,24 +24,18 @@ type gatewayParams struct {
 	Extractor      *protoutil.Extractor
 	Allowlist      services.Allowlist
 	Auth           auth.Authenticator
-	Upstreams      *upstreams
-	RouterReporter *router.Reporter
+	Director       router.Director
 	ServerReporter *server.Reporter
 	Reloader       *creds.Reloader
 	Logger         logger.Logger
 }
 
-// newGateway builds the inbound gateway: the routing mux from the matchers
-// config preparation compiled, directing each stream to its upstream's
-// forwarder, behind the interceptors every request passes. It binds nothing;
-// the Dataplane serves it on Start.
+// newGateway builds the inbound gateway: every request passes its interceptors,
+// and every method it does not serve itself goes to the Director, after a
+// service outside the allowlist is refused. It binds nothing; the Dataplane
+// serves it on Start.
 func newGateway(p gatewayParams) (*server.Server, error) {
 	cfg := p.Config
-
-	handler := router.Handler(
-		router.NewDirector(router.MuxFor(cfg.Routing), p.Upstreams.handlers, p.RouterReporter, p.Logger),
-		p.Allowlist,
-	)
 
 	gateway, err := server.New(
 		server.WithCredentials(cfg.Listen.Listener(creds.WithReloader(p.Reloader, "gateway"))),
@@ -58,7 +52,7 @@ func newGateway(p gatewayParams) (*server.Server, error) {
 		// an authenticator decides on that as well as on the caller's credentials.
 		server.WithStreamInterceptor(router.PeekInterceptor(p.Extractor, p.Allowlist)),
 		server.WithStreamInterceptor(auth.StreamServerInterceptor(p.Auth, p.Logger)),
-		server.WithUnknownServiceHandler(handler),
+		server.WithUnknownServiceHandler(router.Handler(p.Director, p.Allowlist)),
 		server.WithLogger(p.Logger),
 	)
 	if err != nil {
