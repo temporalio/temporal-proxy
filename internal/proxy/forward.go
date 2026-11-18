@@ -34,6 +34,9 @@ type (
 		cc      grpc.ClientConnInterface
 		methods sync.Map // fullName -> *methodInfo
 		types   protoutil.Types
+
+		limiter       *DecodeLimiter
+		responseLimit int64
 	}
 
 	// ForwarderOption configures a [Forwarder] at construction time.
@@ -77,6 +80,18 @@ func WithProtoTypes(t protoutil.Types) ForwarderOption {
 	}
 }
 
+// WithDecodeBudget opens a budget from l, of limit decoded bytes, for each
+// unary call, and holds it until the response has been sent rather than only
+// while it is decoded, since the caller is still reading it until then.
+// Without it, the codec interceptor on cc opens its own (see
+// [DecodeLimiter.Open]), which releases the bytes before they are sent.
+func WithDecodeBudget(l *DecodeLimiter, limit int64) ForwarderOption {
+	return func(f *Forwarder) {
+		f.limiter = l
+		f.responseLimit = limit
+	}
+}
+
 // Handle forwards one stream to the upstream. Only methods present in the
 // compiled descriptors can be forwarded; anything else is rejected with
 // Unimplemented before any upstream work.
@@ -108,6 +123,12 @@ func (f *Forwarder) unary(ctx context.Context, method string, mi *methodInfo, ss
 		// io.EOF here means the caller half-closed without sending a request, which
 		// is a client error rather than a clean end of stream.
 		return rpc.StatusError("proxy: reading the request failed", err)
+	}
+
+	if f.limiter != nil {
+		var release func()
+		ctx, release = f.limiter.Open(ctx, f.responseLimit)
+		defer release()
 	}
 
 	// Invoke discards the upstream's response metadata unless it is asked for it,

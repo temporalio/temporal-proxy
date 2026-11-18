@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +28,20 @@ type (
 	// can knock out just a request type or just a response type.
 	partialTypes struct {
 		missing map[protoreflect.FullName]struct{}
+	}
+
+	// chargingConn charges n decoded bytes to the budget on the context of each
+	// call it is invoked with, as the codec interceptor on a real connection does.
+	chargingConn struct {
+		testutil.ClientConn
+		n int
+	}
+
+	// probingStream runs probe as the response is sent and keeps what it reports.
+	probingStream struct {
+		testutil.ServerStream
+		probe  func() error
+		probed error
 	}
 )
 
@@ -300,6 +315,38 @@ func TestHandleErrors(t *testing.T) {
 	}
 }
 
+// TestForwarderHoldsDecodeBudgetThroughSend shows what a response decoded stays
+// held until it has been sent, since the caller is still reading it until then,
+// and is returned once Handle is done. Releasing when Invoke returns fails the
+// probe; never releasing fails the last charge.
+func TestForwarderHoldsDecodeBudgetThroughSend(t *testing.T) {
+	t.Parallel()
+
+	l := NewDecodeLimiter(10)
+	fw, err := NewForwarder(&chargingConn{n: 8}, WithDecodeBudget(l, 10))
+	require.NoError(t, err)
+
+	other := func() error {
+		ctx, release := l.Open(t.Context(), 10)
+		defer release()
+
+		return budgetFrom(ctx).Charge(4)
+	}
+
+	ss := &probingStream{probe: other}
+	ss.Ctx = grpc.NewContextWithServerTransportStream(
+		t.Context(),
+		testutil.ServerTransportStream{FullMethodName: "/" + services.WorkflowService + "/GetSystemInfo"},
+	)
+
+	require.NoError(t, fw.Handle(nil, ss))
+	require.ErrorIs(t, ss.probed, errDecodeBusy)
+
+	ctx, release := l.Open(t.Context(), 10)
+	t.Cleanup(release)
+	require.NoError(t, budgetFrom(ctx).Charge(10))
+}
+
 func TestStreamTreatsWrappedEOFAsHalfClose(t *testing.T) {
 	t.Parallel()
 
@@ -332,6 +379,19 @@ func (p partialTypes) FindMessageByName(name protoreflect.FullName) (protoreflec
 }
 
 // missingTypes returns a registry that resolves everything except name.
+func (c *chargingConn) Invoke(ctx context.Context, method string, req, resp any, opts ...grpc.CallOption) error {
+	if err := budgetFrom(ctx).Charge(c.n); err != nil {
+		return err
+	}
+
+	return c.ClientConn.Invoke(ctx, method, req, resp, opts...)
+}
+
+func (s *probingStream) SendMsg(m any) error {
+	s.probed = s.probe()
+	return s.ServerStream.SendMsg(m)
+}
+
 func missingTypes(name protoreflect.FullName) partialTypes {
 	return partialTypes{missing: map[protoreflect.FullName]struct{}{name: {}}}
 }

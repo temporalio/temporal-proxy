@@ -28,23 +28,33 @@ func TestCodecInterceptorRejectsIncompleteOptions(t *testing.T) {
 	}{
 		{
 			name: "encrypting without a vault",
-			opts: proxy.CodecOptions{Encrypt: true},
+			opts: proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Encrypt: true},
 			want: "encryption requires a vault",
 		},
 		{
 			name: "a vault without a reporter",
-			opts: proxy.CodecOptions{Vault: &fakeVault{}},
+			opts: proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: &fakeVault{}},
 			want: "a vault requires a reporter",
 		},
 		{
 			name: "encoding failures without encryption",
-			opts: proxy.CodecOptions{Vault: &fakeVault{}, EncodeFailures: true, Reporter: newTestReporter(t)},
+			opts: proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: &fakeVault{}, EncodeFailures: true, Reporter: newTestReporter(t)},
 			want: "failure encoding requires encryption",
 		},
 		{
 			name: "compression without a reporter",
-			opts: proxy.CodecOptions{Compression: &config.Compression{}},
+			opts: proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Compression: &config.Compression{}},
 			want: "compression requires a compression reporter",
+		},
+		{
+			name: "no decode limiter",
+			opts: proxy.CodecOptions{ResponseLimit: testResponseLimit},
+			want: "a decode limiter is required",
+		},
+		{
+			name: "no response limit",
+			opts: proxy.CodecOptions{DecodeLimiter: testLimiter()},
+			want: "response limit must be positive",
 		},
 	}
 
@@ -64,7 +74,7 @@ func TestCodecInterceptorRejectsIncompleteOptions(t *testing.T) {
 func TestCodecInterceptorWithoutAVaultIgnoresSealedPayloads(t *testing.T) {
 	t.Parallel()
 
-	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{})
+	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit})
 	require.NoError(t, err)
 
 	sealed := sealedPayload(t, testPayload("json/plain", `"secret"`))
@@ -79,7 +89,7 @@ func TestCodecInterceptorWithoutAVaultIgnoresSealedPayloads(t *testing.T) {
 func TestCodecInterceptorWithoutCodecs(t *testing.T) {
 	t.Parallel()
 
-	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{})
+	interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit})
 	require.NoError(t, err)
 
 	out := testPayload("json/plain", `"out"`)

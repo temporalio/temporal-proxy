@@ -46,7 +46,9 @@ func TestModuleContributesRoutes(t *testing.T) {
 
 			app := fx.New(
 				fx.Supply(cfg),
-				fx.Provide(func() (*proxy.Codecs, error) { return proxy.NewCodecs(proxy.CodecOptions{}) }),
+				fx.Provide(func() (*proxy.Codecs, error) {
+					return proxy.NewCodecs(proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit})
+				}),
 				fx.Provide(func() api.Connections { return api.Connections{} }),
 				fx.Provide(func() *metrics.Factory {
 					return metrics.New("test", promauto.With(prometheus.NewRegistry()))
@@ -110,7 +112,9 @@ func TestModuleRequiresANamespaceUnderStrict(t *testing.T) {
 
 			app := fx.New(
 				fx.Supply(cfg),
-				fx.Provide(func() (*proxy.Codecs, error) { return proxy.NewCodecs(proxy.CodecOptions{}) }),
+				fx.Provide(func() (*proxy.Codecs, error) {
+					return proxy.NewCodecs(proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit})
+				}),
 				fx.Provide(func() api.Connections { return api.Connections{} }),
 				fx.Provide(func() *metrics.Factory {
 					return metrics.New("test", promauto.With(prometheus.NewRegistry()))
@@ -130,4 +134,12 @@ func TestModuleRequiresANamespaceUnderStrict(t *testing.T) {
 			require.Equal(t, tc.wantCode, rec.Code)
 		})
 	}
+}
+
+// testResponseLimit is the default upstream maxResponseSize.
+const testResponseLimit = 128 << 20
+
+// testLimiter returns a pool too large for these tests to reach.
+func testLimiter() *proxy.DecodeLimiter {
+	return proxy.NewDecodeLimiter(1 << 40)
 }

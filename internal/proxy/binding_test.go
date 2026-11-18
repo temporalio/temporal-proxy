@@ -93,7 +93,7 @@ func TestEncryptionComparesTheRemoteNamespace(t *testing.T) {
 
 			reg := prometheus.NewRegistry()
 			interceptor, err := proxy.CodecInterceptor(
-				proxy.CodecOptions{Vault: v, Reporter: bindingReporter(reg)},
+				proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: v, Reporter: bindingReporter(reg)},
 				suffix,
 			)
 			require.NoError(t, err)
@@ -228,8 +228,10 @@ func TestEncryptionExemptsNexusPayloads(t *testing.T) {
 			t.Parallel()
 
 			interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{
-				Vault:    realVault(t, crypto.BindingStrict),
-				Reporter: bindingReporter(prometheus.NewRegistry()),
+				DecodeLimiter: testLimiter(),
+				ResponseLimit: testResponseLimit,
+				Vault:         realVault(t, crypto.BindingStrict),
+				Reporter:      bindingReporter(prometheus.NewRegistry()),
 			})
 			require.NoError(t, err)
 
@@ -278,8 +280,10 @@ func TestCodecsDecodeComparesTheNamedNamespace(t *testing.T) {
 
 			reg := prometheus.NewRegistry()
 			codecs, err := proxy.NewCodecs(proxy.CodecOptions{
-				Vault:    realVault(t, tc.mode),
-				Reporter: bindingReporter(reg),
+				DecodeLimiter: testLimiter(),
+				ResponseLimit: testResponseLimit,
+				Vault:         realVault(t, tc.mode),
+				Reporter:      bindingReporter(reg),
 			})
 			require.NoError(t, err)
 
@@ -312,6 +316,8 @@ func TestCodecsEncodeLabelsWithTheRemoteName(t *testing.T) {
 	t.Parallel()
 
 	codecs, err := proxy.NewCodecs(proxy.CodecOptions{
+		DecodeLimiter: testLimiter(),
+		ResponseLimit: testResponseLimit,
 		Vault: realVaultWith(t, crypto.BindingPermissive,
 			crypto.WithKeyConfig("orders", crypto.KeyConfig{Duration: time.Hour})),
 		Encrypt:  true,
@@ -331,7 +337,7 @@ func sealThroughInterceptor(t *testing.T, v proxy.Vault, local string, opts ...p
 	t.Helper()
 
 	interceptor, err := proxy.CodecInterceptor(
-		proxy.CodecOptions{Vault: v, Encrypt: true, Reporter: bindingReporter(prometheus.NewRegistry())},
+		proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: v, Encrypt: true, Reporter: bindingReporter(prometheus.NewRegistry())},
 		opts...,
 	)
 	require.NoError(t, err)

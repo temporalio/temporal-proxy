@@ -25,6 +25,11 @@ const (
 	// or more on typical JSON. Below it, much of the work is thrown away on
 	// payloads that don't come out smaller.
 	defaultCompressionMinBytes = 1024
+
+	// defaultMaxDecodedInFlight leaves room for a few responses at the default
+	// maxResponseSize to decode at once, beside the rest of the proxy, in a
+	// modest container.
+	defaultMaxDecodedInFlight ByteSize = 512 << 20 // 536870912 (512MiB)
 )
 
 type (
@@ -34,10 +39,13 @@ type (
 	// pre-translation (local) namespace name to a policy merged field by field
 	// over Default, so whatever it leaves unset is inherited. Decompression does
 	// not depend on any of this: payloads compressed earlier are always restored.
+	// MaxDecodedInFlight bounds the bytes restored payloads hold at once, across
+	// every response and codec server request; see [Compression.InFlightLimit].
 	Compression struct {
-		Enabled   bool                         `yaml:"enabled"`
-		Default   *CompressionPolicy           `yaml:"default"`
-		Overrides map[string]CompressionPolicy `yaml:"overrides"`
+		Enabled            bool                         `yaml:"enabled"`
+		Default            *CompressionPolicy           `yaml:"default"`
+		Overrides          map[string]CompressionPolicy `yaml:"overrides"`
+		MaxDecodedInFlight ByteSize                     `yaml:"maxDecodedInFlight"`
 
 		settings *compressionSettings
 	}
@@ -74,6 +82,12 @@ type (
 		MinBytes  int
 	}
 )
+
+// InFlightLimit is the most bytes restored payloads may hold at once: the
+// configured size when there is one, and 512MiB when the field is absent.
+func (c *Compression) InFlightLimit() ByteSize {
+	return cmp.Or(c.MaxDecodedInFlight, defaultMaxDecodedInFlight)
+}
 
 // All yields the settings of Default and of every override, in no particular
 // order, so every value [Compression.Settings] can return is among them. Panics
@@ -115,6 +129,7 @@ func (c *Compression) Settings(ns string) CompressionSettings {
 // Enabled, and checks the Default policy whenever one is present. Every
 // Overrides entry needs a namespace and a valid policy, and a namespace an
 // override leaves enabled needs an algorithm from the override or Default.
+// maxDecodedInFlight must be positive.
 func (c *Compression) Validate() error {
 	rules := []validation.Rule{
 		validation.WhenRules(
@@ -142,6 +157,7 @@ func (c *Compression) Validate() error {
 			},
 		),
 		validation.WhenNested(func() bool { return c.Default != nil }, "default", c.Default),
+		validation.Field("maxDecodedInFlight", c.InFlightLimit(), validation.GT[ByteSize](0)),
 	}
 
 	// Sort the namespace keys so error ordering is deterministic across runs.
