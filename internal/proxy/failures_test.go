@@ -70,6 +70,27 @@ func TestCodecInterceptorKeepsSDKEncodedFailures(t *testing.T) {
 	require.True(t, proto.Equal(attrs, openAttributes(t, codecs, sent)))
 }
 
+// A Worker reads a failure through the proxy, which restores its text, then
+// sends it back unchanged, as the SDK does when an uncaught activity failure
+// becomes the cause of a workflow failure. The text must not reach the upstream
+// in plaintext.
+func TestCodecInterceptorEncodesRestoredFailures(t *testing.T) {
+	t.Parallel()
+
+	codecs, stored := sendFailure(t, failureOpts(t), &failurepb.Failure{Message: "boom", StackTrace: "at x"})
+
+	read := receiveFailure(t, failureOpts(t), proto.Clone(stored).(*failurepb.Failure))
+	require.Equal(t, "boom", read.GetMessage())
+
+	_, sent := sendFailure(t, failureOpts(t), &failurepb.Failure{Message: "activity error", Cause: read})
+
+	cause := sent.GetCause()
+	require.Equal(t, "Encoded failure", cause.GetMessage())
+	require.Empty(t, cause.GetStackTrace())
+	require.Equal(t, codec.EncryptionEncoding, string(cause.GetEncodedAttributes().GetMetadata()[codec.MetadataEncoding]))
+	require.JSONEq(t, `{"message":"boom","stack_trace":"at x"}`, string(openAttributes(t, codecs, cause).GetData()))
+}
+
 func TestCodecInterceptorLeavesFailuresWhenDisabled(t *testing.T) {
 	t.Parallel()
 
