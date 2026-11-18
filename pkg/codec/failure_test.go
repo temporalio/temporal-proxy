@@ -42,6 +42,23 @@ func TestEncodeFailureKeepsEncodedAttributes(t *testing.T) {
 	require.True(t, proto.Equal(attrs, f.GetEncodedAttributes()))
 }
 
+// A failure RestoreFailure filled in keeps its text only in the attributes, so
+// a Worker sending it back unchanged does not send that text in plaintext.
+func TestEncodeFailureClearsRestoredText(t *testing.T) {
+	t.Parallel()
+
+	attrs := testPayload("json/plain", `{"message":"boom","stack_trace":"at x"}`)
+	f := &failurepb.Failure{EncodedAttributes: proto.Clone(attrs).(*common.Payload)}
+	require.NoError(t, codec.RestoreFailure(f))
+	require.Equal(t, "boom", f.GetMessage())
+
+	require.NoError(t, codec.EncodeFailure(f))
+
+	require.Equal(t, "Encoded failure", f.GetMessage())
+	require.Empty(t, f.GetStackTrace())
+	require.True(t, proto.Equal(attrs, f.GetEncodedAttributes()))
+}
+
 // Causes are separate failures, visited on their own, so encoding one leaves
 // its cause alone.
 func TestEncodeFailureLeavesCause(t *testing.T) {
