@@ -16,8 +16,8 @@ import (
 // connector is served. Once it is, the valid rows expect no error at all.
 const nexusGuard = "http: standaloneNexus: not yet supported"
 
-// nexusConfig returns a config with two connector blocks that passes every
-// rule but the guard.
+// nexusConfig returns a config with two connectors on a loopback Standalone
+// Nexus listener that passes every rule but the guard.
 func nexusConfig() *config.Config {
 	return &config.Config{
 		Listen:    config.ListenConfig{HostPort: ":7233"},
@@ -27,17 +27,19 @@ func nexusConfig() *config.Config {
 			Match:    config.RoutingMatch{Namespace: "nexus-*"},
 		}}},
 		HTTP: config.HTTP{
-			Listen: config.ListenConfig{HostPort: "127.0.0.1:8445", Insecure: true},
-			StandaloneNexus: []config.NexusConnector{
-				{
-					Name:       "partners",
-					PathPrefix: "/nexus/partners",
-					Namespace:  "nexus-partners",
-				},
-				{
-					Name:       "internal-apps",
-					PathPrefix: "/nexus/internal",
-					Namespace:  "nexus-internal",
+			StandaloneNexus: config.StandaloneNexus{
+				Listen: config.ListenConfig{HostPort: "127.0.0.1:8446", Insecure: true},
+				Connectors: []config.NexusConnector{
+					{
+						Name:       "partners",
+						PathPrefix: "/nexus/partners",
+						Namespace:  "nexus-partners",
+					},
+					{
+						Name:       "internal-apps",
+						PathPrefix: "/nexus/internal",
+						Namespace:  "nexus-internal",
+					},
 				},
 			},
 		},
@@ -58,15 +60,58 @@ func TestNexusValidate(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:   "two blocks on loopback are valid",
+			name:   "two connectors on loopback are valid",
 			mutate: func(*config.Config) {},
 		},
 		{
-			name: "no blocks pass the guard",
+			name: "no connectors pass the guard",
 			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus = nil
+				c.HTTP.StandaloneNexus = config.StandaloneNexus{}
 			},
 			wantErr: "-",
+		},
+		{
+			name: "no connectors leave the listener unchecked",
+			mutate: func(c *config.Config) {
+				c.HTTP.StandaloneNexus = config.StandaloneNexus{Listen: config.ListenConfig{HostPort: "not a hostport"}}
+			},
+			wantErr: "-",
+		},
+		{
+			name: "a missing hostPort is rejected",
+			mutate: func(c *config.Config) {
+				c.HTTP.StandaloneNexus.Listen.HostPort = ""
+			},
+			wantErr: "http.standaloneNexus: hostPort: is required",
+		},
+		{
+			name: "the shared listener on another port is valid",
+			mutate: func(c *config.Config) {
+				c.HTTP.Listen = config.ListenConfig{HostPort: "127.0.0.1:8445", Insecure: true}
+				c.HTTP.CodecServer.Enabled = true
+			},
+		},
+		{
+			name: "the shared listener's hostPort is rejected",
+			mutate: func(c *config.Config) {
+				c.HTTP.Listen = config.ListenConfig{HostPort: "127.0.0.1:8446", Insecure: true}
+				c.HTTP.CodecServer.Enabled = true
+			},
+			wantErr: "http.standaloneNexus: hostPort: must differ from http.hostPort",
+		},
+		{
+			name: "the shared listener's hostPort is free while it serves nothing",
+			mutate: func(c *config.Config) {
+				c.HTTP.Listen = config.ListenConfig{HostPort: "127.0.0.1:8446", Insecure: true}
+			},
+		},
+		{
+			name: "port zero on both listeners does not collide",
+			mutate: func(c *config.Config) {
+				c.HTTP.Listen = config.ListenConfig{HostPort: "127.0.0.1:0", Insecure: true}
+				c.HTTP.CodecServer.Enabled = true
+				c.HTTP.StandaloneNexus.Listen.HostPort = "127.0.0.1:0"
+			},
 		},
 		{
 			name: "a default upstream routes any namespace",
@@ -84,192 +129,193 @@ func TestNexusValidate(t *testing.T) {
 			},
 		},
 		{
-			name: "off loopback with auth and tls is valid",
+			name: "off loopback with auth and tls is valid beside a plaintext loopback shared listener",
 			mutate: func(c *config.Config) {
-				c.HTTP.Listen = config.ListenConfig{
-					HostPort: "0.0.0.0:8445",
+				c.HTTP.Listen = config.ListenConfig{HostPort: "127.0.0.1:8445", Insecure: true}
+				c.HTTP.CodecServer.Enabled = true
+				c.HTTP.StandaloneNexus.Listen = config.ListenConfig{
+					HostPort: "0.0.0.0:8446",
 					TLS:      &config.TLSConfig{Cert: certFile, Key: keyFile},
 				}
-				c.HTTP.StandaloneNexus[0].Auth = token()
-				c.HTTP.StandaloneNexus[1].Auth = token()
+				c.HTTP.StandaloneNexus.Connectors[0].Auth = token()
+				c.HTTP.StandaloneNexus.Connectors[1].Auth = token()
 			},
 		},
 		{
-			name: "duplicate block names are rejected",
+			name: "duplicate connector names are rejected",
 			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[1].Name = "partners"
+				c.HTTP.StandaloneNexus.Connectors[1].Name = "partners"
 			},
-			wantErr: "http: standaloneNexus[name]: contains duplicate value: partners",
+			wantErr: "http.standaloneNexus: connectors[name]: contains duplicate value: partners",
 		},
 		{
 			name: "duplicate path prefixes are rejected",
 			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[1].PathPrefix = "/nexus/partners"
+				c.HTTP.StandaloneNexus.Connectors[1].PathPrefix = "/nexus/partners"
 			},
-			wantErr: "http: standaloneNexus[pathPrefix]: contains duplicate value: /nexus/partners",
+			wantErr: "http.standaloneNexus: connectors[pathPrefix]: contains duplicate value: /nexus/partners",
 		},
 		{
-			name: "a path prefix nested under another block's is rejected",
+			name: "a path prefix nested under another connector's is rejected",
 			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[1].PathPrefix = "/nexus/partners/internal"
+				c.HTTP.StandaloneNexus.Connectors[1].PathPrefix = "/nexus/partners/internal"
 			},
-			wantErr: `http.standaloneNexus[1]: pathPrefix: overlaps standaloneNexus[0] pathPrefix "/nexus/partners"`,
+			wantErr: `http.standaloneNexus.connectors[1]: pathPrefix: overlaps connectors[0] pathPrefix "/nexus/partners"`,
 		},
 		{
-			name: "a path prefix enclosing another block's is rejected",
+			name: "a path prefix enclosing another connector's is rejected",
 			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[1].PathPrefix = "/nexus/partners"
-				c.HTTP.StandaloneNexus[0].PathPrefix = "/nexus/partners/a/b"
+				c.HTTP.StandaloneNexus.Connectors[1].PathPrefix = "/nexus/partners"
+				c.HTTP.StandaloneNexus.Connectors[0].PathPrefix = "/nexus/partners/a/b"
 			},
-			wantErr: `http.standaloneNexus[1]: pathPrefix: overlaps standaloneNexus[0] pathPrefix "/nexus/partners/a/b"`,
+			wantErr: `http.standaloneNexus.connectors[1]: pathPrefix: overlaps connectors[0] pathPrefix "/nexus/partners/a/b"`,
 		},
 		{
 			name: "a sibling sharing a string prefix is not an overlap",
 			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[1].PathPrefix = "/nexus/partnersx"
+				c.HTTP.StandaloneNexus.Connectors[1].PathPrefix = "/nexus/partnersx"
+			},
+		},
+		{
+			name: "routes the shared listener serves are free here",
+			mutate: func(c *config.Config) {
+				c.HTTP.StandaloneNexus.Connectors[0].PathPrefix = "/orders/decode"
+				c.HTTP.StandaloneNexus.Connectors[1].PathPrefix = "/debug/pprof/nexus"
+			},
+		},
+		{
+			name: "a single segment is valid",
+			mutate: func(c *config.Config) {
+				c.HTTP.StandaloneNexus.Connectors[0].PathPrefix = "/partners"
 			},
 		},
 		{
 			name: "a missing path prefix is rejected",
 			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[0].PathPrefix = ""
+				c.HTTP.StandaloneNexus.Connectors[0].PathPrefix = ""
 			},
-			wantErr: "http.standaloneNexus[0]: pathPrefix: is required",
+			wantErr: "http.standaloneNexus.connectors[0]: pathPrefix: is required",
 		},
 		{
 			name: "a relative path prefix is rejected",
 			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[0].PathPrefix = "nexus/partners"
+				c.HTTP.StandaloneNexus.Connectors[0].PathPrefix = "nexus/partners"
 			},
-			wantErr: "http.standaloneNexus[0]: pathPrefix: must be an absolute path",
+			wantErr: "http.standaloneNexus.connectors[0]: pathPrefix: must be an absolute path",
 		},
 		{
 			name: "the root path prefix is rejected",
 			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[0].PathPrefix = "/"
+				c.HTTP.StandaloneNexus.Connectors[0].PathPrefix = "/"
 			},
-			wantErr: "http.standaloneNexus[0]: pathPrefix: must not be /",
+			wantErr: "http.standaloneNexus.connectors[0]: pathPrefix: must not be /",
 		},
 		{
 			name: "a trailing slash is rejected",
 			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[0].PathPrefix = "/nexus/partners/"
+				c.HTTP.StandaloneNexus.Connectors[0].PathPrefix = "/nexus/partners/"
 			},
-			wantErr: "http.standaloneNexus[0]: pathPrefix: must be a clean path",
+			wantErr: "http.standaloneNexus.connectors[0]: pathPrefix: must be a clean path",
 		},
 		{
 			name: "a dot segment is rejected",
 			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[0].PathPrefix = "/nexus/../partners"
+				c.HTTP.StandaloneNexus.Connectors[0].PathPrefix = "/nexus/../partners"
 			},
-			wantErr: "http.standaloneNexus[0]: pathPrefix: must be a clean path",
+			wantErr: "http.standaloneNexus.connectors[0]: pathPrefix: must be a clean path",
 		},
 		{
 			name: "a wildcard is rejected",
 			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[0].PathPrefix = "/nexus/{name}"
+				c.HTTP.StandaloneNexus.Connectors[0].PathPrefix = "/nexus/{name}"
 			},
-			wantErr: "http.standaloneNexus[0]: pathPrefix: must be a literal path",
+			wantErr: "http.standaloneNexus.connectors[0]: pathPrefix: must be a literal path",
 		},
 		{
-			name: "a single segment shadows the codec server's namespace routes",
+			name: "a missing connector name is rejected",
 			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[0].PathPrefix = "/nexus"
+				c.HTTP.StandaloneNexus.Connectors[0].Name = ""
 			},
-			wantErr: "http.standaloneNexus[0]: pathPrefix: must have at least two segments",
-		},
-		{
-			name: "a codec server route as the second segment is rejected",
-			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[0].PathPrefix = "/orders/decode"
-			},
-			wantErr: "http.standaloneNexus[0]: pathPrefix: would shadow the codec server's /{namespace}/decode route",
-		},
-		{
-			name: "the pprof routes are reserved",
-			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[0].PathPrefix = "/debug/pprof/nexus"
-			},
-			wantErr: "http.standaloneNexus[0]: pathPrefix: overlaps the pprof routes under /debug/pprof/",
-		},
-		{
-			name: "a missing block name is rejected",
-			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[0].Name = ""
-			},
-			wantErr: "http.standaloneNexus[0]: name: is required",
+			wantErr: "http.standaloneNexus.connectors[0]: name: is required",
 		},
 		{
 			name: "a missing namespace is rejected",
 			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[0].Namespace = ""
+				c.HTTP.StandaloneNexus.Connectors[0].Namespace = ""
 			},
-			wantErr: "http.standaloneNexus[0]: namespace: is required",
+			wantErr: "http.standaloneNexus.connectors[0]: namespace: is required",
 		},
 		{
 			name: "a namespace no rule matches and no default upstream is rejected",
 			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[0].Namespace = "orders"
+				c.HTTP.StandaloneNexus.Connectors[0].Namespace = "orders"
 			},
-			wantErr: `http.standaloneNexus[0]: namespace: "orders" routes to no upstream`,
+			wantErr: `http.standaloneNexus.connectors[0]: namespace: "orders" routes to no upstream`,
 		},
 		{
-			name: "a rule matching on metadata never routes a block",
+			name: "a rule matching on metadata never routes a connector",
 			mutate: func(c *config.Config) {
 				c.Routing.Rules[0].Match.Metadata = map[string]string{"x-tenant": "*"}
 			},
-			wantErr: `http.standaloneNexus[0]: namespace: "nexus-partners" routes to no upstream`,
+			wantErr: `http.standaloneNexus.connectors[0]: namespace: "nexus-partners" routes to no upstream`,
 		},
 		{
-			name: "the system upstream does not route a block",
+			name: "the system upstream does not route a connector",
 			mutate: func(c *config.Config) {
 				c.Routing = config.Routing{SystemUpstream: "primary"}
 			},
-			wantErr: `http.standaloneNexus[0]: namespace: "nexus-partners" routes to no upstream`,
+			wantErr: `http.standaloneNexus.connectors[0]: namespace: "nexus-partners" routes to no upstream`,
 		},
 		{
 			name: "a negative max request body size is rejected",
 			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[0].MaxRequestBodySize = -1
+				c.HTTP.StandaloneNexus.Connectors[0].MaxRequestBodySize = -1
 			},
-			wantErr: "http.standaloneNexus[0]: maxRequestBodySize",
+			wantErr: "http.standaloneNexus.connectors[0]: maxRequestBodySize",
 		},
 		{
-			name: "a block without auth beyond loopback is rejected",
+			name: "a connector without auth beyond loopback is rejected",
+			mutate: func(c *config.Config) {
+				c.HTTP.StandaloneNexus.Listen = config.ListenConfig{
+					HostPort: "0.0.0.0:8446",
+					TLS:      &config.TLSConfig{Cert: certFile, Key: keyFile},
+				}
+				c.HTTP.StandaloneNexus.Connectors[0].Auth = token()
+			},
+			wantErr: "http.standaloneNexus.connectors[1]: auth: auth is required unless hostPort is loopback",
+		},
+		{
+			name: "auth beyond loopback requires tls on the Standalone Nexus listener",
 			mutate: func(c *config.Config) {
 				c.HTTP.Listen = config.ListenConfig{
 					HostPort: "0.0.0.0:8445",
 					TLS:      &config.TLSConfig{Cert: certFile, Key: keyFile},
 				}
-				c.HTTP.StandaloneNexus[0].Auth = token()
+				c.HTTP.CodecServer = config.CodecServer{Enabled: true, Auth: token()}
+				c.HTTP.StandaloneNexus.Listen = config.ListenConfig{HostPort: "0.0.0.0:8446", Insecure: true}
+				c.HTTP.StandaloneNexus.Connectors[0].Auth = token()
+				c.HTTP.StandaloneNexus.Connectors[1].Auth = token()
 			},
-			wantErr: "http.standaloneNexus[1]: auth: auth is required unless hostPort is loopback",
+			wantErr: "http.standaloneNexus: tls: tls is required when auth is configured and hostPort is not loopback",
 		},
 		{
-			name: "auth beyond loopback requires tls",
+			name: "a connector's auth is validated",
 			mutate: func(c *config.Config) {
-				c.HTTP.Listen = config.ListenConfig{HostPort: "0.0.0.0:8445", Insecure: true}
-				c.HTTP.StandaloneNexus[0].Auth = token()
-				c.HTTP.StandaloneNexus[1].Auth = token()
+				c.HTTP.StandaloneNexus.Connectors[0].Auth = &config.AuthConfig{StaticToken: &config.StaticTokenConfig{}}
 			},
-			wantErr: "http: tls: tls is required when auth is configured and hostPort is not loopback",
+			wantErr: "http.standaloneNexus.connectors[0].auth.staticToken: token: is required",
 		},
 		{
-			name: "a block's auth is validated",
+			name: "a connector's external auth must name an extension server",
 			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[0].Auth = &config.AuthConfig{StaticToken: &config.StaticTokenConfig{}}
+				c.HTTP.StandaloneNexus.Connectors[0].Auth = &config.AuthConfig{
+					External: &config.ExternalAuthConfig{Name: "nope"},
+				}
 			},
-			wantErr: "http.standaloneNexus[0].auth.staticToken: token: is required",
+			wantErr: "http.standaloneNexus.connectors[0].auth.external: name: unknown extension server: nope",
 		},
 		{
-			name: "a block's external auth must name an extension server",
-			mutate: func(c *config.Config) {
-				c.HTTP.StandaloneNexus[0].Auth = &config.AuthConfig{External: &config.ExternalAuthConfig{Name: "nope"}}
-			},
-			wantErr: "http.standaloneNexus[0].auth.external: name: unknown extension server: nope",
-		},
-		{
-			name: "blocks require WorkflowService among the allowed services",
+			name: "connectors require WorkflowService among the allowed services",
 			mutate: func(c *config.Config) {
 				c.AllowedServices = config.Services{services.OperatorService}
 			},
@@ -306,20 +352,21 @@ upstreams:
 routing:
   default: primary
 http:
-  hostPort: 127.0.0.1:8445
-  insecure: true
   standaloneNexus:
-    - name: partners
-      pathPrefix: /nexus/partners
-      namespace: nexus-partners
-      identity: temporal-proxy-partners
-      maxRequestBodySize: 4MiB
-      auth:
-        staticToken:
-          token: s3cret
-    - name: internal-apps
-      pathPrefix: /nexus/internal
-      namespace: nexus-internal
+    hostPort: 127.0.0.1:8446
+    insecure: true
+    connectors:
+      - name: partners
+        pathPrefix: /nexus/partners
+        namespace: nexus-partners
+        identity: temporal-proxy-partners
+        maxRequestBodySize: 4MiB
+        auth:
+          staticToken:
+            token: s3cret
+      - name: internal-apps
+        pathPrefix: /nexus/internal
+        namespace: nexus-internal
 `
 
 func TestLoadNexus(t *testing.T) {
@@ -328,19 +375,22 @@ func TestLoadNexus(t *testing.T) {
 	var cfg config.Config
 	require.NoError(t, yaml.Unmarshal([]byte(nexusYAML), &cfg))
 
-	require.Equal(t, []config.NexusConnector{
-		{
-			Name:               "partners",
-			PathPrefix:         "/nexus/partners",
-			Namespace:          "nexus-partners",
-			Identity:           "temporal-proxy-partners",
-			MaxRequestBodySize: 4 << 20,
-			Auth:               &config.AuthConfig{StaticToken: &config.StaticTokenConfig{Token: "s3cret"}},
-		},
-		{
-			Name:       "internal-apps",
-			PathPrefix: "/nexus/internal",
-			Namespace:  "nexus-internal",
+	require.Equal(t, config.StandaloneNexus{
+		Listen: config.ListenConfig{HostPort: "127.0.0.1:8446", Insecure: true},
+		Connectors: []config.NexusConnector{
+			{
+				Name:               "partners",
+				PathPrefix:         "/nexus/partners",
+				Namespace:          "nexus-partners",
+				Identity:           "temporal-proxy-partners",
+				MaxRequestBodySize: 4 << 20,
+				Auth:               &config.AuthConfig{StaticToken: &config.StaticTokenConfig{Token: "s3cret"}},
+			},
+			{
+				Name:       "internal-apps",
+				PathPrefix: "/nexus/internal",
+				Namespace:  "nexus-internal",
+			},
 		},
 	}, cfg.HTTP.StandaloneNexus)
 

@@ -43,6 +43,10 @@ const (
 	// namespaceHeader is where the Temporal UI and CLI name the namespace. The
 	// CLI can also put it in the request path.
 	namespaceHeader = "X-Namespace"
+
+	encodeRoute   = "/encode"
+	decodeRoute   = "/decode"
+	downloadRoute = "/download"
 )
 
 type (
@@ -153,9 +157,9 @@ func Handler(c Codecs, n Namespaces, r *Reporter, opts ...Option) http.Handler {
 		path string
 		fn   http.HandlerFunc
 	}{
-		{meta.CodecServerEncodeRoute, h.payloads(meta.CodecServerEncodeRoute, h.codecs.Encode, o.namespaceRequired)},
-		{meta.CodecServerDecodeRoute, h.payloads(meta.CodecServerDecodeRoute, h.codecs.Decode, o.decodeNamespaceRequired)},
-		{meta.CodecServerDownloadRoute, h.download},
+		{encodeRoute, h.payloads(encodeRoute, h.codecs.Encode, o.namespaceRequired)},
+		{decodeRoute, h.payloads(decodeRoute, h.codecs.Decode, o.decodeNamespaceRequired)},
+		{downloadRoute, h.download},
 	}
 
 	authenticate := func(next http.Handler) http.Handler { return next }

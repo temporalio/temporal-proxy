@@ -96,15 +96,15 @@ func (c *Config) Prepare() error {
 // cross-reference names something configured: routing references an upstream,
 // while encryption key URIs and external authentication reference an extension
 // server. The codec server's auth, if enabled, and each Standalone Nexus
-// block's auth are also checked against known extension servers. Each block's
-// namespace must route to an upstream, and blocks require WorkflowService among
-// the allowed services. A missing upstream surfaces on the "upstreams" field.
-// Failures are stamped with the failing node's YAML path as the subject (e.g.
+// connector's auth are also checked against known extension servers. Each
+// connector's namespace must route to an upstream, and connectors require
+// WorkflowService among the allowed services. A missing upstream surfaces on the
+// "upstreams" field. Failures are stamped with the failing node's YAML path as the subject (e.g.
 // "upstreams[0].namespaces.rules.overrides[1]"). A duplicate name surfaces on
 // the "upstreams[name]" field, an unknown routing reference on the
 // "routing"/"routing.rules[i]" subject, and an unknown extension server on the
 // referring "encryption.*", "auth.external", "http.codecServer.auth.external",
-// or "http.standaloneNexus[i].auth.external" subject.
+// or "http.standaloneNexus.connectors[i].auth.external" subject.
 func (c *Config) validate() error {
 	rules := []validation.Rule{
 		validation.Field("upstreams", c.Upstreams, func(us UpstreamList) error {
@@ -154,11 +154,11 @@ func (c *Config) validate() error {
 	rules = append(rules, c.HTTP.nexusServiceRule(c.AllowedServices.Allowed()))
 
 	// Nothing serves http.standaloneNexus yet, so a config that sets it is
-	// refused rather than started with the blocks silently off. It runs alongside
+	// refused rather than started with the connectors silently off. It runs alongside
 	// every other rule, so a config gets the real findings too. Delete this rule
-	// when the blocks are served.
+	// when the connectors are served.
 	rules = append(rules, validation.WhenRules(
-		func() bool { return len(c.HTTP.StandaloneNexus) > 0 },
+		func() bool { return c.HTTP.StandaloneNexus.enabled() },
 		func() validation.Errors {
 			return validation.Errors{{Subject: "http", Field: "standaloneNexus", Message: "not yet supported"}}
 		},
