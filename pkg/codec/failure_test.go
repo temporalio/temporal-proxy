@@ -71,6 +71,59 @@ func TestEncodeFailureLeavesCause(t *testing.T) {
 	require.Nil(t, f.GetCause().GetEncodedAttributes())
 }
 
+// Any encoded attributes stand in for the text, whatever their encoding, so the
+// text beside them is cleared. A failure with none keeps its text.
+func TestClearFailureText(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		attrs   *common.Payload
+		message string
+		stack   string
+	}{
+		{
+			name:    "restored from the SDK's JSON",
+			attrs:   testPayload("json/plain", `{"message":"boom","stack_trace":"at x"}`),
+			message: "Encoded failure",
+		},
+		{
+			name:    "re-encoded by a client codec",
+			attrs:   testPayload("binary/custom", "sealed by a client"),
+			message: "Encoded failure",
+		},
+		{
+			name:    "no attributes",
+			message: "boom",
+			stack:   "at x",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var attrs *common.Payload
+			if tc.attrs != nil {
+				attrs = proto.Clone(tc.attrs).(*common.Payload)
+			}
+
+			f := &failurepb.Failure{
+				Message:           "boom",
+				StackTrace:        "at x",
+				EncodedAttributes: attrs,
+				Cause:             &failurepb.Failure{Message: "inner", EncodedAttributes: testPayload("json/plain", "{}")},
+			}
+			codec.ClearFailureText(f)
+
+			require.Equal(t, tc.message, f.GetMessage())
+			require.Equal(t, tc.stack, f.GetStackTrace())
+			require.True(t, proto.Equal(tc.attrs, f.GetEncodedAttributes()))
+			require.Equal(t, "inner", f.GetCause().GetMessage())
+		})
+	}
+}
+
 // A client reading through the proxy, such as the Web UI or CLI, sees the text
 // where it expects it. The attributes stay too, so an SDK client decoding them
 // gets the same values.

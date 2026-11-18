@@ -91,6 +91,67 @@ func TestCodecInterceptorEncodesRestoredFailures(t *testing.T) {
 	require.JSONEq(t, `{"message":"boom","stack_trace":"at x"}`, string(openAttributes(t, codecs, cause).GetData()))
 }
 
+// With failure encoding off, a Worker running the SDK with
+// EncodeCommonAttributes still has its failures restored on read, so the text
+// it sends back unchanged must be cleared just the same.
+func TestCodecInterceptorClearsRestoredFailuresWhenEncodingDisabled(t *testing.T) {
+	t.Parallel()
+
+	opts := failureOpts(t)
+	opts.EncodeFailures = false
+
+	attrs := testPayload("json/plain", `{"message":"boom","stack_trace":"at x"}`)
+	read := receiveFailure(t, opts, &failurepb.Failure{
+		Message:           "Encoded failure",
+		EncodedAttributes: sealedPayload(t, attrs),
+	})
+	require.Equal(t, "boom", read.GetMessage())
+
+	codecs, sent := sendFailure(t, opts, &failurepb.Failure{Message: "activity error", Cause: read})
+
+	cause := sent.GetCause()
+	require.Equal(t, "Encoded failure", cause.GetMessage())
+	require.Empty(t, cause.GetStackTrace())
+	require.True(t, proto.Equal(attrs, openAttributes(t, codecs, cause)))
+
+	// The outer failure has no attributes and encoding is off, so it is sent as is.
+	require.Equal(t, "activity error", sent.GetMessage())
+	require.Nil(t, sent.GetEncodedAttributes())
+}
+
+// A Worker with its codec installed as a gRPC interceptor re-encodes the
+// attributes of a restored failure before sending it back, so they are no
+// longer the SDK's JSON. The text beside them must still be cleared.
+func TestCodecInterceptorClearsFailuresReencodedByClient(t *testing.T) {
+	t.Parallel()
+
+	for _, encode := range []bool{true, false} {
+		t.Run(map[bool]string{true: "encoding on", false: "encoding off"}[encode], func(t *testing.T) {
+			t.Parallel()
+
+			opts := failureOpts(t)
+			opts.EncodeFailures = encode
+
+			read := receiveFailure(t, opts, &failurepb.Failure{
+				Message:           "Encoded failure",
+				EncodedAttributes: sealedPayload(t, testPayload("json/plain", `{"message":"boom","stack_trace":"at x"}`)),
+			})
+			require.Equal(t, "boom", read.GetMessage())
+
+			// The Worker's codec wraps the attributes the proxy opened.
+			reencoded := testPayload("binary/custom", "sealed by the worker")
+			read.EncodedAttributes = proto.Clone(reencoded).(*common.Payload)
+
+			codecs, sent := sendFailure(t, opts, &failurepb.Failure{Message: "Encoded failure", EncodedAttributes: testPayload("binary/custom", "outer"), Cause: read})
+
+			cause := sent.GetCause()
+			require.Equal(t, "Encoded failure", cause.GetMessage())
+			require.Empty(t, cause.GetStackTrace())
+			require.True(t, proto.Equal(reencoded, openAttributes(t, codecs, cause)))
+		})
+	}
+}
+
 func TestCodecInterceptorLeavesFailuresWhenDisabled(t *testing.T) {
 	t.Parallel()
 
