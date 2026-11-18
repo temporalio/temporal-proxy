@@ -82,6 +82,7 @@ type (
 		responseLimit   int64
 		inboundLimit    int
 		outboundLimit   int
+		encrypt         bool
 		encodeFailures  bool
 		restoreFailures bool
 	}
@@ -175,6 +176,7 @@ func NewCodecs(opts CodecOptions) (*Codecs, error) {
 		outboundLimit:   limit,
 		limiter:         opts.DecodeLimiter,
 		responseLimit:   opts.ResponseLimit,
+		encrypt:         opts.Encrypt,
 		encodeFailures:  opts.EncodeFailures,
 		restoreFailures: opts.Vault != nil,
 	}
@@ -262,16 +264,20 @@ func WithRemoteNamespace(remote func(string) string) InterceptorOption {
 // other. With a vault, their text is restored last, from attributes already
 // opened, whether or not encoding is on, so failures encoded earlier stay
 // readable after it is turned off. Restored text is cleared again on the way
-// out, so a client sending a failure back does not send it in plaintext.
+// out, so a client sending a failure back does not send it in plaintext. Nexus
+// failures in the deprecated format get the same treatment (see
+// [legacyNexusFailures]).
 func (c *Codecs) Interceptor(opts ...InterceptorOption) (grpc.UnaryClientInterceptor, error) {
 	var io interceptorOptions
 	for _, opt := range opts {
 		opt(&io)
 	}
 
+	outbound := visitPayloads(c.outbound, nil, c.outboundLimit, codec.Chain.Encode, io.remote)
+
 	payloads, err := proxy.NewPayloadVisitorInterceptor(proxy.PayloadVisitorInterceptorOptions{
 		Inbound:  visitPayloads(c.inbound, c.inboundSkip, c.inboundLimit, codec.Chain.Decode, io.remote),
-		Outbound: visitPayloads(c.outbound, nil, c.outboundLimit, codec.Chain.Encode, io.remote),
+		Outbound: outbound,
 	})
 	if err != nil {
 		return nil, err
@@ -290,7 +296,9 @@ func (c *Codecs) Interceptor(opts ...InterceptorOption) (grpc.UnaryClientInterce
 		return nil, err
 	}
 
-	return chainUnary(failures, payloads), nil
+	legacy := legacyNexusFailures{codecs: c, payloads: outbound}
+
+	return chainUnary(legacy.intercept, chainUnary(failures, payloads)), nil
 }
 
 // Decode runs payloads through the inbound chain, the same chain

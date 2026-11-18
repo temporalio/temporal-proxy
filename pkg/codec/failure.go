@@ -8,9 +8,9 @@ import (
 	"go.temporal.io/api/failure/v1"
 )
 
-// encodedFailureMessage replaces the message of a failure whose attributes were
+// EncodedFailureMessage replaces the message of a failure whose attributes were
 // moved into a payload. It is the placeholder the Temporal SDK writes.
-const encodedFailureMessage = "Encoded failure"
+const EncodedFailureMessage = "Encoded failure"
 
 // encodedFailure is the JSON shape the Temporal SDK's
 // EncodeCommonFailureAttributes writes and DecodeCommonFailureAttributes reads.
@@ -33,7 +33,7 @@ type encodedFailure struct {
 func EncodeFailure(f *failure.Failure) error {
 	if attrs := f.GetEncodedAttributes(); attrs != nil {
 		if string(attrs.GetMetadata()[MetadataEncoding]) == "json/plain" {
-			f.Message = encodedFailureMessage
+			f.Message = EncodedFailureMessage
 			f.StackTrace = ""
 		}
 
@@ -49,7 +49,7 @@ func EncodeFailure(f *failure.Failure) error {
 		Metadata: map[string][]byte{MetadataEncoding: []byte("json/plain")},
 		Data:     data,
 	}
-	f.Message = encodedFailureMessage
+	f.Message = EncodedFailureMessage
 	f.StackTrace = ""
 
 	return nil
@@ -67,7 +67,7 @@ func ClearFailureText(f *failure.Failure) {
 		return
 	}
 
-	f.Message = encodedFailureMessage
+	f.Message = EncodedFailureMessage
 	f.StackTrace = ""
 }
 
