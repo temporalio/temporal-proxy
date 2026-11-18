@@ -7,41 +7,50 @@ import (
 )
 
 type (
-	// HTTP configures the shared HTTP listener and the route groups it serves.
-	// Listen is inline, so its address and TLS are the block's own hostPort,
-	// insecure, and tls keys. Each group carries its own CORS and auth, since
-	// their callers differ.
+	// HTTP configures the proxy's HTTP listeners. Listen is inline, so the shared
+	// listener's address and TLS are the block's own hostPort, insecure, and tls
+	// keys; it serves the codec server and pprof route groups, each carrying its
+	// own CORS and auth, since their callers differ. StandaloneNexus is a
+	// listener of its own (see [StandaloneNexus]).
 	HTTP struct {
-		Listen      ListenConfig `yaml:",inline"`
-		CodecServer CodecServer  `yaml:"codecServer"`
-		PProf       PProf        `yaml:"pprof"`
+		Listen          ListenConfig    `yaml:",inline"`
+		CodecServer     CodecServer     `yaml:"codecServer"`
+		PProf           PProf           `yaml:"pprof"`
+		StandaloneNexus StandaloneNexus `yaml:"standaloneNexus"`
 	}
 
-	// routeGroup is a set of routes served by the shared HTTP listener. Each
-	// group decides whether it is on and how its callers authenticate.
+	// routeGroup is a set of routes served by an HTTP listener. Each group
+	// decides whether it is on and how its callers authenticate.
 	routeGroup interface {
 		Validate() error
 		enabled() bool
 		authConfig() *AuthConfig
 	}
 
-	// namedGroup pairs a route group with its key under http.
+	// namedGroup pairs a route group with its key under its listener's block.
 	namedGroup struct {
 		name  string
 		group routeGroup
 	}
 )
 
-// Validate checks the listener and every enabled route group. With no group
-// enabled nothing binds, so nothing is checked. A group reachable beyond
-// loopback requires authentication, and the listener requires TLS once any
-// such group has it, because a browser will not send a token over plaintext.
+// Validate checks the shared listener and every enabled route group, then the
+// Standalone Nexus listener. With no group enabled a listener binds nothing, so
+// nothing is checked for it. A group reachable beyond loopback requires
+// authentication, and its listener requires TLS once any such group has it,
+// because a browser will not send a token over plaintext. The two listeners
+// must not share an address.
 func (h *HTTP) Validate() error {
-	return validateGroups(&h.Listen, h.groups())
+	rules := append(groupRules(&h.Listen, h.groups()),
+		validation.Nested("standaloneNexus", &h.StandaloneNexus),
+		h.distinctListenersRule(),
+	)
+
+	return validation.Validate("", rules...)
 }
 
-// groups lists every route group the listener can serve. A new group is a
-// field on HTTP plus an entry here.
+// groups lists every route group the shared listener can serve. A new group is
+// a field on HTTP plus an entry here.
 func (h *HTTP) groups() []namedGroup {
 	return []namedGroup{
 		{name: "codecServer", group: &h.CodecServer},
@@ -49,8 +58,8 @@ func (h *HTTP) groups() []namedGroup {
 	}
 }
 
-// referentialRules checks that every enabled group's external auth names a
-// configured extension server.
+// referentialRules checks that every enabled group's external auth, on either
+// listener, names a configured extension server.
 func (h *HTTP) referentialRules(known map[string]struct{}) []validation.Rule {
 	var rules []validation.Rule
 	for _, g := range h.groups() {
@@ -59,12 +68,50 @@ func (h *HTTP) referentialRules(known map[string]struct{}) []validation.Rule {
 		}
 	}
 
+	for _, g := range h.StandaloneNexus.groups() {
+		rules = append(rules,
+			g.group.authConfig().referentialRules("http.standaloneNexus."+g.name+".auth.external", known)...)
+	}
+
 	return rules
 }
 
-// validateGroups applies the listener rules for the enabled groups among
-// groups.
-func validateGroups(listen *ListenConfig, groups []namedGroup) error {
+// distinctListenersRule refuses a Standalone Nexus listener bound to the shared
+// listener's address while both serve something. A port-zero address picks a
+// free port each time, so two of them never collide.
+func (h *HTTP) distinctListenersRule() validation.Rule {
+	return validation.WhenRules(
+		func() bool {
+			hp := h.StandaloneNexus.Listen.HostPort
+			_, port, err := net.SplitHostPort(hp)
+
+			return err == nil && port != "0" && hp == h.Listen.HostPort &&
+				h.sharedEnabled() && h.StandaloneNexus.enabled()
+		},
+		func() validation.Errors {
+			return validation.Errors{{
+				Subject: "standaloneNexus",
+				Field:   "hostPort",
+				Message: "must differ from http.hostPort; Standalone Nexus has a listener of its own",
+			}}
+		},
+	)
+}
+
+// sharedEnabled reports whether any route group on the shared listener is on.
+func (h *HTTP) sharedEnabled() bool {
+	for _, g := range h.groups() {
+		if g.group.enabled() {
+			return true
+		}
+	}
+
+	return false
+}
+
+// groupRules returns the listener rules for the enabled groups among groups,
+// or none when no group is enabled.
+func groupRules(listen *ListenConfig, groups []namedGroup) []validation.Rule {
 	var enabled []namedGroup
 	authed := false
 	for _, g := range groups {
@@ -115,7 +162,7 @@ func validateGroups(listen *ListenConfig, groups []namedGroup) error {
 		listen.insecureRule(),
 	)
 
-	return validation.Validate("", rules...)
+	return rules
 }
 
 // isLoopback reports whether hostPort binds only the loopback interface. An

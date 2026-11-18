@@ -400,6 +400,39 @@ command against `localhost`.
 Profiles name hot code paths in the proxy itself, which is why the routes are off unless enabled and why validation
 requires `auth` the moment the listener is reachable beyond loopback.
 
+## Standalone Nexus Operations over HTTP (not yet supported)
+
+The proxy will serve the Nexus HTTP connector, so an application with no Temporal context can start and track
+Standalone Nexus Operations over HTTP. The keys below are parsed and validated today, but a config that sets
+`http.standaloneNexus.connectors` fails validation as not yet supported until the connector is served.
+Workflows that call Nexus through the gRPC gateway need no connector. See [the design](rfc/nexus-http-connector.md).
+
+Connectors are served on a listener of their own, separate from both the gateway and the shared HTTP listener under
+`http:`, so they can be exposed, firewalled, and given a TLS policy apart from the codec server and pprof. Nothing binds
+unless a connector is listed.
+
+| Key                                                    | Default | Meaning                                                                                                           |
+| ------------------------------------------------------ | ------- | ----------------------------------------------------------------------------------------------------------------- |
+| `http.standaloneNexus.hostPort`                        | none    | Address the Standalone Nexus listener binds. Must differ from `http.hostPort`.                                    |
+| `http.standaloneNexus.insecure`                        | `false` | Serve plaintext instead of TLS. Validation only allows this on a loopback bind.                                   |
+| `http.standaloneNexus.tls`                             | none    | Certificate and key to terminate TLS with. A `ca` also requires every caller to present a client certificate.     |
+| `http.standaloneNexus.connectors[].name`               | none    | Names the connector in logs and metrics. Must be unique.                                                          |
+| `http.standaloneNexus.connectors[].pathPrefix`         | none    | Absolute path to mount the connector under. Must not be `/` or overlap another connector's.                       |
+| `http.standaloneNexus.connectors[].namespace`          | none    | Namespace the connector stores operations in. Must route to an upstream without request metadata.                 |
+| `http.standaloneNexus.connectors[].identity`           | none    | Default for start, cancel, and terminate bodies that set none. A caller's own value wins, unverified.             |
+| `http.standaloneNexus.connectors[].maxRequestBodySize` | `4MiB`  | Largest request body the connector accepts.                                                                       |
+| `http.standaloneNexus.connectors[].auth`               | none    | Same shape as `http.codecServer.auth`. Required, with `tls`, once `hostPort` is not loopback.                     |
+
+Payloads a connector sends and receives use its Namespace's codec, as on the gRPC gateway.
+Connectors require `allowedServices` to include `temporal.api.workflowservice.v1.WorkflowService`, which they call.
+A connector's `pathPrefix` is a clean, literal, absolute path such as `/nexus/partners`.
+
+Connector callers are applications rather than people, so prefer `jwks` with short-lived tokens your identity provider
+issues to each calling application, scoped to this proxy with `audiences`. Use `external` when the decision depends on
+more than a valid token, such as which caller may use which connector, and keep `staticToken` for a single trusted caller
+or local development. A `tls.ca` on this listener adds client certificates for every caller, without affecting the codec
+server's browser callers.
+
 ## Metrics
 
 The proxy serves Prometheus metrics on `/metrics`. Everything under `metrics:` in the config controls the endpoint and
