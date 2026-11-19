@@ -47,10 +47,13 @@ var fieldWriters = map[protoreflect.FullName]map[protoreflect.Name]newFieldWrite
 	"temporal.api.nexus.v1.Link":              {"url": newLinkURLField},
 }
 
-// linkURLPrefix is how every Temporal link URL starts, its namespace being the
-// first path segment after it. It is the scheme and path the SDK's link
-// converter (go.temporal.io/api/temporalnexus) writes for every link type.
-const linkURLPrefix = "temporal:///namespaces/"
+const (
+	// linkURLScheme is the scheme of a Temporal link URL.
+	linkURLScheme = "temporal"
+	// linkNamespacesPath starts the path of every Temporal link URL, its
+	// namespace being the path segment after it.
+	linkNamespacesPath = "/namespaces/"
+)
 
 // writerFor returns the writer for fd, declared on md, or nil when fd carries no
 // namespace. Only string fields qualify. An entry in [fieldWriters] wins;
@@ -117,17 +120,29 @@ func rewriteStrings(m protoreflect.Message, fd protoreflect.FieldDescriptor, rew
 }
 
 // translateLinkURL rewrites the namespace segment of a Temporal link URL with
-// fn, leaving the rest of the URL byte for byte. The segment is unescaped for fn
-// and escaped again, as the SDK's link converter writes it. A URL that is not a
-// Temporal link, whose namespace segment is empty or not a valid escape, or
-// whose name fn leaves unchanged is returned as it arrived.
+// fn. It finds the namespace the way the SDK's link converter
+// (go.temporal.io/api/temporalnexus) does: it parses s with url.Parse, which
+// lowercases the scheme, requires the temporal scheme whatever the host, and
+// takes the first path segment after /namespaces/ in the escaped path. Only
+// that segment changes: it is unescaped for fn and escaped again, as the
+// converter writes it, and the host, the rest of the path, the query, and the
+// fragment are kept. Rebuilding the link through the converter instead would
+// drop anything it does not model, such as a query parameter a newer SDK
+// adds. A URL the converter would not read as a Temporal link, whose namespace
+// segment is empty or not a valid escape, or whose name fn leaves unchanged is
+// returned as it arrived.
 func translateLinkURL(s string, fn func(string) string) string {
-	rest, ok := strings.CutPrefix(s, linkURLPrefix)
+	u, err := url.Parse(s)
+	if err != nil || u.Scheme != linkURLScheme {
+		return s
+	}
+
+	rest, ok := strings.CutPrefix(u.EscapedPath(), linkNamespacesPath)
 	if !ok {
 		return s
 	}
 
-	end := strings.IndexAny(rest, "/?#")
+	end := strings.IndexByte(rest, '/')
 	if end < 0 {
 		end = len(rest)
 	}
@@ -138,11 +153,19 @@ func translateLinkURL(s string, fn func(string) string) string {
 	}
 
 	// An unchanged name leaves the URL exactly as it arrived, however it was
-	// escaped, so a proxy with no translation rules never alters a link.
+	// written, so a proxy with no translation rules never alters a link.
 	translated := fn(ns)
 	if translated == ns {
 		return s
 	}
 
-	return linkURLPrefix + url.PathEscape(translated) + rest[end:]
+	escaped := linkNamespacesPath + url.PathEscape(translated) + rest[end:]
+	path, err := url.PathUnescape(escaped)
+	if err != nil {
+		return s
+	}
+
+	u.Path, u.RawPath = path, escaped
+
+	return u.String()
 }

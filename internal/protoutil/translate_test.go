@@ -178,13 +178,40 @@ func TestTranslateNexusLinkURL(t *testing.T) {
 			fn:   remote,
 			want: "temporal:///namespaces/a%zz/workflows/wf-1",
 		},
+		// The SDK's link converter parses with url.Parse and matches the
+		// namespace in the escaped path, so it reads each of these as a Temporal
+		// link; they are translated too.
+		{
+			name: "an upper-case scheme, which url.Parse lowercases",
+			url:  "Temporal:///namespaces/orders/workflows/wf/run/history",
+			fn:   remote,
+			want: "temporal:///namespaces/remote-orders/workflows/wf/run/history",
+		},
+		{
+			name: "a host, which the converter ignores and is kept",
+			url:  "temporal://anyhost/namespaces/orders/workflows/wf/run/history",
+			fn:   remote,
+			want: "temporal://anyhost/namespaces/remote-orders/workflows/wf/run/history",
+		},
+		{
+			name: "no authority at all",
+			url:  "temporal:/namespaces/orders/workflows/wf/run/history",
+			fn:   remote,
+			want: "temporal:/namespaces/remote-orders/workflows/wf/run/history",
+		},
+		{
+			name: "a fragment is kept",
+			url:  "temporal:///namespaces/orders/workflows/wf/run#top",
+			fn:   remote,
+			want: "temporal:///namespaces/remote-orders/workflows/wf/run#top",
+		},
 	}
 
+	tr := protoutil.NewTranslator(protoregistry.GlobalFiles)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			tr := protoutil.NewTranslator(protoregistry.GlobalFiles)
 			link := &nexuspb.Link{Url: tc.url, Type: "temporal.api.common.v1.Link.WorkflowEvent"}
 			tr.Translate(link, tc.fn)
 			require.Equal(t, tc.want, link.Url)
