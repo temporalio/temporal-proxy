@@ -1,12 +1,14 @@
 package protoutil_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	failurepb "go.temporal.io/api/failure/v1"
 	historypb "go.temporal.io/api/history/v1"
 	namespacepb "go.temporal.io/api/namespace/v1"
+	nexuspb "go.temporal.io/api/nexus/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
@@ -108,6 +110,153 @@ func TestTranslateRecursiveFailureCause(t *testing.T) {
 	}
 	tr.Translate(f, remote)
 	require.Equal(t, "remote-child-local", f.Cause.GetChildWorkflowExecutionFailureInfo().Namespace)
+}
+
+// TestTranslateNexusLinkURL pins that the namespace segment of a Nexus link
+// URL is translated like a namespace field, and that everything else in the
+// URL, or a URL that is not a Temporal link, is left exactly as it was.
+func TestTranslateNexusLinkURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		url  string
+		fn   func(string) string
+		want string
+	}{
+		{
+			name: "workflow event link keeps its path and query",
+			url:  "temporal:///namespaces/orders/workflows/wf-1/run-1/history?eventID=10&eventType=NexusOperationScheduled&referenceType=EventReference",
+			fn:   remote,
+			want: "temporal:///namespaces/remote-orders/workflows/wf-1/run-1/history?eventID=10&eventType=NexusOperationScheduled&referenceType=EventReference",
+		},
+		{
+			name: "remote to local strips the suffix",
+			url:  "temporal:///namespaces/orders.acct/workflows/wf-1/run-1",
+			fn:   func(s string) string { return strings.TrimSuffix(s, ".acct") },
+			want: "temporal:///namespaces/orders/workflows/wf-1/run-1",
+		},
+		{
+			name: "an escaped segment is unescaped for fn and escaped again",
+			url:  "temporal:///namespaces/a%20b/nexus-operations/op/run/details",
+			fn:   func(s string) string { return s + "+c" },
+			want: "temporal:///namespaces/a%20b+c/nexus-operations/op/run/details",
+		},
+		{
+			name: "an unchanged name leaves the URL byte for byte",
+			url:  "temporal:///namespaces/%6Frders/workflows/wf-1/run-1",
+			fn:   func(s string) string { return s },
+			want: "temporal:///namespaces/%6Frders/workflows/wf-1/run-1",
+		},
+		{
+			name: "a namespace with nothing after it",
+			url:  "temporal:///namespaces/orders",
+			fn:   remote,
+			want: "temporal:///namespaces/remote-orders",
+		},
+		{
+			name: "another scheme is left alone",
+			url:  "https://example.com/namespaces/orders/workflows/wf-1",
+			fn:   remote,
+			want: "https://example.com/namespaces/orders/workflows/wf-1",
+		},
+		{
+			name: "a Temporal URL naming no namespace is left alone",
+			url:  "temporal://system",
+			fn:   remote,
+			want: "temporal://system",
+		},
+		{
+			name: "an empty namespace segment is left alone",
+			url:  "temporal:///namespaces//workflows/wf-1",
+			fn:   remote,
+			want: "temporal:///namespaces//workflows/wf-1",
+		},
+		{
+			name: "a malformed escape is left alone",
+			url:  "temporal:///namespaces/a%zz/workflows/wf-1",
+			fn:   remote,
+			want: "temporal:///namespaces/a%zz/workflows/wf-1",
+		},
+		// The SDK's link converter parses with url.Parse and matches the
+		// namespace in the escaped path, so it reads each of these as a Temporal
+		// link; they are translated too.
+		{
+			name: "an upper-case scheme, which url.Parse lowercases",
+			url:  "Temporal:///namespaces/orders/workflows/wf/run/history",
+			fn:   remote,
+			want: "temporal:///namespaces/remote-orders/workflows/wf/run/history",
+		},
+		{
+			name: "a host, which the converter ignores and is kept",
+			url:  "temporal://anyhost/namespaces/orders/workflows/wf/run/history",
+			fn:   remote,
+			want: "temporal://anyhost/namespaces/remote-orders/workflows/wf/run/history",
+		},
+		{
+			name: "no authority at all",
+			url:  "temporal:/namespaces/orders/workflows/wf/run/history",
+			fn:   remote,
+			want: "temporal:/namespaces/remote-orders/workflows/wf/run/history",
+		},
+		{
+			name: "a fragment is kept",
+			url:  "temporal:///namespaces/orders/workflows/wf/run#top",
+			fn:   remote,
+			want: "temporal:///namespaces/remote-orders/workflows/wf/run#top",
+		},
+	}
+
+	tr := protoutil.NewTranslator(protoregistry.GlobalFiles)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			link := &nexuspb.Link{Url: tc.url, Type: "temporal.api.common.v1.Link.WorkflowEvent"}
+			tr.Translate(link, tc.fn)
+			require.Equal(t, tc.want, link.Url)
+			require.Equal(t, "temporal.api.common.v1.Link.WorkflowEvent", link.Type, "the link type is not a namespace")
+		})
+	}
+}
+
+// TestTranslateNexusLinksInTaskMessages pins the two hops a spike observed
+// breaking under translation: the caller's link a handler Worker receives on
+// its poll, and the handler's link it sends back on an async start.
+func TestTranslateNexusLinksInTaskMessages(t *testing.T) {
+	t.Parallel()
+
+	tr := protoutil.NewTranslator(protoregistry.GlobalFiles)
+	local := func(s string) string { return strings.TrimPrefix(s, "remote-") }
+
+	poll := &workflowservice.PollNexusTaskQueueResponse{
+		Request: &nexuspb.Request{
+			Variant: &nexuspb.Request_StartOperation{StartOperation: &nexuspb.StartOperationRequest{
+				Links: []*nexuspb.Link{{Url: "temporal:///namespaces/remote-orders/workflows/wf-1/run-1/history"}},
+			}},
+		},
+	}
+	tr.Translate(poll, local)
+	require.Equal(t, "temporal:///namespaces/orders/workflows/wf-1/run-1/history",
+		poll.GetRequest().GetStartOperation().GetLinks()[0].GetUrl(), "the handler sees the caller's local name")
+
+	reply := &workflowservice.RespondNexusTaskCompletedRequest{
+		Namespace: "payments",
+		Response: &nexuspb.Response{
+			Variant: &nexuspb.Response_StartOperation{StartOperation: &nexuspb.StartOperationResponse{
+				Variant: &nexuspb.StartOperationResponse_AsyncSuccess{AsyncSuccess: &nexuspb.StartOperationResponse_Async{
+					OperationToken: `{"ns":"payments"}`,
+					Links:          []*nexuspb.Link{{Url: "temporal:///namespaces/payments/workflows/charge-1/run-1/history"}},
+				}},
+			}},
+		},
+	}
+	tr.Translate(reply, remote)
+	async := reply.GetResponse().GetStartOperation().GetAsyncSuccess()
+	require.Equal(t, "remote-payments", reply.GetNamespace())
+	require.Equal(t, "temporal:///namespaces/remote-payments/workflows/charge-1/run-1/history",
+		async.GetLinks()[0].GetUrl(), "the upstream sees the handler's remote name")
+	require.JSONEq(t, `{"ns":"payments"}`, async.GetOperationToken(), "the opaque operation token is not translated")
 }
 
 func remote(s string) string { return "remote-" + s }
