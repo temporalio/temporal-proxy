@@ -49,4 +49,36 @@ func TestModule(t *testing.T) {
 		// proves the hook actually ran rather than just returning nil.
 		require.Equal(t, connectivity.Shutdown, conn.GetState())
 	})
+	t.Run("closes the pool after the components that use it stop", func(t *testing.T) {
+		t.Parallel()
+
+		conn := newConn(t)
+
+		var stateAtStop connectivity.State
+
+		// The user's hook is registered from an Invoke listed before the module,
+		// so a pool hook registered by the module's own Invoke would come later
+		// and run first on stop.
+		app := fx.New(
+			fx.Invoke(func(lc fx.Lifecycle, p *connect.Pool) error {
+				lc.Append(fx.StopHook(func() { stateAtStop = conn.GetState() }))
+
+				return p.Set("host", conn)
+			}),
+			connect.Module,
+			fx.NopLogger,
+		)
+		require.NoError(t, app.Err())
+
+		startCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		require.NoError(t, app.Start(startCtx))
+
+		stopCtx, stopCancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer stopCancel()
+		require.NoError(t, app.Stop(stopCtx))
+
+		require.NotEqual(t, connectivity.Shutdown, stateAtStop, "the pool closed before its user stopped")
+		require.Equal(t, connectivity.Shutdown, conn.GetState())
+	})
 }
