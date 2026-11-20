@@ -94,7 +94,7 @@ func TestEndToEndPayloadEncryption(t *testing.T) {
 
 // TestEndToEndSkipsWorkerEncryptedPayloads drives a payload a worker's own codec
 // already encrypted through the full stack. Not copying SkipEncodings into
-// CodecOptions in dataplane.New fails the byte-for-byte check.
+// CodecOptions in dataplane.newCodecs fails the byte-for-byte check.
 func TestEndToEndSkipsWorkerEncryptedPayloads(t *testing.T) {
 	t.Parallel()
 

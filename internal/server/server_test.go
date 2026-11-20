@@ -84,7 +84,7 @@ func TestNew(t *testing.T) {
 		defer func() { _ = lis.Close() }()
 
 		errCh := make(chan error, 1)
-		go func() { errCh <- svr.Start(t.Context(), lis) }()
+		go func() { errCh <- svr.Serve(t.Context(), lis) }()
 
 		require.Eventually(t, func() bool {
 			return log.Contains("Starting the server")
@@ -114,7 +114,7 @@ func TestServerInsecureWarning(t *testing.T) {
 		defer func() { _ = lis.Close() }()
 
 		errCh := make(chan error, 1)
-		go func() { errCh <- svr.Start(t.Context(), lis) }()
+		go func() { errCh <- svr.Serve(t.Context(), lis) }()
 
 		require.Eventually(t, func() bool {
 			return log.Contains(insecureMessage)
@@ -138,7 +138,7 @@ func TestServerInsecureWarning(t *testing.T) {
 		defer func() { _ = lis.Close() }()
 
 		errCh := make(chan error, 1)
-		go func() { errCh <- svr.Start(t.Context(), lis) }()
+		go func() { errCh <- svr.Serve(t.Context(), lis) }()
 
 		require.Eventually(t, func() bool {
 			return log.Contains("Starting the server")
@@ -172,7 +172,7 @@ func TestWithStreamInterceptor(t *testing.T) {
 	defer func() { _ = lis.Close() }()
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- svr.Start(t.Context(), lis) }()
+	go func() { errCh <- svr.Serve(t.Context(), lis) }()
 
 	conn := newBufConnClient(t, lis)
 	defer func() { _ = conn.Close() }()
@@ -208,7 +208,7 @@ func TestWithUnknownServiceHandler(t *testing.T) {
 	defer func() { _ = lis.Close() }()
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- svr.Start(t.Context(), lis) }()
+	go func() { errCh <- svr.Serve(t.Context(), lis) }()
 
 	conn := newBufConnClient(t, lis)
 	defer func() { _ = conn.Close() }()
@@ -239,7 +239,7 @@ func TestWithServerCodec(t *testing.T) {
 	defer func() { _ = lis.Close() }()
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- svr.Start(t.Context(), lis) }()
+	go func() { errCh <- svr.Serve(t.Context(), lis) }()
 
 	conn := newBufConnClient(t, lis)
 	defer func() { _ = conn.Close() }()
@@ -281,7 +281,7 @@ func TestWithHealthServices(t *testing.T) {
 	defer func() { _ = lis.Close() }()
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- svr.Start(t.Context(), lis) }()
+	go func() { errCh <- svr.Serve(t.Context(), lis) }()
 
 	conn := newBufConnClient(t, lis)
 	defer func() { _ = conn.Close() }()
@@ -318,7 +318,7 @@ func TestWithHealthServices(t *testing.T) {
 	require.NoError(t, <-errCh)
 }
 
-func TestServerStartAndStop(t *testing.T) {
+func TestServerServeAndStop(t *testing.T) {
 	t.Parallel()
 
 	var status atomic.Int32
@@ -338,7 +338,7 @@ func TestServerStartAndStop(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- svr.Start(ctx, lis)
+		errCh <- svr.Serve(ctx, lis)
 	}()
 
 	conn := newBufConnClient(t, lis)
@@ -499,7 +499,7 @@ func TestStopDrainsCleanlyWhenNothingIsInFlight(t *testing.T) {
 	defer func() { _ = lis.Close() }()
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- svr.Start(t.Context(), lis) }()
+	go func() { errCh <- svr.Serve(t.Context(), lis) }()
 
 	require.Eventually(t, func() bool {
 		return log.Contains("Starting the server")
@@ -525,7 +525,7 @@ func TestStopMarksNotServingBeforeDraining(t *testing.T) {
 	lis := bufconn.Listen(1024 * 1024)
 	defer func() { _ = lis.Close() }()
 
-	go func() { _ = svr.Start(t.Context(), lis) }()
+	go func() { _ = svr.Serve(t.Context(), lis) }()
 
 	conn := newBufConnClient(t, lis)
 	defer func() { _ = conn.Close() }()
@@ -611,7 +611,7 @@ func wedgedServer(t *testing.T, sopts ...server.Option) (*server.Server, <-chan 
 	lis := bufconn.Listen(1024 * 1024)
 	t.Cleanup(func() { _ = lis.Close() })
 
-	go func() { _ = svr.Start(t.Context(), lis) }()
+	go func() { _ = svr.Serve(t.Context(), lis) }()
 
 	conn := newBufConnClient(t, lis)
 	t.Cleanup(func() { _ = conn.Close() })

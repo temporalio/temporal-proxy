@@ -20,6 +20,8 @@ import (
 type gatewayParams struct {
 	fx.In
 
+	Lifecycle fx.Lifecycle
+
 	Config         *config.Config
 	Extractor      *protoutil.Extractor
 	Allowlist      services.Allowlist
@@ -28,16 +30,19 @@ type gatewayParams struct {
 	ServerReporter *server.Reporter
 	Reloader       *creds.Reloader
 	Logger         logger.Logger
+	Abort          Abort
 }
 
 // newGateway builds the inbound gateway: every request passes its interceptors,
 // and every method it does not serve itself goes to the Director, after a
-// service outside the allowlist is refused. It binds nothing; the Dataplane
-// serves it on Start.
+// service outside the allowlist is refused. It binds nothing until the
+// application starts, and drains when it stops.
 func newGateway(p gatewayParams) (*server.Server, error) {
 	cfg := p.Config
 
 	gateway, err := server.New(
+		server.WithHostPort(cfg.Listen.HostPort),
+		server.WithAbort(p.Abort),
 		server.WithCredentials(cfg.Listen.Listener(creds.WithReloader(p.Reloader, "gateway"))),
 		server.WithServerCodec(router.Codec()),
 		// Health entries come from the allowlist, so what the gateway reports a
@@ -58,6 +63,8 @@ func newGateway(p gatewayParams) (*server.Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create server: %w", err)
 	}
+
+	p.Lifecycle.Append(fx.Hook{OnStart: gateway.Start, OnStop: gateway.Stop})
 
 	return gateway, nil
 }

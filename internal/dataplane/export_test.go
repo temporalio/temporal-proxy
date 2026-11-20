@@ -1,8 +1,6 @@
 package dataplane
 
 import (
-	"net"
-
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/metrics"
 )
@@ -15,13 +13,4 @@ type Reporters = reporters
 // assert the metric names and labels a wired dataplane emits.
 func NewReporters(f *metrics.Factory, c *config.Config, encryption bool) (Reporters, error) {
 	return newReporters(f, c, encryption)
-}
-
-// Listener is the gateway listener Start bound, exported for tests that break
-// it to drive an unexpected stop.
-func (d *Dataplane) Listener() net.Listener {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	return d.lis
 }

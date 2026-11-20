@@ -126,7 +126,7 @@ func serveOne(t *testing.T, handler grpc.StreamHandler, opts ...server.Option) e
 	defer func() { _ = lis.Close() }()
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- svr.Start(t.Context(), lis) }()
+	go func() { errCh <- svr.Serve(t.Context(), lis) }()
 
 	conn := newBufConnClient(t, lis)
 	defer func() { _ = conn.Close() }()
