@@ -5,29 +5,16 @@ import (
 
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/metrics"
-	"go.temporal.io/proxy/internal/proxy"
-	"go.temporal.io/proxy/internal/router"
-	"go.temporal.io/proxy/internal/server"
 )
 
-// Reporters exposes the metric reporters built for one dataplane so tests can
-// pin the exact metric surface they register.
-type Reporters struct {
-	Router      *router.Reporter
-	Server      *server.Reporter
-	Encryption  *proxy.Reporter
-	Compression *proxy.CompressionReporter
-}
+// Reporters is the set of metric reporters one dataplane registers, exposed so
+// tests can pin the exact metric surface they register.
+type Reporters = reporters
 
 // NewReporters builds the reporters for c against f, exported so tests can
 // assert the metric names and labels a wired dataplane emits.
-func NewReporters(f *metrics.Factory, c *config.Config, encryption bool) (*Reporters, error) {
-	r, err := newReporters(f, c, encryption)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Reporters{Router: r.router, Server: r.server, Encryption: r.encryption, Compression: r.compression}, nil
+func NewReporters(f *metrics.Factory, c *config.Config, encryption bool) (Reporters, error) {
+	return newReporters(f, c, encryption)
 }
 
 // Listener is the gateway listener Start bound, exported for tests that break
