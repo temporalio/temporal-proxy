@@ -5,23 +5,17 @@ import (
 
 	"go.uber.org/fx"
 
-	"go.temporal.io/proxy/internal/auth"
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/metrics"
-	"go.temporal.io/proxy/internal/protoutil"
-	"go.temporal.io/proxy/internal/proxy"
-	"go.temporal.io/proxy/internal/router"
 	"go.temporal.io/proxy/internal/server"
-	"go.temporal.io/proxy/internal/services"
-	"go.temporal.io/proxy/internal/transport/connect"
-	"go.temporal.io/proxy/internal/transport/creds"
 	"go.temporal.io/proxy/pkg/crypto"
 	"go.temporal.io/proxy/pkg/logger"
 )
 
 // Module provides a [Dataplane] from the assembled application and binds Start
-// and Stop to the fx lifecycle, along with what it shares with the rest of the
-// application:
+// and Stop to the fx lifecycle. The Dataplane serves the gateway [server.Server]
+// and opens its upstreams' connections; the module builds both, along with what
+// it shares with the rest of the application:
 //
 //   - the [proxy.Codecs] chain, which the codec server applies too;
 //   - the [proxy.DecodeLimiter] that bounds decoded bytes across both;
@@ -36,6 +30,8 @@ var Module = fx.Options(
 			return newReporters(f, c, v != nil)
 		},
 		newCodecs,
+		newUpstreams,
+		newGateway,
 		newAbort,
 		newDataplane,
 	),
@@ -44,27 +40,16 @@ var Module = fx.Options(
 	}),
 )
 
-// Params collects the fx-provided dependencies a [Dataplane] is built from.
-// Reloader may be nil, which leaves every credential with the material it
-// loaded first.
-type Params struct {
+// params collects the fx-provided dependencies a [Dataplane] is built from.
+type params struct {
 	fx.In
 
-	Context        context.Context
-	Config         *config.Config
-	Extractor      *protoutil.Extractor
-	Translator     *protoutil.Translator
-	Types          protoutil.Types
-	Pool           *connect.Pool
-	Allowlist      services.Allowlist
-	Auth           auth.Authenticator
-	Codecs         *proxy.Codecs
-	Limiter        *proxy.DecodeLimiter
-	RouterReporter *router.Reporter
-	ServerReporter *server.Reporter
-	Reloader       *creds.Reloader
-	Logger         logger.Logger
-	Abort          Abort
+	Context   context.Context
+	Config    *config.Config
+	Gateway   *server.Server
+	Upstreams *upstreams
+	Logger    logger.Logger
+	Abort     Abort
 }
 
 // newAbort shuts the application down with a non-zero exit code.
