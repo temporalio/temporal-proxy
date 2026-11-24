@@ -31,6 +31,8 @@ var Module = fx.Options(
 		},
 		newCodecs,
 		newUpstreams,
+		newMux,
+		newDirector,
 		newGateway,
 		newAbort,
 		newDataplane,
