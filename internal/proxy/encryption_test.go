@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -39,10 +40,11 @@ const (
 // multiple goroutines within a single call.
 type fakeVault struct {
 	mu         sync.Mutex
-	namespaces []string // namespaces passed to Seal, in call order
-	opens      int      // number of Open calls
-	sealErr    error    // when set, Seal returns it
-	openErr    error    // when set, Open returns it
+	namespaces []string      // namespaces passed to Seal, in call order
+	opens      int           // number of Open calls
+	sealErr    error         // when set, Seal returns it
+	openErr    error         // when set, Open returns it
+	openDelay  time.Duration // when set, Open sleeps this long before opening
 }
 
 func TestEncryptionRoundtrip(t *testing.T) {
@@ -92,6 +94,65 @@ func TestEncryptionRoundtrip(t *testing.T) {
 
 	// One Seal per payload, each under the request's namespace.
 	require.Equal(t, []string{"orders", "orders"}, v.namespaces)
+}
+
+func TestEncryptionOpensNexusOperationOutcomes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		method  string
+		respond func(*common.Payload) proto.Message
+		result  func(proto.Message) *common.Payload
+	}{
+		{
+			name:   "poll",
+			method: workflowservice.WorkflowService_PollNexusOperationExecution_FullMethodName,
+			respond: func(p *common.Payload) proto.Message {
+				return &workflowservice.PollNexusOperationExecutionResponse{
+					Outcome: &workflowservice.PollNexusOperationExecutionResponse_Result{Result: p},
+				}
+			},
+			result: func(m proto.Message) *common.Payload {
+				return m.(*workflowservice.PollNexusOperationExecutionResponse).GetResult()
+			},
+		},
+		{
+			name:   "describe",
+			method: workflowservice.WorkflowService_DescribeNexusOperationExecution_FullMethodName,
+			respond: func(p *common.Payload) proto.Message {
+				return &workflowservice.DescribeNexusOperationExecutionResponse{
+					Outcome: &workflowservice.DescribeNexusOperationExecutionResponse_Result{Result: p},
+				}
+			},
+			result: func(m proto.Message) *common.Payload {
+				return m.(*workflowservice.DescribeNexusOperationExecutionResponse).GetResult()
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Opening slowly makes a visit that finishes after the walk returns
+			// observable: its result must still land in the response.
+			v := &fakeVault{openDelay: 20 * time.Millisecond}
+			interceptor, err := proxy.CodecInterceptor(proxy.CodecOptions{DecodeLimiter: testLimiter(), ResponseLimit: testResponseLimit, Vault: v, Reporter: newTestReporter(t)})
+			require.NoError(t, err)
+
+			want := testPayload("json/plain", `"Hello, Temporal!"`)
+			resp := tt.respond(nil).ProtoReflect().Type().New().Interface()
+			invoker := func(_ context.Context, _ string, _, gotResp any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
+				proto.Merge(gotResp.(proto.Message), tt.respond(sealedPayload(t, want)))
+				return nil
+			}
+
+			ctx := meta.WithNamespace(t.Context(), "orders")
+			require.NoError(t, interceptor(ctx, tt.method, &workflowservice.PollNexusOperationExecutionRequest{}, resp, nil, invoker))
+			require.True(t, proto.Equal(want, tt.result(resp)), "result was not opened: %v", tt.result(resp))
+		})
+	}
 }
 
 func TestEncryptionDisabledSkipsOutbound(t *testing.T) {
@@ -638,6 +699,8 @@ func (f *fakeVault) Seal(_ context.Context, ns string, data []byte, _ ...crypto.
 }
 
 func (f *fakeVault) Open(_ context.Context, msg *crypto.Message, _ ...crypto.OpenOption) ([]byte, error) {
+	time.Sleep(f.openDelay)
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
