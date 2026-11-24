@@ -333,6 +333,16 @@ Workflows started in, and signals sent from, another Namespace carry that Namesp
 deployments that rely on them should stay on `permissive`. The codec server applies the same comparison to the
 Namespace a request names; see [Using it from the CLI](#using-it-from-the-cli).
 
+With encryption on, a Nexus handler's failure is sealed in either format. A handler whose task lacks the
+`temporal_failure_responses` capability, as on an older server or for a caller sending Nexus HTTP requests itself,
+sends the deprecated `nexus.Failure` with its Temporal failure serialized into the details. The proxy decodes that,
+seals it like any other failure, and serializes it back. One holding only a message gets the `Encoded failure`
+placeholder when `encryption.failures` is on. Anything else is refused rather than sent in plaintext: details of any
+other type, as Java SDK releases before 1.28 send when a handler attaches metadata or details to an
+`OperationHandlerException` (`FailedPrecondition`), and a Temporal failure that won't decode or has a field this
+proxy's API version doesn't know (`InvalidArgument`). The handler's response then never reaches the server, so the
+caller sees the task time out rather than fail. Upgrading the handler's SDK, or the proxy for a newer SDK, avoids it.
+
 | Mode         | Seals     | Opens labeled for the request's Namespace | Opens labeled for another | Opens unlabeled         |
 | ------------ | --------- | ----------------------------------------- | ------------------------- | ----------------------- |
 | `off`        | Unlabeled | Yes                                       | Yes, counted              | Yes, counted            |
