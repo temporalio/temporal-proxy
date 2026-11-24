@@ -1,0 +1,27 @@
+# Proxy configuration for the Nexus example: a gateway in front of a local dev
+# server that encrypts every payload, including Nexus operation inputs and
+# results, before it reaches the server.
+#
+# The worker and starter connect to the gateway in plaintext; the dev server only
+# ever sees ciphertext.
+hostPort: 127.0.0.1:7234 # the dev server holds 7233
+
+routing:
+  default: local
+
+upstreams:
+  - name: local
+    hostPort: 127.0.0.1:7233 # temporal server start-dev
+    insecure: true # start-dev serves plaintext; the proxy dials TLS by default
+
+# The key below is a throwaway local test key: the "testing://" scheme holds the
+# key material in the config itself with no cloud KMS, which is fine for a toy but
+# never for real data. In production, point uri at a KMS key instead (awskms://,
+# azurekeyvault://, or gcpkms://).
+encryption:
+  enabled: true
+  namespaceBinding: strict # required with keys; see "Namespace binding" in the top-level README
+  default:
+    uri: testing://KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=
+    duration: 1h
+    renewBefore: 15m
