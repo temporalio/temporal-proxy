@@ -14,14 +14,14 @@ import (
 // startup, then binds and serves the gateway. It returns once the gateway is
 // accepting. ctx bounds startup only and should carry a deadline, since it is
 // what limits the wait for an upstream to answer; the gateway's serving
-// goroutine gets the Context passed to New instead. A failure part-way through
-// stops whatever already started.
+// goroutine gets the Context the plane was built with instead. A failure
+// part-way through stops whatever already started.
 func (d *Dataplane) Start(ctx context.Context) error {
-	// A static upstream's connection is created during New, but gRPC does not
-	// open a socket until it is used, so open them here: an unreachable upstream
-	// fails startup instead of surfacing as request errors once the gateway is
-	// already serving. Templated upstreams resolve per request and have nothing
-	// to open yet.
+	// A static upstream's connection is created when the plane is built, but gRPC
+	// does not open a socket until it is used, so open them here: an unreachable
+	// upstream fails startup instead of surfacing as request errors once the
+	// gateway is already serving. Templated upstreams resolve per request and
+	// have nothing to open yet.
 	if err := connect.WaitReady(ctx, d.ready...); err != nil {
 		return d.rollback(ctx, fmt.Errorf("upstream connection not ready: %w", err))
 	}

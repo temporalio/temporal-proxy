@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/fx"
 
 	"go.temporal.io/proxy/internal/config"
 	"go.temporal.io/proxy/internal/dataplane"
@@ -25,9 +26,7 @@ func TestAbortFiresWhenServingStopsUnexpectedly(t *testing.T) {
 	cfg := abortConfig(t)
 	d := newTestDeps(t, cfg)
 
-	dp, err := dataplane.New(
-		t.Context(), cfg, append(d.opts(), dataplane.WithAbort(func(err error) { aborts <- err }))...,
-	)
+	dp, err := newPlane(t, d, abortTo(aborts))
 	require.NoError(t, err)
 
 	startCtx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -60,7 +59,7 @@ func TestAbortIsOptional(t *testing.T) {
 
 	// A nil Abort drops the notification rather than panicking; the log entry is
 	// then the only record.
-	dp := startPlane(t, d)
+	dp := startPlane(t, d, fx.Decorate(func() dataplane.Abort { return nil }))
 
 	lis := dp.Listener()
 	require.NotNil(t, lis, "the gateway binds")
@@ -83,4 +82,12 @@ func abortConfig(t *testing.T) *config.Config {
 	cfg.Upstreams[0].Listen.HostPort = "{{ .LocalNamespace }}." + strings.ToLower(t.Name()) + ".example:7233"
 
 	return cfg
+}
+
+// abortTo replaces the Abort Module provides with one that sends to aborts, so a
+// test observes the stop rather than having it shut an application down.
+func abortTo(aborts chan<- error) fx.Option {
+	return fx.Decorate(func() dataplane.Abort {
+		return func(err error) { aborts <- err }
+	})
 }
