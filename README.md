@@ -195,6 +195,10 @@ and then decides each call against them, the two steps Temporal OSS splits acros
 Four tokens show what that buys, including a Worker that cannot reach a second Namespace and an auditor that can read
 history but not start a Workflow.
 
+The [Nexus example](examples/nexus) calls one Nexus Operation two ways, from a Workflow and as a standalone Operation,
+with encryption on. The dev server stores the Operation's input and result sealed, while the bookkeeping it routes and
+retries on stays readable.
+
 ## Codec server
 
 The proxy can serve the Temporal SDK's codec server HTTP contract, so the Temporal CLI and Web UI can seal and open

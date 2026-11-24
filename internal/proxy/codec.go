@@ -22,6 +22,16 @@ import (
 	"go.temporal.io/proxy/pkg/codec"
 )
 
+// sequentialInbound lists the methods whose responses are opened one payload at
+// a time. Each holds a payload directly in a oneof, and the visitor in
+// go.temporal.io/api before v1.64.3 drops what it opens there concurrently, so
+// the client gets ciphertext (temporalio/api-go#324). Remove this once the
+// pinned server version brings in api v1.64.3 or later.
+var sequentialInbound = []string{
+	workflowservice.WorkflowService_DescribeNexusOperationExecution_FullMethodName,
+	workflowservice.WorkflowService_PollNexusOperationExecution_FullMethodName,
+}
+
 type (
 	// CodecOptions selects the codecs a [Codecs] applies.
 	CodecOptions struct {
@@ -269,12 +279,25 @@ func (c *Codecs) Interceptor(opts ...InterceptorOption) (grpc.UnaryClientInterce
 		opt(&io)
 	}
 
+	outbound := visitPayloads(c.outbound, nil, c.outboundLimit, codec.Chain.Encode, io.remote)
 	payloads, err := proxy.NewPayloadVisitorInterceptor(proxy.PayloadVisitorInterceptorOptions{
 		Inbound:  visitPayloads(c.inbound, c.inboundSkip, c.inboundLimit, codec.Chain.Decode, io.remote),
-		Outbound: visitPayloads(c.outbound, nil, c.outboundLimit, codec.Chain.Encode, io.remote),
+		Outbound: outbound,
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	if c.inboundLimit > 1 {
+		sequential, err := proxy.NewPayloadVisitorInterceptor(proxy.PayloadVisitorInterceptorOptions{
+			Inbound:  visitPayloads(c.inbound, c.inboundSkip, 1, codec.Chain.Decode, io.remote),
+			Outbound: outbound,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		payloads = forMethods(sequentialInbound, sequential, payloads)
 	}
 
 	payloads = chainUnary(c.openBudget, payloads)
@@ -405,6 +428,25 @@ func chainUnary(outer, inner grpc.UnaryClientInterceptor) grpc.UnaryClientInterc
 		}
 
 		return outer(ctx, method, req, reply, cc, next, opts...)
+	}
+}
+
+// forMethods returns an interceptor that hands calls to methods to matched and
+// every other call to other.
+func forMethods(methods []string, matched, other grpc.UnaryClientInterceptor) grpc.UnaryClientInterceptor {
+	return func(
+		ctx context.Context,
+		method string,
+		req, reply any,
+		cc *grpc.ClientConn,
+		invoker grpc.UnaryInvoker,
+		opts ...grpc.CallOption,
+	) error {
+		if slices.Contains(methods, method) {
+			return matched(ctx, method, req, reply, cc, invoker, opts...)
+		}
+
+		return other(ctx, method, req, reply, cc, invoker, opts...)
 	}
 }
 
