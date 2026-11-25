@@ -13,7 +13,6 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"go.temporal.io/proxy/internal/config"
-	"go.temporal.io/proxy/internal/dataplane"
 	"go.temporal.io/proxy/internal/dataplane/dataplanetest"
 )
 
@@ -113,10 +112,21 @@ func TestCleanShutdownDoesNotAbort(t *testing.T) {
 	defer startCancel()
 	require.NoError(t, dp.Start(startCtx))
 
-	// Cancelling the serving context ends the health check, not serving; Stop is
+	conn, err := grpc.NewClient(dp.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	health := grpc_health_v1.NewHealthClient(conn)
+
+	// Cancelling the process context ends the health check, not serving; Stop is
 	// what shuts the plane down. Neither is a failure, and either one reporting
 	// an abort would take the whole process down on a normal shutdown.
 	cancel()
+	require.Eventually(t, func() bool {
+		resp, err := health.Check(t.Context(), &grpc_health_v1.HealthCheckRequest{})
+		return err == nil && resp.GetStatus() == grpc_health_v1.HealthCheckResponse_NOT_SERVING
+	}, 10*time.Second, 10*time.Millisecond, "the gateway's health check runs on the process context")
+
 	require.NoError(t, dp.Stop(context.WithoutCancel(t.Context())))
 
 	select {
@@ -195,7 +205,7 @@ func liveConfig(t *testing.T) *config.Config {
 	return cfg
 }
 
-func startPlane(t *testing.T, d testDeps, extra ...fx.Option) *dataplane.Dataplane {
+func startPlane(t *testing.T, d testDeps, extra ...fx.Option) *plane {
 	t.Helper()
 
 	dp, err := newPlane(t, d, extra...)
