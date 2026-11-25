@@ -13,7 +13,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/nexus-rpc/sdk-go v0.7.0
 	go.temporal.io/proxy v0.4.0
-	go.temporal.io/sdk v1.50.0
+	go.temporal.io/sdk v1.51.0
 	google.golang.org/grpc v1.85.0
 )
 
@@ -31,7 +31,7 @@ require (
 	github.com/rs/zerolog v1.35.1 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
-	go.temporal.io/api v1.63.5 // indirect
+	go.temporal.io/api v1.64.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
