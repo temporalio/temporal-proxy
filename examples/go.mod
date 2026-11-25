@@ -11,6 +11,7 @@ replace go.temporal.io/proxy => ../
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/nexus-rpc/sdk-go v0.7.0
 	go.temporal.io/proxy v0.4.0
 	go.temporal.io/sdk v1.50.0
 	google.golang.org/grpc v1.85.0
@@ -26,7 +27,6 @@ require (
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/nexus-rpc/nexus-proto-annotations v0.1.0 // indirect
-	github.com/nexus-rpc/sdk-go v0.7.0 // indirect
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/rs/zerolog v1.35.1 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
