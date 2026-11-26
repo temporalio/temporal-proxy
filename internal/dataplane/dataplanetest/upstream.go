@@ -136,6 +136,16 @@ func (u *Upstream) QueryWorkflow(
 	return &workflowservice.QueryWorkflowResponse{QueryResult: req.GetQuery().GetQueryArgs()}, nil
 }
 
+// RespondNexusTaskCompleted records the call and answers with an empty
+// response, so a test can inspect the reply a Worker sent through the proxy.
+func (u *Upstream) RespondNexusTaskCompleted(
+	ctx context.Context, req *workflowservice.RespondNexusTaskCompletedRequest,
+) (*workflowservice.RespondNexusTaskCompletedResponse, error) {
+	u.record(ctx, req)
+
+	return &workflowservice.RespondNexusTaskCompletedResponse{}, nil
+}
+
 // Peers returns the distinct client addresses requests arrived from, in the
 // order first seen. Each connection has its own source port, so this is the
 // connections the proxy actually used.
